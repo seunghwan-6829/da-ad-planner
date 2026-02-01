@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeft, Sparkles } from 'lucide-react'
 import Link from 'next/link'
@@ -27,7 +27,7 @@ const COMMON_SIZES = [
   '1920x1080 (YouTube)',
 ]
 
-export default function NewPlanPage() {
+function NewPlanForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const templateId = searchParams.get('template')
@@ -51,7 +51,7 @@ export default function NewPlanPage() {
 
   useEffect(() => {
     loadData()
-  }, [])
+  }, [templateId])
 
   async function loadData() {
     try {
@@ -62,7 +62,6 @@ export default function NewPlanPage() {
       setAdvertisers(advertisersData)
       setTemplates(templatesData)
 
-      // 템플릿이 지정된 경우 적용
       if (templateId) {
         const template = templatesData.find(t => t.id === templateId)
         if (template) {
@@ -349,5 +348,13 @@ export default function NewPlanPage() {
         </div>
       </form>
     </div>
+  )
+}
+
+export default function NewPlanPage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center h-64"><p>로딩 중...</p></div>}>
+      <NewPlanForm />
+    </Suspense>
   )
 }
