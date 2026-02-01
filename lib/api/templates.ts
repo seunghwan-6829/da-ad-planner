@@ -1,6 +1,8 @@
 import { supabase, Template } from '@/lib/supabase'
 
-export async function getTemplates() {
+export async function getTemplates(): Promise<Template[]> {
+  if (!supabase) return []
+  
   const { data, error } = await supabase
     .from('templates')
     .select('*')
@@ -10,7 +12,9 @@ export async function getTemplates() {
   return data as Template[]
 }
 
-export async function getTemplate(id: string) {
+export async function getTemplate(id: string): Promise<Template | null> {
+  if (!supabase) return null
+  
   const { data, error } = await supabase
     .from('templates')
     .select('*')
@@ -21,7 +25,9 @@ export async function getTemplate(id: string) {
   return data as Template
 }
 
-export async function createTemplate(template: Omit<Template, 'id' | 'created_at'>) {
+export async function createTemplate(template: Omit<Template, 'id' | 'created_at'>): Promise<Template> {
+  if (!supabase) throw new Error('Supabase not configured')
+  
   const { data, error } = await supabase
     .from('templates')
     .insert(template)
@@ -32,7 +38,9 @@ export async function createTemplate(template: Omit<Template, 'id' | 'created_at
   return data as Template
 }
 
-export async function updateTemplate(id: string, template: Partial<Omit<Template, 'id' | 'created_at'>>) {
+export async function updateTemplate(id: string, template: Partial<Omit<Template, 'id' | 'created_at'>>): Promise<Template> {
+  if (!supabase) throw new Error('Supabase not configured')
+  
   const { data, error } = await supabase
     .from('templates')
     .update(template)
@@ -44,7 +52,9 @@ export async function updateTemplate(id: string, template: Partial<Omit<Template
   return data as Template
 }
 
-export async function deleteTemplate(id: string) {
+export async function deleteTemplate(id: string): Promise<void> {
+  if (!supabase) throw new Error('Supabase not configured')
+  
   const { error } = await supabase
     .from('templates')
     .delete()

@@ -1,6 +1,8 @@
 import { supabase, AdPlan } from '@/lib/supabase'
 
-export async function getPlans() {
+export async function getPlans(): Promise<AdPlan[]> {
+  if (!supabase) return []
+  
   const { data, error } = await supabase
     .from('ad_plans')
     .select(`
@@ -13,7 +15,9 @@ export async function getPlans() {
   return data as AdPlan[]
 }
 
-export async function getPlan(id: string) {
+export async function getPlan(id: string): Promise<AdPlan | null> {
+  if (!supabase) return null
+  
   const { data, error } = await supabase
     .from('ad_plans')
     .select(`
@@ -27,7 +31,9 @@ export async function getPlan(id: string) {
   return data as AdPlan
 }
 
-export async function createPlan(plan: Omit<AdPlan, 'id' | 'created_at' | 'advertiser'>) {
+export async function createPlan(plan: Omit<AdPlan, 'id' | 'created_at' | 'advertiser'>): Promise<AdPlan> {
+  if (!supabase) throw new Error('Supabase not configured')
+  
   const { data, error } = await supabase
     .from('ad_plans')
     .insert(plan)
@@ -38,7 +44,9 @@ export async function createPlan(plan: Omit<AdPlan, 'id' | 'created_at' | 'adver
   return data as AdPlan
 }
 
-export async function updatePlan(id: string, plan: Partial<Omit<AdPlan, 'id' | 'created_at' | 'advertiser'>>) {
+export async function updatePlan(id: string, plan: Partial<Omit<AdPlan, 'id' | 'created_at' | 'advertiser'>>): Promise<AdPlan> {
+  if (!supabase) throw new Error('Supabase not configured')
+  
   const { data, error } = await supabase
     .from('ad_plans')
     .update(plan)
@@ -50,7 +58,9 @@ export async function updatePlan(id: string, plan: Partial<Omit<AdPlan, 'id' | '
   return data as AdPlan
 }
 
-export async function deletePlan(id: string) {
+export async function deletePlan(id: string): Promise<void> {
+  if (!supabase) throw new Error('Supabase not configured')
+  
   const { error } = await supabase
     .from('ad_plans')
     .delete()
@@ -59,7 +69,9 @@ export async function deletePlan(id: string) {
   if (error) throw error
 }
 
-export async function getPlansByAdvertiser(advertiserId: string) {
+export async function getPlansByAdvertiser(advertiserId: string): Promise<AdPlan[]> {
+  if (!supabase) return []
+  
   const { data, error } = await supabase
     .from('ad_plans')
     .select('*')

@@ -1,6 +1,8 @@
 import { supabase, Advertiser } from '@/lib/supabase'
 
-export async function getAdvertisers() {
+export async function getAdvertisers(): Promise<Advertiser[]> {
+  if (!supabase) return []
+  
   const { data, error } = await supabase
     .from('advertisers')
     .select('*')
@@ -10,7 +12,9 @@ export async function getAdvertisers() {
   return data as Advertiser[]
 }
 
-export async function getAdvertiser(id: string) {
+export async function getAdvertiser(id: string): Promise<Advertiser | null> {
+  if (!supabase) return null
+  
   const { data, error } = await supabase
     .from('advertisers')
     .select('*')
@@ -21,7 +25,9 @@ export async function getAdvertiser(id: string) {
   return data as Advertiser
 }
 
-export async function createAdvertiser(advertiser: Omit<Advertiser, 'id' | 'created_at'>) {
+export async function createAdvertiser(advertiser: Omit<Advertiser, 'id' | 'created_at'>): Promise<Advertiser> {
+  if (!supabase) throw new Error('Supabase not configured')
+  
   const { data, error } = await supabase
     .from('advertisers')
     .insert(advertiser)
@@ -32,7 +38,9 @@ export async function createAdvertiser(advertiser: Omit<Advertiser, 'id' | 'crea
   return data as Advertiser
 }
 
-export async function updateAdvertiser(id: string, advertiser: Partial<Omit<Advertiser, 'id' | 'created_at'>>) {
+export async function updateAdvertiser(id: string, advertiser: Partial<Omit<Advertiser, 'id' | 'created_at'>>): Promise<Advertiser> {
+  if (!supabase) throw new Error('Supabase not configured')
+  
   const { data, error } = await supabase
     .from('advertisers')
     .update(advertiser)
@@ -44,7 +52,9 @@ export async function updateAdvertiser(id: string, advertiser: Partial<Omit<Adve
   return data as Advertiser
 }
 
-export async function deleteAdvertiser(id: string) {
+export async function deleteAdvertiser(id: string): Promise<void> {
+  if (!supabase) throw new Error('Supabase not configured')
+  
   const { error } = await supabase
     .from('advertisers')
     .delete()
