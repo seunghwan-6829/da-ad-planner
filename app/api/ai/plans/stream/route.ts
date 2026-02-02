@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server'
 
 const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages'
-const MODEL = 'claude-opus-4-5-20250514'
+const MODEL = 'claude-opus-4-5-20251101'
 const MAX_TOKENS = 2048
 
 interface AdvertiserInfo {
