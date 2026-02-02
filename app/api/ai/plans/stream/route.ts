@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server'
 
 const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages'
 const MODEL = 'claude-opus-4-5-20251101'
-const MAX_TOKENS = 2048
+const MAX_TOKENS = 4096  // 영상 대본용 증가
 
 interface AdvertiserInfo {
   guidelines_image?: string | null
@@ -96,36 +96,19 @@ ${advertiserSection}${guidelinesSection}${cautionsSection}${extraSection}
 ${advertiserSection}${guidelinesSection}${cautionsSection}${extraSection}
 
 === 대본 작성 규칙 ===
-1. 각 대본은 15~30초 분량의 짧은 영상 광고용
-2. 씬(Scene) 단위로 구성: 화면 설명 + 나레이션/자막
-3. 시선을 끄는 오프닝(훅)으로 시작
-4. 소구점이 있다면 각 대본에 최소 1개 이상 자연스럽게 녹여내기
-5. 지침서가 있다면 지침서의 톤앤매너, 스타일, 방향성을 반드시 따르기
+1. 각 대본은 약 30초 분량
+2. 씬(Scene) 단위로 구성 (씬 개수와 구성은 지침서 참고, 없으면 자유롭게)
+3. 각 씬에는 화면 설명, 나레이션, 자막 등 포함
+4. 소구점이 있다면 각 대본에 자연스럽게 녹여내기
+5. 지침서가 있다면 지침서의 톤앤매너, 스타일, 씬 구성을 반드시 따르기
 6. 주의사항이 있다면 절대 위반하지 않기
 7. 광고 심의에 걸리지 않는 표현 사용
-8. CTA(Call to Action)로 마무리
 
-=== 출력 형식 (이 형식 정확히 따를 것) ===
----
-[대본 1]
-Scene 1: (화면 설명)
-나레이션: "대사/나레이션"
+=== 출력 형식 ===
+각 대본은 "---"로 구분하고, [대본 N] 형식으로 시작.
+씬 구성은 지침서를 따르되, 없으면 자유롭게 작성.
 
-Scene 2: (화면 설명)
-자막: "자막 내용"
-나레이션: "대사/나레이션"
-
-Scene 3: (화면 설명)
-자막: "CTA 문구"
-
----
-[대본 2]
-(같은 형식으로)
-
----
-... (총 6개)
-
-다른 설명이나 서두 없이 위 형식으로 6개만 출력하세요.`
+다른 설명이나 서두 없이 6개만 출력하세요.`
   }
 }
 

@@ -52,6 +52,12 @@ export default function PlanDetailPage() {
   
   // 검토 상태
   const [reviewingIndex, setReviewingIndex] = useState<number | null>(null)
+  const [reviewModalOpen, setReviewModalOpen] = useState(false)
+  const [reviewModalData, setReviewModalData] = useState<{
+    index: number
+    original: CopyItem
+    review: { good: string; bad: string; suggestion: string; revised: string }
+  } | null>(null)
   
   // 베리에이션 상태
   const [variationIndex, setVariationIndex] = useState<number | null>(null)
@@ -337,7 +343,7 @@ export default function PlanDetailPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          copy: `${copy.title}: ${copy.description}`,
+          copy: formData.media_type === 'video' ? copy.description : `${copy.title}: ${copy.description}`,
           advertiserName: selectedAdvertiser?.name,
           mediaType: formData.media_type,
         }),
@@ -347,17 +353,61 @@ export default function PlanDetailPage() {
       
       const data = await res.json()
       
-      setAiResults(prev => {
-        const updated = [...prev]
-        updated[index] = { ...updated[index], review: data }
-        return updated
+      // 모달로 표시
+      setReviewModalData({
+        index,
+        original: copy,
+        review: data
       })
+      setReviewModalOpen(true)
     } catch (error) {
       console.error('검토 실패:', error)
       alert('검토에 실패했습니다.')
     } finally {
       setReviewingIndex(null)
     }
+  }
+
+  // 검토 결과 저장 (수정본으로 교체)
+  function saveReview() {
+    if (!reviewModalData) return
+    
+    const { index, review } = reviewModalData
+    
+    setAiResults(prev => {
+      const updated = [...prev]
+      // 수정본으로 교체
+      if (formData.media_type === 'video') {
+        // 영상: description 전체를 수정본으로
+        updated[index] = {
+          ...updated[index],
+          description: review.revised,
+          review: review
+        }
+      } else {
+        // 이미지: 메인카피: 서브카피 형식 파싱
+        const match = review.revised.match(/^(.+?):\s*(.+)$/)
+        if (match) {
+          updated[index] = {
+            title: match[1].trim(),
+            description: match[2].trim(),
+            review: review
+          }
+        } else {
+          updated[index] = { ...updated[index], description: review.revised, review: review }
+        }
+      }
+      return updated
+    })
+    
+    setReviewModalOpen(false)
+    setReviewModalData(null)
+  }
+
+  // 검토 취소
+  function cancelReview() {
+    setReviewModalOpen(false)
+    setReviewModalData(null)
   }
 
   // 베리에이션 기능
@@ -725,7 +775,7 @@ export default function PlanDetailPage() {
                   </pre>
                 </div>
               ) : aiResults.length > 0 ? (
-                <div className={formData.media_type === 'video' ? 'space-y-4' : 'grid grid-cols-2 gap-3'}>
+                <div className="grid grid-cols-2 gap-3">
                   {aiResults.map((result, index) => (
                     <div key={index} className="bg-white p-3 rounded-lg shadow-sm border border-purple-100">
                       <div className="flex items-start justify-between mb-2">
@@ -741,26 +791,16 @@ export default function PlanDetailPage() {
                         </Button>
                       </div>
                       {formData.media_type === 'video' ? (
-                        <pre className="text-xs text-gray-600 mb-3 whitespace-pre-wrap bg-gray-50 p-2 rounded max-h-48 overflow-y-auto">{result.description}</pre>
+                        <pre className="text-xs text-gray-600 mb-3 whitespace-pre-wrap bg-gray-50 p-2 rounded max-h-64 overflow-y-auto">{result.description}</pre>
                       ) : (
                         <div className="text-xs text-gray-600 mb-3">{result.description}</div>
                       )}
                       
-                      {/* 검토 결과 */}
+                      {/* 검토 완료 표시 */}
                       {result.review && (
-                        <div className="space-y-2 mt-3 pt-3 border-t text-xs">
-                          <div className="bg-green-50 text-green-800 p-2 rounded">
-                            <span className="font-medium">👍 좋은 점: </span>{result.review.good}
-                          </div>
-                          <div className="bg-red-50 text-red-800 p-2 rounded">
-                            <span className="font-medium">👎 아쉬운 점: </span>{result.review.bad}
-                          </div>
-                          <div className="bg-blue-50 text-blue-800 p-2 rounded">
-                            <span className="font-medium">💡 수정 제안: </span>{result.review.suggestion}
-                          </div>
-                          <div className="bg-purple-100 text-purple-900 p-2 rounded font-medium">
-                            ✨ 수정본: {result.review.revised}
-                          </div>
+                        <div className="mt-2 text-xs text-green-600 flex items-center gap-1">
+                          <Check className="h-3 w-3" />
+                          검토 완료 (수정됨)
                         </div>
                       )}
                       
@@ -928,6 +968,92 @@ export default function PlanDetailPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* 검토 모달 */}
+      {reviewModalOpen && reviewModalData && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
+            {/* 헤더 */}
+            <div className="px-6 py-4 border-b bg-gray-50">
+              <h3 className="text-lg font-semibold">
+                카피 검토 - {reviewModalData.index + 1}번 {formData.media_type === 'video' ? '대본' : '카피'}
+              </h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                왼쪽은 원본, 오른쪽은 AI 수정본입니다. 저장하면 수정본으로 교체됩니다.
+              </p>
+            </div>
+
+            {/* 본문 */}
+            <div className="flex-1 overflow-auto p-6">
+              {/* 검토 요약 */}
+              <div className="grid grid-cols-3 gap-3 mb-6">
+                <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                  <div className="text-xs font-medium text-green-700 mb-1">👍 좋은 점</div>
+                  <p className="text-sm text-green-800">{reviewModalData.review.good}</p>
+                </div>
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                  <div className="text-xs font-medium text-red-700 mb-1">👎 아쉬운 점</div>
+                  <p className="text-sm text-red-800">{reviewModalData.review.bad}</p>
+                </div>
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  <div className="text-xs font-medium text-blue-700 mb-1">💡 수정 제안</div>
+                  <p className="text-sm text-blue-800">{reviewModalData.review.suggestion}</p>
+                </div>
+              </div>
+
+              {/* 원본 vs 수정본 비교 */}
+              <div className="grid grid-cols-2 gap-4">
+                {/* 원본 */}
+                <div className="border rounded-lg overflow-hidden">
+                  <div className="bg-gray-100 px-4 py-2 border-b">
+                    <span className="font-medium text-sm">원본</span>
+                  </div>
+                  <div className="p-4">
+                    {formData.media_type === 'video' ? (
+                      <pre className="whitespace-pre-wrap text-sm text-gray-700 bg-gray-50 p-3 rounded max-h-80 overflow-y-auto">
+                        {reviewModalData.original.description}
+                      </pre>
+                    ) : (
+                      <div>
+                        <div className="font-medium text-purple-700 mb-2">{reviewModalData.original.title}</div>
+                        <div className="text-gray-600">{reviewModalData.original.description}</div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* 수정본 */}
+                <div className="border-2 border-purple-300 rounded-lg overflow-hidden">
+                  <div className="bg-purple-100 px-4 py-2 border-b border-purple-200">
+                    <span className="font-medium text-sm text-purple-800">✨ 수정본</span>
+                  </div>
+                  <div className="p-4">
+                    {formData.media_type === 'video' ? (
+                      <pre className="whitespace-pre-wrap text-sm text-gray-700 bg-purple-50 p-3 rounded max-h-80 overflow-y-auto">
+                        {reviewModalData.review.revised}
+                      </pre>
+                    ) : (
+                      <div className="bg-purple-50 p-3 rounded">
+                        <div className="font-medium text-purple-700">{reviewModalData.review.revised}</div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 푸터 버튼 */}
+            <div className="px-6 py-4 border-t bg-gray-50 flex justify-end gap-3">
+              <Button variant="outline" onClick={cancelReview}>
+                취소
+              </Button>
+              <Button onClick={saveReview} className="bg-purple-600 hover:bg-purple-700">
+                저장 (수정본으로 교체)
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
