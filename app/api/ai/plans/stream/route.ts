@@ -36,7 +36,7 @@ function buildPrompt(
       advertiserSection += `제품: ${advertiser.products.join(', ')}\n`
     }
     if (advertiser?.appeals && advertiser.appeals.length > 0) {
-      advertiserSection += `\n★ 소구점 (모든 카피에 반드시 1개 이상 반영할 것):\n`
+      advertiserSection += `\n★ 소구점 (모든 대본에 반드시 1개 이상 반영할 것):\n`
       advertiser.appeals.forEach((appeal, i) => {
         advertiserSection += `  ${i + 1}. ${appeal}\n`
       })
@@ -60,8 +60,10 @@ function buildPrompt(
     ? `\n\n=== 추가 요청 ===\n${extraPrompt.trim()}\n`
     : ''
 
-  return `당신은 10년 경력의 DA(디스플레이 광고) 전문 카피라이터입니다.
-${typeLabel} 광고 소재용 카피를 정확히 6개 작성해주세요.
+  // 이미지 vs 영상에 따라 다른 프롬프트
+  if (mediaType === 'image') {
+    return `당신은 10년 경력의 DA(디스플레이 광고) 전문 카피라이터입니다.
+이미지 광고 소재용 카피를 정확히 6개 작성해주세요.
 
 중요: 아래 정보를 모두 꼼꼼히 읽고, 지침서와 소구점을 반드시 반영해서 작성하세요.
 ${advertiserSection}${guidelinesSection}${cautionsSection}${extraSection}
@@ -85,6 +87,46 @@ ${advertiserSection}${guidelinesSection}${cautionsSection}${extraSection}
 6. 메인카피: 서브카피 설명
 
 다른 설명이나 서두 없이 위 형식으로 6개만 출력하세요.`
+  } else {
+    // 영상 광고 대본 형식
+    return `당신은 10년 경력의 영상 광고 대본 전문 작가입니다.
+영상 광고 소재용 대본을 정확히 6개 작성해주세요.
+
+중요: 아래 정보를 모두 꼼꼼히 읽고, 지침서와 소구점을 반드시 반영해서 작성하세요.
+${advertiserSection}${guidelinesSection}${cautionsSection}${extraSection}
+
+=== 대본 작성 규칙 ===
+1. 각 대본은 15~30초 분량의 짧은 영상 광고용
+2. 씬(Scene) 단위로 구성: 화면 설명 + 나레이션/자막
+3. 시선을 끄는 오프닝(훅)으로 시작
+4. 소구점이 있다면 각 대본에 최소 1개 이상 자연스럽게 녹여내기
+5. 지침서가 있다면 지침서의 톤앤매너, 스타일, 방향성을 반드시 따르기
+6. 주의사항이 있다면 절대 위반하지 않기
+7. 광고 심의에 걸리지 않는 표현 사용
+8. CTA(Call to Action)로 마무리
+
+=== 출력 형식 (이 형식 정확히 따를 것) ===
+---
+[대본 1]
+Scene 1: (화면 설명)
+나레이션: "대사/나레이션"
+
+Scene 2: (화면 설명)
+자막: "자막 내용"
+나레이션: "대사/나레이션"
+
+Scene 3: (화면 설명)
+자막: "CTA 문구"
+
+---
+[대본 2]
+(같은 형식으로)
+
+---
+... (총 6개)
+
+다른 설명이나 서두 없이 위 형식으로 6개만 출력하세요.`
+  }
 }
 
 export async function POST(request: NextRequest) {

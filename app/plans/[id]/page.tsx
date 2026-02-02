@@ -264,14 +264,43 @@ export default function PlanDetailPage() {
               setStreamText(fullText)
             }
             if (data.done) {
-              const lines = fullText.split('\n').filter(l => l.trim())
               const results: CopyItem[] = []
-              for (const line of lines) {
-                const match = line.match(/^\d+\.\s*(.+?):\s*(.+)$/)
-                if (match) {
-                  results.push({ title: match[1].trim(), description: match[2].trim() })
+              
+              if (formData.media_type === 'video') {
+                // 영상 대본 파싱: [대본 N] 또는 --- 기준으로 분리
+                const scripts = fullText.split(/---|\[대본\s*\d+\]/).filter(s => s.trim())
+                for (const script of scripts) {
+                  const trimmed = script.trim()
+                  if (trimmed.length > 10) { // 최소 길이 체크
+                    // 첫 번째 줄을 제목으로, 나머지를 내용으로
+                    const lines = trimmed.split('\n').filter(l => l.trim())
+                    if (lines.length > 0) {
+                      // Scene 1의 나레이션이나 첫 줄을 제목으로
+                      let title = ''
+                      const narationMatch = trimmed.match(/나레이션:\s*"?([^"\n]+)"?/)
+                      if (narationMatch) {
+                        title = narationMatch[1].substring(0, 30) + (narationMatch[1].length > 30 ? '...' : '')
+                      } else {
+                        title = lines[0].replace(/Scene\s*\d+:?\s*/i, '').substring(0, 30)
+                      }
+                      results.push({ 
+                        title: title || `대본 ${results.length + 1}`,
+                        description: trimmed 
+                      })
+                    }
+                  }
+                }
+              } else {
+                // 이미지 카피 파싱
+                const lines = fullText.split('\n').filter(l => l.trim())
+                for (const line of lines) {
+                  const match = line.match(/^\d+\.\s*(.+?):\s*(.+)$/)
+                  if (match) {
+                    results.push({ title: match[1].trim(), description: match[2].trim() })
+                  }
                 }
               }
+              
               setAiResults(results)
               // 생성되면 바로 히스토리에 추가
               if (results.length > 0) {
@@ -681,7 +710,7 @@ export default function PlanDetailPage() {
             <CardHeader className="pb-2">
               <CardTitle className="text-base text-purple-800 flex items-center gap-2">
                 <Sparkles className="h-4 w-4" />
-                AI 생성 카피 ({formData.media_type === 'image' ? '이미지' : '영상'})
+                AI 생성 {formData.media_type === 'image' ? '카피 (이미지)' : '대본 (영상)'}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -696,7 +725,7 @@ export default function PlanDetailPage() {
                   </pre>
                 </div>
               ) : aiResults.length > 0 ? (
-                <div className="grid grid-cols-2 gap-3">
+                <div className={formData.media_type === 'video' ? 'space-y-4' : 'grid grid-cols-2 gap-3'}>
                   {aiResults.map((result, index) => (
                     <div key={index} className="bg-white p-3 rounded-lg shadow-sm border border-purple-100">
                       <div className="flex items-start justify-between mb-2">
@@ -706,12 +735,16 @@ export default function PlanDetailPage() {
                           variant="ghost" 
                           size="sm" 
                           className="h-6 w-6 p-0"
-                          onClick={() => copyToClipboard(`${result.title}: ${result.description}`)}
+                          onClick={() => copyToClipboard(formData.media_type === 'video' ? result.description : `${result.title}: ${result.description}`)}
                         >
                           <Copy className="h-3 w-3" />
                         </Button>
                       </div>
-                      <div className="text-xs text-gray-600 mb-3">{result.description}</div>
+                      {formData.media_type === 'video' ? (
+                        <pre className="text-xs text-gray-600 mb-3 whitespace-pre-wrap bg-gray-50 p-2 rounded max-h-48 overflow-y-auto">{result.description}</pre>
+                      ) : (
+                        <div className="text-xs text-gray-600 mb-3">{result.description}</div>
+                      )}
                       
                       {/* 검토 결과 */}
                       {result.review && (

@@ -37,8 +37,42 @@ export async function POST(request: NextRequest) {
   if (guidelines) context += `지침서: ${guidelines}\n`
   if (advertiser?.cautions) context += `주의사항: ${advertiser.cautions}\n`
 
-  const prompt = `당신은 광고 카피 전문 카피라이터입니다.
-아래 ${mediaType === 'image' ? '이미지' : '영상'} 광고 카피의 베리에이션을 6개 만들어주세요.
+  const isVideo = mediaType === 'video'
+
+  const prompt = isVideo
+    ? `당신은 영상 광고 대본 전문 작가입니다.
+아래 영상 광고 대본의 베리에이션을 6개 만들어주세요.
+
+원본 대본: "${baseCopy}"
+
+${context ? `[광고주 정보]\n${context}` : ''}
+
+베리에이션 규칙:
+1. 원본 대본의 핵심 메시지와 톤은 유지
+2. 다양한 연출 방식으로 변형 (유머, 감성, 정보 전달 등)
+3. 각각 다른 느낌을 주되 일관성 유지
+4. 지침서가 있다면 반드시 따르기
+5. 소구점 반영하기
+
+출력 형식 (정확히 따를 것):
+---
+[대본 1]
+Scene 1: (화면 설명)
+나레이션: "대사"
+
+Scene 2: (화면 설명)
+자막: "자막 내용"
+
+---
+[대본 2]
+(같은 형식으로)
+
+---
+... (총 6개)
+
+다른 설명 없이 6개만 출력하세요.`
+    : `당신은 광고 카피 전문 카피라이터입니다.
+아래 이미지 광고 카피의 베리에이션을 6개 만들어주세요.
 
 원본 카피: "${baseCopy}"
 
@@ -85,13 +119,33 @@ ${context ? `[광고주 정보]\n${context}` : ''}
     const text = data.content?.[0]?.text || ''
     
     // 파싱
-    const lines = text.split('\n').filter((l: string) => l.trim())
     const variations: { title: string; description: string }[] = []
     
-    for (const line of lines) {
-      const match = line.match(/^\d+\.\s*(.+?):\s*(.+)$/)
-      if (match) {
-        variations.push({ title: match[1].trim(), description: match[2].trim() })
+    if (isVideo) {
+      // 영상 대본 파싱
+      const scripts = text.split(/---|\[대본\s*\d+\]/).filter((s: string) => s.trim())
+      for (const script of scripts) {
+        const trimmed = script.trim()
+        if (trimmed.length > 10) {
+          let title = ''
+          const narationMatch = trimmed.match(/나레이션:\s*"?([^"\n]+)"?/)
+          if (narationMatch) {
+            title = narationMatch[1].substring(0, 30) + (narationMatch[1].length > 30 ? '...' : '')
+          } else {
+            const lines = trimmed.split('\n').filter((l: string) => l.trim())
+            title = lines[0]?.replace(/Scene\s*\d+:?\s*/i, '').substring(0, 30) || `대본 ${variations.length + 1}`
+          }
+          variations.push({ title, description: trimmed })
+        }
+      }
+    } else {
+      // 이미지 카피 파싱
+      const lines = text.split('\n').filter((l: string) => l.trim())
+      for (const line of lines) {
+        const match = line.match(/^\d+\.\s*(.+?):\s*(.+)$/)
+        if (match) {
+          variations.push({ title: match[1].trim(), description: match[2].trim() })
+        }
       }
     }
     
