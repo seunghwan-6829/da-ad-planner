@@ -23,6 +23,8 @@ export interface Advertiser {
   forbidden_words: string[] | null
   required_phrases: string[] | null
   guidelines: string | null
+  products: string[] | null
+  cautions: string | null
   created_at: string
 }
 

@@ -16,13 +16,29 @@ export default function NewAdvertiserPage() {
   const [loading, setLoading] = useState(false)
   const [formData, setFormData] = useState({
     name: '',
-    brand_color: '#3B82F6',
-    brand_font: '',
-    tone_manner: '',
-    forbidden_words: '',
-    required_phrases: '',
     guidelines: '',
+    products: [''],
+    cautions: '',
   })
+
+  function updateProduct(index: number, value: string) {
+    setFormData((prev) => {
+      const next = [...prev.products]
+      next[index] = value
+      return { ...prev, products: next }
+    })
+  }
+
+  function addProduct() {
+    setFormData((prev) => ({ ...prev, products: [...prev.products, ''] }))
+  }
+
+  function removeProduct(index: number) {
+    setFormData((prev) => {
+      const next = prev.products.filter((_, i) => i !== index)
+      return { ...prev, products: next.length ? next : [''] }
+    })
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -34,18 +50,21 @@ export default function NewAdvertiserPage() {
 
     setLoading(true)
     try {
+      const products = formData.products
+        .map((p) => p.trim())
+        .filter(Boolean)
+
       await createAdvertiser({
         name: formData.name,
-        brand_color: formData.brand_color || null,
-        brand_font: formData.brand_font || null,
-        tone_manner: formData.tone_manner || null,
-        forbidden_words: formData.forbidden_words 
-          ? formData.forbidden_words.split(',').map(w => w.trim()).filter(Boolean)
-          : null,
-        required_phrases: formData.required_phrases
-          ? formData.required_phrases.split(',').map(w => w.trim()).filter(Boolean)
-          : null,
         guidelines: formData.guidelines || null,
+        products: products.length ? products : null,
+        cautions: formData.cautions || null,
+        // 기존 컬럼은 더 이상 UI에서 쓰지 않지만, 생성 시 명시적으로 null 처리
+        brand_color: null,
+        brand_font: null,
+        tone_manner: null,
+        forbidden_words: null,
+        required_phrases: null,
       })
       router.push('/advertisers')
     } catch (error) {
@@ -93,44 +112,22 @@ export default function NewAdvertiserPage() {
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               />
             </div>
+          </CardContent>
+        </Card>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="brand_color">브랜드 컬러</Label>
-                <div className="flex gap-2">
-                  <Input
-                    type="color"
-                    id="brand_color"
-                    className="w-16 h-10 p-1"
-                    value={formData.brand_color}
-                    onChange={(e) => setFormData({ ...formData, brand_color: e.target.value })}
-                  />
-                  <Input
-                    value={formData.brand_color}
-                    onChange={(e) => setFormData({ ...formData, brand_color: e.target.value })}
-                    placeholder="#3B82F6"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="brand_font">브랜드 폰트</Label>
-                <Input
-                  id="brand_font"
-                  placeholder="예: Pretendard, Noto Sans KR"
-                  value={formData.brand_font}
-                  onChange={(e) => setFormData({ ...formData, brand_font: e.target.value })}
-                />
-              </div>
-            </div>
-
+        <Card className="mt-4">
+          <CardHeader>
+            <CardTitle>지침서</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="tone_manner">톤앤매너</Label>
+              <Label htmlFor="guidelines">지침서 내용</Label>
               <Textarea
-                id="tone_manner"
-                placeholder="예: 친근하고 따뜻한 톤, 전문적이면서도 쉬운 설명"
-                value={formData.tone_manner}
-                onChange={(e) => setFormData({ ...formData, tone_manner: e.target.value })}
+                id="guidelines"
+                rows={6}
+                placeholder="클로드가 카피를 쓸 때 꼭 참고해야 할 브랜드/상품 지침서를 자유롭게 적어주세요."
+                value={formData.guidelines}
+                onChange={(e) => setFormData({ ...formData, guidelines: e.target.value })}
               />
             </div>
           </CardContent>
@@ -138,37 +135,58 @@ export default function NewAdvertiserPage() {
 
         <Card className="mt-4">
           <CardHeader>
-            <CardTitle>카피라이팅 가이드</CardTitle>
+            <CardTitle>제품 정보</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="forbidden_words">금지어 (쉼표로 구분)</Label>
-              <Input
-                id="forbidden_words"
-                placeholder="예: 최고, 1등, 완벽"
-                value={formData.forbidden_words}
-                onChange={(e) => setFormData({ ...formData, forbidden_words: e.target.value })}
-              />
+            <p className="text-sm text-muted-foreground">
+              이 광고주가 보유한 제품 이름을 입력하세요. 여러 개라면 + 버튼으로 추가할 수 있습니다.
+            </p>
+            <div className="space-y-3">
+              {formData.products.map((product, index) => (
+                <div key={index} className="flex items-center gap-2">
+                  <Input
+                    placeholder="예: 이공이샴푸 500ml"
+                    value={product}
+                    onChange={(e) => updateProduct(index, e.target.value)}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={() => removeProduct(index)}
+                    disabled={formData.products.length === 1}
+                  >
+                    -
+                  </Button>
+                  {index === formData.products.length - 1 && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={addProduct}
+                    >
+                      +
+                    </Button>
+                  )}
+                </div>
+              ))}
             </div>
+          </CardContent>
+        </Card>
 
+        <Card className="mt-4">
+          <CardHeader>
+            <CardTitle>주의사항 (선택)</CardTitle>
+          </CardHeader>
+          <CardContent>
             <div className="space-y-2">
-              <Label htmlFor="required_phrases">필수 문구 (쉼표로 구분)</Label>
-              <Input
-                id="required_phrases"
-                placeholder="예: 공식 온라인몰, 무료배송"
-                value={formData.required_phrases}
-                onChange={(e) => setFormData({ ...formData, required_phrases: e.target.value })}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="guidelines">상세 가이드라인</Label>
+              <Label htmlFor="cautions">하면 안 되는 것 / 꼭 피해야 할 상황</Label>
               <Textarea
-                id="guidelines"
-                rows={6}
-                placeholder="광고 소재 제작 시 참고할 상세 가이드라인을 입력하세요..."
-                value={formData.guidelines}
-                onChange={(e) => setFormData({ ...formData, guidelines: e.target.value })}
+                id="cautions"
+                rows={4}
+                placeholder="예: 의료 효능을 단정적으로 표현하지 말 것, 경쟁사 브랜드 직접 언급 금지 등"
+                value={formData.cautions}
+                onChange={(e) => setFormData({ ...formData, cautions: e.target.value })}
               />
             </div>
           </CardContent>
