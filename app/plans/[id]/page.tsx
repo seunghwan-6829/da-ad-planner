@@ -2,29 +2,16 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter, useParams } from 'next/navigation'
-import { ArrowLeft, Save, Image, Video, Copy, Check } from 'lucide-react'
+import { ArrowLeft, Save, Image, Video, Copy, Check, Sparkles, Loader2 } from 'lucide-react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { getPlan, updatePlan } from '@/lib/api/plans'
 import { getAdvertisers } from '@/lib/api/advertisers'
 import { AdPlan, Advertiser } from '@/lib/supabase'
-
-const COMMON_SIZES = [
-  '1080x1080 (Instagram Square)',
-  '1200x628 (Facebook Feed)',
-  '1080x1920 (Story/Reels)',
-  '300x250 (Medium Rectangle)',
-  '728x90 (Leaderboard)',
-  '160x600 (Wide Skyscraper)',
-  '320x100 (Mobile Banner)',
-  '1920x1080 (YouTube)',
-]
 
 export default function PlanDetailPage() {
   const router = useRouter()
@@ -38,16 +25,16 @@ export default function PlanDetailPage() {
   const [advertisers, setAdvertisers] = useState<Advertiser[]>([])
   const [selectedAdvertiser, setSelectedAdvertiser] = useState<Advertiser | null>(null)
   
+  // AI 카피 생성 상태
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiResults, setAiResults] = useState<{ title: string; description: string }[]>([])
+  const [streamText, setStreamText] = useState('')
+  const [showAiPanel, setShowAiPanel] = useState(false)
+  
   const [formData, setFormData] = useState({
     title: '',
     advertiser_id: '',
     media_type: 'image' as 'image' | 'video',
-    size: '',
-    concept: '',
-    main_copy: '',
-    sub_copy: '',
-    cta_text: '',
-    notes: '',
   })
 
   useEffect(() => {
@@ -68,12 +55,6 @@ export default function PlanDetailPage() {
         title: planData.title,
         advertiser_id: planData.advertiser_id || '',
         media_type: planData.media_type,
-        size: planData.size || '',
-        concept: planData.concept || '',
-        main_copy: planData.main_copy || '',
-        sub_copy: planData.sub_copy || '',
-        cta_text: planData.cta_text || '',
-        notes: planData.notes || '',
       })
 
       if (planData.advertiser_id) {
@@ -108,12 +89,12 @@ export default function PlanDetailPage() {
         title: formData.title,
         advertiser_id: formData.advertiser_id || null,
         media_type: formData.media_type,
-        size: formData.size || null,
-        concept: formData.concept || null,
-        main_copy: formData.main_copy || null,
-        sub_copy: formData.sub_copy || null,
-        cta_text: formData.cta_text || null,
-        notes: formData.notes || null,
+        size: null,
+        concept: null,
+        main_copy: null,
+        sub_copy: null,
+        cta_text: null,
+        notes: null,
       })
       alert('저장되었습니다.')
     } catch (error) {
@@ -125,27 +106,97 @@ export default function PlanDetailPage() {
   }
 
   function copyToClipboard() {
-    const text = `
-[광고 기획서: ${formData.title}]
+    let text = `[광고 기획서: ${formData.title}]\n\n`
+    text += `소재 유형: ${formData.media_type === 'image' ? '이미지' : '영상'}\n`
+    if (selectedAdvertiser) {
+      text += `광고주: ${selectedAdvertiser.name}\n`
+    }
+    if (aiResults.length > 0) {
+      text += `\n[AI 생성 카피]\n`
+      aiResults.forEach((r, i) => {
+        text += `${i + 1}. ${r.title}: ${r.description}\n`
+      })
+    }
 
-소재 유형: ${formData.media_type === 'image' ? '이미지' : '영상'}
-사이즈: ${formData.size || '-'}
-
-[컨셉]
-${formData.concept || '-'}
-
-[카피]
-메인: ${formData.main_copy || '-'}
-서브: ${formData.sub_copy || '-'}
-CTA: ${formData.cta_text || '-'}
-
-[메모]
-${formData.notes || '-'}
-    `.trim()
-
-    navigator.clipboard.writeText(text)
+    navigator.clipboard.writeText(text.trim())
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
+  }
+
+  // AI 카피 생성
+  async function generateAiCopies() {
+    setAiLoading(true)
+    setAiResults([])
+    setStreamText('')
+    setShowAiPanel(true)
+
+    try {
+      const res = await fetch('/api/ai/plans/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mediaType: formData.media_type,
+          advertiserName: selectedAdvertiser?.name,
+          advertiser: selectedAdvertiser ? {
+            guidelines: selectedAdvertiser.guidelines,
+            products: selectedAdvertiser.products,
+            appeals: selectedAdvertiser.appeals,
+            cautions: selectedAdvertiser.cautions,
+          } : null,
+        }),
+      })
+
+      if (!res.ok) {
+        throw new Error('API 오류')
+      }
+
+      const reader = res.body?.getReader()
+      if (!reader) throw new Error('스트림 읽기 불가')
+
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let fullText = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        
+        buffer += decoder.decode(value, { stream: true })
+        const events = buffer.split('\n\n')
+        buffer = events.pop() ?? ''
+
+        for (const event of events) {
+          const dataLine = event.split('\n').find(l => l.startsWith('data: '))
+          if (!dataLine) continue
+          try {
+            const data = JSON.parse(dataLine.slice(6))
+            if (data.text) {
+              fullText += data.text
+              setStreamText(fullText)
+            }
+            if (data.done) {
+              // 파싱해서 결과로 변환
+              const lines = fullText.split('\n').filter(l => l.trim())
+              const results: { title: string; description: string }[] = []
+              for (const line of lines) {
+                const match = line.match(/^\d+\.\s*(.+?):\s*(.+)$/)
+                if (match) {
+                  results.push({ title: match[1].trim(), description: match[2].trim() })
+                }
+              }
+              setAiResults(results)
+            }
+          } catch {
+            // ignore
+          }
+        }
+      }
+    } catch (error) {
+      console.error('AI 생성 실패:', error)
+      alert('AI 카피 생성에 실패했습니다.')
+    } finally {
+      setAiLoading(false)
+    }
   }
 
   if (loading) {
@@ -165,7 +216,7 @@ ${formData.notes || '-'}
   }
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <div className="max-w-3xl mx-auto space-y-6 pb-32">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <Link href="/plans">
@@ -246,122 +297,39 @@ ${formData.notes || '-'}
                 </Select>
               </div>
             </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="size">사이즈</Label>
-              <Select
-                id="size"
-                value={formData.size}
-                onChange={(e) => setFormData({ ...formData, size: e.target.value })}
-              >
-                <option value="">사이즈 선택</option>
-                {COMMON_SIZES.map((size) => (
-                  <option key={size} value={size}>{size}</option>
-                ))}
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="concept">컨셉 / 기획 의도</Label>
-              <Textarea
-                id="concept"
-                rows={3}
-                value={formData.concept}
-                onChange={(e) => setFormData({ ...formData, concept: e.target.value })}
-              />
-            </div>
           </CardContent>
         </Card>
 
-        <Card className="mt-4">
-          <CardHeader>
-            <CardTitle>카피라이팅</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="main_copy">메인 카피</Label>
-              <Input
-                id="main_copy"
-                value={formData.main_copy}
-                onChange={(e) => setFormData({ ...formData, main_copy: e.target.value })}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="sub_copy">서브 카피</Label>
-              <Textarea
-                id="sub_copy"
-                value={formData.sub_copy}
-                onChange={(e) => setFormData({ ...formData, sub_copy: e.target.value })}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="cta_text">CTA</Label>
-              <Input
-                id="cta_text"
-                value={formData.cta_text}
-                onChange={(e) => setFormData({ ...formData, cta_text: e.target.value })}
-              />
-            </div>
-          </CardContent>
-        </Card>
-
+        {/* 선택된 광고주 정보 표시 */}
         {selectedAdvertiser && (
           <Card className="mt-4 border-blue-200 bg-blue-50">
             <CardHeader className="pb-2">
               <CardTitle className="text-base text-blue-800">
-                {selectedAdvertiser.name} 브랜드 가이드라인
+                {selectedAdvertiser.name} 정보
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3 text-sm">
-              {selectedAdvertiser.tone_manner && (
+            <CardContent className="space-y-2 text-sm">
+              {selectedAdvertiser.products && selectedAdvertiser.products.length > 0 && (
                 <div>
-                  <span className="text-blue-700 font-medium">톤앤매너: </span>
-                  <span className="text-blue-900">{selectedAdvertiser.tone_manner}</span>
+                  <span className="text-blue-700 font-medium">제품: </span>
+                  <span className="text-blue-900">{selectedAdvertiser.products.join(', ')}</span>
                 </div>
               )}
-              {selectedAdvertiser.forbidden_words && selectedAdvertiser.forbidden_words.length > 0 && (
+              {selectedAdvertiser.appeals && selectedAdvertiser.appeals.length > 0 && (
                 <div>
-                  <span className="text-blue-700 font-medium">금지어: </span>
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {selectedAdvertiser.forbidden_words.map((word, i) => (
-                      <Badge key={i} variant="destructive" className="text-xs">
-                        {word}
-                      </Badge>
-                    ))}
-                  </div>
+                  <span className="text-blue-700 font-medium">소구점: </span>
+                  <span className="text-blue-900">{selectedAdvertiser.appeals.join(', ')}</span>
                 </div>
               )}
-              {selectedAdvertiser.required_phrases && selectedAdvertiser.required_phrases.length > 0 && (
+              {selectedAdvertiser.guidelines && (
                 <div>
-                  <span className="text-blue-700 font-medium">필수 문구: </span>
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {selectedAdvertiser.required_phrases.map((phrase, i) => (
-                      <Badge key={i} variant="success" className="text-xs">
-                        {phrase}
-                      </Badge>
-                    ))}
-                  </div>
+                  <span className="text-blue-700 font-medium">지침서: </span>
+                  <span className="text-blue-900 line-clamp-2">{selectedAdvertiser.guidelines}</span>
                 </div>
               )}
             </CardContent>
           </Card>
         )}
-
-        <Card className="mt-4">
-          <CardHeader>
-            <CardTitle>추가 메모</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Textarea
-              id="notes"
-              rows={4}
-              value={formData.notes}
-              onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-            />
-          </CardContent>
-        </Card>
 
         <div className="flex justify-end gap-3 mt-6">
           <Link href="/plans">
@@ -373,6 +341,65 @@ ${formData.notes || '-'}
           </Button>
         </div>
       </form>
+
+      {/* AI 생성 결과 패널 */}
+      {showAiPanel && (
+        <Card className="mt-6 border-purple-200 bg-purple-50">
+          <CardHeader>
+            <CardTitle className="text-purple-800 flex items-center gap-2">
+              <Sparkles className="h-5 w-5" />
+              AI 생성 카피 ({formData.media_type === 'image' ? '이미지' : '영상'})
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {aiLoading ? (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-purple-700">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>카피 생성 중...</span>
+                </div>
+                <pre className="whitespace-pre-wrap text-sm text-purple-900 bg-white/50 p-3 rounded">
+                  {streamText || '...'}
+                </pre>
+              </div>
+            ) : aiResults.length > 0 ? (
+              <div className="space-y-3">
+                {aiResults.map((result, index) => (
+                  <div key={index} className="bg-white p-3 rounded-lg shadow-sm border border-purple-100">
+                    <div className="font-medium text-purple-800">{index + 1}. {result.title}</div>
+                    <div className="text-sm text-gray-600 mt-1">{result.description}</div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-purple-700">생성된 카피가 없습니다.</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* 하단 중앙 플로팅 버튼 */}
+      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50">
+        <Button
+          type="button"
+          size="lg"
+          className="shadow-lg px-8 py-6 text-lg bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
+          onClick={generateAiCopies}
+          disabled={aiLoading}
+        >
+          {aiLoading ? (
+            <>
+              <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+              생성 중...
+            </>
+          ) : (
+            <>
+              <Sparkles className="mr-2 h-5 w-5" />
+              AI 카피 6개 생성
+            </>
+          )}
+        </Button>
+      </div>
     </div>
   )
 }
