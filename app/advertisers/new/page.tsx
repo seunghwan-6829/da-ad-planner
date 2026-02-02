@@ -50,7 +50,13 @@ export default function NewAdvertiserPage() {
       router.push('/advertisers')
     } catch (error) {
       console.error('광고주 등록 실패:', error)
-      alert('등록에 실패했습니다.')
+      const msg = error instanceof Error ? error.message : ''
+      const isSupabase = msg.includes('Supabase') || msg.includes('supabase') || msg.includes('PGRST')
+      alert(
+        isSupabase || !msg
+          ? '등록에 실패했습니다. Supabase 연동을 확인해주세요.\n\n1) .env.local에 NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY 설정\n2) Supabase SQL Editor에서 supabase-schema.sql 실행\n3) 개발 서버 재시작 (npm run dev)'
+          : `등록에 실패했습니다. (${msg})`
+      )
     } finally {
       setLoading(false)
     }
