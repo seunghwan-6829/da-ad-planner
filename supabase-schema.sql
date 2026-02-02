@@ -8,7 +8,8 @@
 CREATE TABLE IF NOT EXISTS advertisers (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL,
-  guidelines TEXT,
+  guidelines_image TEXT,
+  guidelines_video TEXT,
   products TEXT[],
   appeals TEXT[],
   cautions TEXT,
@@ -16,10 +17,14 @@ CREATE TABLE IF NOT EXISTS advertisers (
 );
 
 -- 기존 테이블에 새 컬럼 추가 (이미 테이블이 있을 때)
-ALTER TABLE advertisers ADD COLUMN IF NOT EXISTS guidelines TEXT;
+ALTER TABLE advertisers ADD COLUMN IF NOT EXISTS guidelines_image TEXT;
+ALTER TABLE advertisers ADD COLUMN IF NOT EXISTS guidelines_video TEXT;
 ALTER TABLE advertisers ADD COLUMN IF NOT EXISTS products TEXT[];
 ALTER TABLE advertisers ADD COLUMN IF NOT EXISTS appeals TEXT[];
 ALTER TABLE advertisers ADD COLUMN IF NOT EXISTS cautions TEXT;
+
+-- 기존 guidelines 컬럼 삭제 (있으면)
+ALTER TABLE advertisers DROP COLUMN IF EXISTS guidelines;
 
 -- 기존에 쓰던 불필요한 컬럼 삭제 (있으면 삭제, 없으면 무시)
 ALTER TABLE advertisers DROP COLUMN IF EXISTS brand_color;

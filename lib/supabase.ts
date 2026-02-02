@@ -17,7 +17,8 @@ export const isSupabaseConfigured = () => {
 export interface Advertiser {
   id: string
   name: string
-  guidelines: string | null
+  guidelines_image: string | null  // 이미지용 지침서
+  guidelines_video: string | null  // 영상용 지침서
   products: string[] | null
   appeals: string[] | null  // 소구점
   cautions: string | null

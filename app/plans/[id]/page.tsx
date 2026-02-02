@@ -138,7 +138,8 @@ export default function PlanDetailPage() {
           mediaType: formData.media_type,
           advertiserName: selectedAdvertiser?.name,
           advertiser: selectedAdvertiser ? {
-            guidelines: selectedAdvertiser.guidelines,
+            guidelines_image: selectedAdvertiser.guidelines_image,
+            guidelines_video: selectedAdvertiser.guidelines_video,
             products: selectedAdvertiser.products,
             appeals: selectedAdvertiser.appeals,
             cautions: selectedAdvertiser.cautions,
@@ -321,10 +322,16 @@ export default function PlanDetailPage() {
                   <span className="text-blue-900">{selectedAdvertiser.appeals.join(', ')}</span>
                 </div>
               )}
-              {selectedAdvertiser.guidelines && (
+              {selectedAdvertiser.guidelines_image && (
                 <div>
-                  <span className="text-blue-700 font-medium">지침서: </span>
-                  <span className="text-blue-900 line-clamp-2">{selectedAdvertiser.guidelines}</span>
+                  <span className="text-blue-700 font-medium">이미지 지침: </span>
+                  <span className="text-blue-900 line-clamp-1">{selectedAdvertiser.guidelines_image}</span>
+                </div>
+              )}
+              {selectedAdvertiser.guidelines_video && (
+                <div>
+                  <span className="text-purple-700 font-medium">영상 지침: </span>
+                  <span className="text-purple-900 line-clamp-1">{selectedAdvertiser.guidelines_video}</span>
                 </div>
               )}
             </CardContent>

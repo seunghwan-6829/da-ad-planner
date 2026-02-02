@@ -5,7 +5,8 @@ const MODEL = 'claude-opus-4-5-20251101'
 const MAX_TOKENS = 2048
 
 interface AdvertiserInfo {
-  guidelines?: string | null
+  guidelines_image?: string | null
+  guidelines_video?: string | null
   products?: string[] | null
   appeals?: string[] | null
   cautions?: string | null
@@ -31,8 +32,12 @@ function buildPrompt(
     if (advertiser.appeals && advertiser.appeals.length > 0) {
       contextParts.push(`- 소구점 (반드시 카피에 반영): ${advertiser.appeals.join(', ')}`)
     }
-    if (advertiser.guidelines) {
-      contextParts.push(`- 지침서:\n${advertiser.guidelines}`)
+    // 소재 유형에 맞는 지침서 선택
+    const guidelines = mediaType === 'image' 
+      ? advertiser.guidelines_image 
+      : advertiser.guidelines_video
+    if (guidelines) {
+      contextParts.push(`- ${typeLabel} 광고 지침서:\n${guidelines}`)
     }
     if (advertiser.cautions) {
       contextParts.push(`- ⚠️ 주의사항 (절대 위반 금지):\n${advertiser.cautions}`)

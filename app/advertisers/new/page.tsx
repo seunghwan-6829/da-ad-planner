@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Image, Video } from 'lucide-react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -16,9 +16,10 @@ export default function NewAdvertiserPage() {
   const [loading, setLoading] = useState(false)
   const [formData, setFormData] = useState({
     name: '',
-    guidelines: '',
+    guidelines_image: '',
+    guidelines_video: '',
     products: [''],
-    appeals: [''],  // 소구점
+    appeals: [''],
     cautions: '',
   })
 
@@ -41,7 +42,6 @@ export default function NewAdvertiserPage() {
     })
   }
 
-  // 소구점 관련 함수
   function updateAppeal(index: number, value: string) {
     setFormData((prev) => {
       const next = [...prev.appeals]
@@ -80,7 +80,8 @@ export default function NewAdvertiserPage() {
 
       await createAdvertiser({
         name: formData.name,
-        guidelines: formData.guidelines || null,
+        guidelines_image: formData.guidelines_image || null,
+        guidelines_video: formData.guidelines_video || null,
         products: products.length ? products : null,
         appeals: appeals.length ? appeals : null,
         cautions: formData.cautions || null,
@@ -215,19 +216,45 @@ export default function NewAdvertiserPage() {
           </CardContent>
         </Card>
 
-        <Card className="mt-4">
+        {/* 이미지 지침서 */}
+        <Card className="mt-4 border-blue-200 bg-blue-50">
           <CardHeader>
-            <CardTitle>지침서</CardTitle>
+            <CardTitle className="flex items-center gap-2 text-blue-800">
+              <Image className="h-5 w-5" />
+              이미지 광고 지침서
+            </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent>
             <div className="space-y-2">
-              <Label htmlFor="guidelines">지침서 내용</Label>
+              <Label htmlFor="guidelines_image">이미지 소재용 지침</Label>
               <Textarea
-                id="guidelines"
-                rows={6}
-                placeholder="클로드가 카피를 쓸 때 꼭 참고해야 할 브랜드/상품 지침서를 자유롭게 적어주세요."
-                value={formData.guidelines}
-                onChange={(e) => setFormData({ ...formData, guidelines: e.target.value })}
+                id="guidelines_image"
+                rows={5}
+                placeholder="이미지 광고 카피 작성 시 참고할 지침을 적어주세요.&#10;예: 짧고 임팩트 있는 헤드라인 위주, 감성적인 톤 유지..."
+                value={formData.guidelines_image}
+                onChange={(e) => setFormData({ ...formData, guidelines_image: e.target.value })}
+              />
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* 영상 지침서 */}
+        <Card className="mt-4 border-purple-200 bg-purple-50">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-purple-800">
+              <Video className="h-5 w-5" />
+              영상 광고 지침서
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              <Label htmlFor="guidelines_video">영상 소재용 지침</Label>
+              <Textarea
+                id="guidelines_video"
+                rows={5}
+                placeholder="영상 광고 카피 작성 시 참고할 지침을 적어주세요.&#10;예: 초반 3초 후킹 중요, 스토리텔링 구조, 내레이션 톤..."
+                value={formData.guidelines_video}
+                onChange={(e) => setFormData({ ...formData, guidelines_video: e.target.value })}
               />
             </div>
           </CardContent>

@@ -126,12 +126,14 @@ export default function AdvertisersPage() {
                       <span className="line-clamp-1">{advertiser.products.join(', ')}</span>
                     </div>
                   )}
-                  {advertiser.guidelines && (
-                    <div>
-                      <span className="text-muted-foreground">지침서: </span>
-                      <span className="line-clamp-1">{advertiser.guidelines}</span>
-                    </div>
-                  )}
+                  <div className="flex gap-2">
+                    {advertiser.guidelines_image && (
+                      <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">이미지 지침</span>
+                    )}
+                    {advertiser.guidelines_video && (
+                      <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded">영상 지침</span>
+                    )}
+                  </div>
                   <div className="text-xs text-muted-foreground pt-2">
                     등록일: {new Date(advertiser.created_at).toLocaleDateString('ko-KR')}
                   </div>
