@@ -59,12 +59,6 @@ export default function NewAdvertiserPage() {
         guidelines: formData.guidelines || null,
         products: products.length ? products : null,
         cautions: formData.cautions || null,
-        // 기존 컬럼은 더 이상 UI에서 쓰지 않지만, 생성 시 명시적으로 null 처리
-        brand_color: null,
-        brand_font: null,
-        tone_manner: null,
-        forbidden_words: null,
-        required_phrases: null,
       })
       router.push('/advertisers')
     } catch (error) {
@@ -92,7 +86,7 @@ export default function NewAdvertiserPage() {
         <div>
           <h1 className="text-3xl font-bold">광고주 등록</h1>
           <p className="text-muted-foreground mt-1">
-            새로운 광고주와 브랜드 가이드라인을 등록합니다
+            새로운 광고주와 지침서를 등록합니다
           </p>
         </div>
       </div>

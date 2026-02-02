@@ -17,11 +17,6 @@ export const isSupabaseConfigured = () => {
 export interface Advertiser {
   id: string
   name: string
-  brand_color: string | null
-  brand_font: string | null
-  tone_manner: string | null
-  forbidden_words: string[] | null
-  required_phrases: string[] | null
   guidelines: string | null
   products: string[] | null
   cautions: string | null

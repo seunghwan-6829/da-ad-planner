@@ -125,7 +125,7 @@ export default function AdvertiserDetailPage() {
         <div className="flex-1">
           <h1 className="text-3xl font-bold">{advertiser.name}</h1>
           <p className="text-muted-foreground mt-1">
-            브랜드 가이드라인 수정
+            광고주 정보 수정
           </p>
         </div>
         <Badge variant="secondary">

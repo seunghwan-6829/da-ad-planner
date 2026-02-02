@@ -59,7 +59,7 @@ export default function AdvertisersPage() {
         <div>
           <h1 className="text-3xl font-bold">광고주 관리</h1>
           <p className="text-muted-foreground mt-1">
-            광고주별 브랜드 가이드라인을 관리합니다
+            광고주별 지침서와 제품 정보를 관리합니다
           </p>
         </div>
         <Link href="/advertisers/new">
@@ -120,20 +120,16 @@ export default function AdvertisersPage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-2 text-sm">
-                  {advertiser.brand_color && (
-                    <div className="flex items-center gap-2">
-                      <span className="text-muted-foreground">브랜드 컬러:</span>
-                      <div 
-                        className="w-4 h-4 rounded border"
-                        style={{ backgroundColor: advertiser.brand_color }}
-                      />
-                      <span>{advertiser.brand_color}</span>
+                  {advertiser.products && advertiser.products.length > 0 && (
+                    <div>
+                      <span className="text-muted-foreground">제품: </span>
+                      <span className="line-clamp-1">{advertiser.products.join(', ')}</span>
                     </div>
                   )}
-                  {advertiser.tone_manner && (
+                  {advertiser.guidelines && (
                     <div>
-                      <span className="text-muted-foreground">톤앤매너: </span>
-                      <span className="line-clamp-1">{advertiser.tone_manner}</span>
+                      <span className="text-muted-foreground">지침서: </span>
+                      <span className="line-clamp-1">{advertiser.guidelines}</span>
                     </div>
                   )}
                   <div className="text-xs text-muted-foreground pt-2">
