@@ -15,7 +15,8 @@ interface AdvertiserInfo {
 function buildPrompt(
   mediaType: 'image' | 'video',
   advertiserName?: string,
-  advertiser?: AdvertiserInfo | null
+  advertiser?: AdvertiserInfo | null,
+  extraPrompt?: string
 ): string {
   const typeLabel = mediaType === 'image' ? '이미지' : '영상'
   
@@ -48,9 +49,13 @@ function buildPrompt(
     ? `\n\n[광고주 정보]\n${contextParts.join('\n')}\n`
     : ''
 
+  const extraSection = extraPrompt?.trim()
+    ? `\n[추가 요청사항]\n${extraPrompt.trim()}\n`
+    : ''
+
   return `당신은 DA(디스플레이 광고) 카피라이터입니다.
 ${typeLabel} 광고 소재용 카피를 정확히 6개 작성해주세요.
-${contextSection}
+${contextSection}${extraSection}
 [작성 규칙]
 - 각 카피는 메인 카피(헤드라인)와 서브 카피로 구성
 - 짧고 임팩트 있게 작성 (메인 카피 15자 이내 권장)
@@ -80,6 +85,7 @@ export async function POST(request: NextRequest) {
     mediaType?: string
     advertiserName?: string
     advertiser?: AdvertiserInfo | null
+    extraPrompt?: string
   }
   try {
     body = await request.json()
@@ -93,7 +99,8 @@ export async function POST(request: NextRequest) {
   const mediaType = (body.mediaType === 'video' ? 'video' : 'image') as 'image' | 'video'
   const advertiserName = typeof body.advertiserName === 'string' ? body.advertiserName : undefined
   const advertiser = body.advertiser ?? null
-  const prompt = buildPrompt(mediaType, advertiserName, advertiser)
+  const extraPrompt = typeof body.extraPrompt === 'string' ? body.extraPrompt : undefined
+  const prompt = buildPrompt(mediaType, advertiserName, advertiser, extraPrompt)
 
   const encoder = new TextEncoder()
   const stream = new ReadableStream({
