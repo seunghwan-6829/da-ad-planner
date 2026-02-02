@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS advertisers (
   name TEXT NOT NULL,
   guidelines TEXT,
   products TEXT[],
+  appeals TEXT[],
   cautions TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -17,6 +18,7 @@ CREATE TABLE IF NOT EXISTS advertisers (
 -- 기존 테이블에 새 컬럼 추가 (이미 테이블이 있을 때)
 ALTER TABLE advertisers ADD COLUMN IF NOT EXISTS guidelines TEXT;
 ALTER TABLE advertisers ADD COLUMN IF NOT EXISTS products TEXT[];
+ALTER TABLE advertisers ADD COLUMN IF NOT EXISTS appeals TEXT[];
 ALTER TABLE advertisers ADD COLUMN IF NOT EXISTS cautions TEXT;
 
 -- 기존에 쓰던 불필요한 컬럼 삭제 (있으면 삭제, 없으면 무시)

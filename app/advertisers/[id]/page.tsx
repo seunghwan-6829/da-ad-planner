@@ -25,6 +25,7 @@ export default function AdvertiserDetailPage() {
     name: '',
     guidelines: '',
     products: [''],
+    appeals: [''],  // 소구점
     cautions: '',
   })
 
@@ -40,6 +41,7 @@ export default function AdvertiserDetailPage() {
         name: data.name,
         guidelines: data.guidelines || '',
         products: (data.products && data.products.length ? data.products : ['']),
+        appeals: (data.appeals && data.appeals.length ? data.appeals : ['']),
         cautions: data.cautions || '',
       })
     } catch (error) {
@@ -63,11 +65,15 @@ export default function AdvertiserDetailPage() {
       const products = formData.products
         .map((p) => p.trim())
         .filter(Boolean)
+      const appeals = formData.appeals
+        .map((a) => a.trim())
+        .filter(Boolean)
 
       await updateAdvertiser(id, {
         name: formData.name,
         guidelines: formData.guidelines || null,
         products: products.length ? products : null,
+        appeals: appeals.length ? appeals : null,
         cautions: formData.cautions || null,
       })
       alert('저장되었습니다.')
@@ -95,6 +101,26 @@ export default function AdvertiserDetailPage() {
     setFormData((prev) => {
       const next = prev.products.filter((_, i) => i !== index)
       return { ...prev, products: next.length ? next : [''] }
+    })
+  }
+
+  // 소구점 관련 함수
+  function updateAppeal(index: number, value: string) {
+    setFormData((prev) => {
+      const next = [...prev.appeals]
+      next[index] = value
+      return { ...prev, appeals: next }
+    })
+  }
+
+  function addAppeal() {
+    setFormData((prev) => ({ ...prev, appeals: [...prev.appeals, ''] }))
+  }
+
+  function removeAppeal(index: number) {
+    setFormData((prev) => {
+      const next = prev.appeals.filter((_, i) => i !== index)
+      return { ...prev, appeals: next.length ? next : [''] }
     })
   }
 
@@ -177,6 +203,50 @@ export default function AdvertiserDetailPage() {
                         variant="outline"
                         size="icon"
                         onClick={addProduct}
+                      >
+                        +
+                      </Button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="mt-4 border-green-200 bg-green-50">
+          <CardHeader>
+            <CardTitle>소구점</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label>소구점 목록</Label>
+              <p className="text-sm text-muted-foreground">
+                광고에서 강조할 핵심 포인트를 입력하세요. AI가 카피 작성 시 참고합니다.
+              </p>
+              <div className="space-y-3">
+                {formData.appeals.map((appeal, index) => (
+                  <div key={index} className="flex items-center gap-2">
+                    <Input
+                      placeholder="예: 자연 유래 성분 99%, 무향료, 피부과 테스트 완료"
+                      value={appeal}
+                      onChange={(e) => updateAppeal(index, e.target.value)}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={() => removeAppeal(index)}
+                      disabled={formData.appeals.length === 1}
+                    >
+                      -
+                    </Button>
+                    {index === formData.appeals.length - 1 && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={addAppeal}
                       >
                         +
                       </Button>

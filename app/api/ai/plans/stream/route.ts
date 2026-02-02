@@ -1,27 +1,65 @@
 import { NextRequest } from 'next/server'
 
 const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages'
-const MODEL = 'claude-3-opus-latest'
+const MODEL = 'claude-sonnet-4-20250514'
 const MAX_TOKENS = 2048
 
-function buildPrompt(mediaType: 'image' | 'video', advertiserName?: string): string {
+interface AdvertiserInfo {
+  guidelines?: string | null
+  products?: string[] | null
+  appeals?: string[] | null
+  cautions?: string | null
+}
+
+function buildPrompt(
+  mediaType: 'image' | 'video',
+  advertiserName?: string,
+  advertiser?: AdvertiserInfo | null
+): string {
   const typeLabel = mediaType === 'image' ? '이미지' : '영상'
-  const advertiserPart = advertiserName?.trim()
-    ? `\n- 업체(광고주): ${advertiserName.trim()}`
+  
+  let contextParts: string[] = []
+  
+  if (advertiserName?.trim()) {
+    contextParts.push(`- 광고주: ${advertiserName.trim()}`)
+  }
+  
+  if (advertiser) {
+    if (advertiser.products && advertiser.products.length > 0) {
+      contextParts.push(`- 제품: ${advertiser.products.join(', ')}`)
+    }
+    if (advertiser.appeals && advertiser.appeals.length > 0) {
+      contextParts.push(`- 소구점 (반드시 카피에 반영): ${advertiser.appeals.join(', ')}`)
+    }
+    if (advertiser.guidelines) {
+      contextParts.push(`- 지침서:\n${advertiser.guidelines}`)
+    }
+    if (advertiser.cautions) {
+      contextParts.push(`- ⚠️ 주의사항 (절대 위반 금지):\n${advertiser.cautions}`)
+    }
+  }
+
+  const contextSection = contextParts.length > 0 
+    ? `\n\n[광고주 정보]\n${contextParts.join('\n')}\n`
     : ''
-  return `DA(디스플레이 광고) 기획서 아이디어를 정확히 6개만 작성해줘.
 
-조건:
-- 소재 유형: ${typeLabel}${advertiserPart}
-- 각 기획은 반드시 한 줄로 "제목: 한 줄 설명" 형식으로 작성.
-- 번호는 1~6으로 붙여줘.
-- 다른 설명이나 서두 없이 6개만 출력.
+  return `당신은 DA(디스플레이 광고) 카피라이터입니다.
+${typeLabel} 광고 소재용 카피를 정확히 6개 작성해주세요.
+${contextSection}
+[작성 규칙]
+- 각 카피는 메인 카피(헤드라인)와 서브 카피로 구성
+- 짧고 임팩트 있게 작성 (메인 카피 15자 이내 권장)
+- 소구점이 있다면 반드시 카피에 자연스럽게 녹여내기
+- 주의사항이 있다면 절대 위반하지 않기
+- 광고 심의에 걸리지 않는 표현 사용
 
-예시 형식:
-1. 제목: 한 줄 설명
-2. 제목: 한 줄 설명
+[출력 형식]
+1. 메인카피: 서브카피 설명
+2. 메인카피: 서브카피 설명
 ...
-6. 제목: 한 줄 설명`
+6. 메인카피: 서브카피 설명
+
+다른 설명 없이 6개만 출력하세요.`
 }
 
 export async function POST(request: NextRequest) {
@@ -33,7 +71,11 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  let body: { mediaType?: string; advertiserName?: string }
+  let body: { 
+    mediaType?: string
+    advertiserName?: string
+    advertiser?: AdvertiserInfo | null
+  }
   try {
     body = await request.json()
   } catch {
@@ -45,7 +87,8 @@ export async function POST(request: NextRequest) {
 
   const mediaType = (body.mediaType === 'video' ? 'video' : 'image') as 'image' | 'video'
   const advertiserName = typeof body.advertiserName === 'string' ? body.advertiserName : undefined
-  const prompt = buildPrompt(mediaType, advertiserName)
+  const advertiser = body.advertiser ?? null
+  const prompt = buildPrompt(mediaType, advertiserName, advertiser)
 
   const encoder = new TextEncoder()
   const stream = new ReadableStream({

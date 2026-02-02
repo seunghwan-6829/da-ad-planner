@@ -19,6 +19,7 @@ export interface Advertiser {
   name: string
   guidelines: string | null
   products: string[] | null
+  appeals: string[] | null  // 소구점
   cautions: string | null
   created_at: string
 }
