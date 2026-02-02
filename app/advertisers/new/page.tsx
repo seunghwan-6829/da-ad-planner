@@ -1,8 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, Image, Video } from 'lucide-react'
+import { ArrowLeft, Image, Video, Upload } from 'lucide-react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -14,6 +14,8 @@ import { createAdvertiser } from '@/lib/api/advertisers'
 export default function NewAdvertiserPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
+  const imageFileRef = useRef<HTMLInputElement>(null)
+  const videoFileRef = useRef<HTMLInputElement>(null)
   const [formData, setFormData] = useState({
     name: '',
     guidelines_image: '',
@@ -22,6 +24,31 @@ export default function NewAdvertiserPage() {
     appeals: [''],
     cautions: '',
   })
+
+  // 파일 업로드 처리
+  function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>, field: 'guidelines_image' | 'guidelines_video') {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    // 텍스트 파일만 허용
+    if (!file.name.endsWith('.txt') && file.type !== 'text/plain') {
+      alert('텍스트 파일(.txt)만 업로드 가능합니다.')
+      return
+    }
+
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      const content = event.target?.result as string
+      setFormData(prev => ({ ...prev, [field]: content }))
+    }
+    reader.onerror = () => {
+      alert('파일을 읽는 중 오류가 발생했습니다.')
+    }
+    reader.readAsText(file, 'UTF-8')
+    
+    // input 초기화 (같은 파일 다시 선택 가능하도록)
+    e.target.value = ''
+  }
 
   function updateProduct(index: number, value: string) {
     setFormData((prev) => {
@@ -226,11 +253,32 @@ export default function NewAdvertiserPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              <Label htmlFor="guidelines_image">이미지 소재용 지침</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="guidelines_image">이미지 소재용 지침</Label>
+                <div>
+                  <input
+                    ref={imageFileRef}
+                    type="file"
+                    accept=".txt,text/plain"
+                    className="hidden"
+                    onChange={(e) => handleFileUpload(e, 'guidelines_image')}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="text-xs"
+                    onClick={() => imageFileRef.current?.click()}
+                  >
+                    <Upload className="h-3 w-3 mr-1" />
+                    파일 업로드
+                  </Button>
+                </div>
+              </div>
               <Textarea
                 id="guidelines_image"
                 rows={5}
-                placeholder="이미지 광고 카피 작성 시 참고할 지침을 적어주세요.&#10;예: 짧고 임팩트 있는 헤드라인 위주, 감성적인 톤 유지..."
+                placeholder="이미지 광고 카피 작성 시 참고할 지침을 적어주세요.&#10;예: 짧고 임팩트 있는 헤드라인 위주, 감성적인 톤 유지...&#10;&#10;또는 위의 '파일 업로드' 버튼으로 .txt 파일을 올려주세요."
                 value={formData.guidelines_image}
                 onChange={(e) => setFormData({ ...formData, guidelines_image: e.target.value })}
               />
@@ -248,11 +296,32 @@ export default function NewAdvertiserPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              <Label htmlFor="guidelines_video">영상 소재용 지침</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="guidelines_video">영상 소재용 지침</Label>
+                <div>
+                  <input
+                    ref={videoFileRef}
+                    type="file"
+                    accept=".txt,text/plain"
+                    className="hidden"
+                    onChange={(e) => handleFileUpload(e, 'guidelines_video')}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="text-xs"
+                    onClick={() => videoFileRef.current?.click()}
+                  >
+                    <Upload className="h-3 w-3 mr-1" />
+                    파일 업로드
+                  </Button>
+                </div>
+              </div>
               <Textarea
                 id="guidelines_video"
                 rows={5}
-                placeholder="영상 광고 카피 작성 시 참고할 지침을 적어주세요.&#10;예: 초반 3초 후킹 중요, 스토리텔링 구조, 내레이션 톤..."
+                placeholder="영상 광고 카피 작성 시 참고할 지침을 적어주세요.&#10;예: 초반 3초 후킹 중요, 스토리텔링 구조, 내레이션 톤...&#10;&#10;또는 위의 '파일 업로드' 버튼으로 .txt 파일을 올려주세요."
                 value={formData.guidelines_video}
                 onChange={(e) => setFormData({ ...formData, guidelines_video: e.target.value })}
               />
