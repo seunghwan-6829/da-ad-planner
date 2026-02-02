@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter, useParams } from 'next/navigation'
-import { ArrowLeft, Save, Image, Video, Copy, Check, Sparkles, Loader2, Lightbulb, TrendingUp, MessageSquare, Zap, History, Trash2 } from 'lucide-react'
+import { ArrowLeft, Save, Image, Video, Copy, Check, Sparkles, Loader2, History, Trash2, RefreshCw, Search, Link2, Plus, Minus, FileText } from 'lucide-react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -14,11 +14,22 @@ import { getPlan, updatePlan } from '@/lib/api/plans'
 import { getAdvertisers } from '@/lib/api/advertisers'
 import { AdPlan, Advertiser } from '@/lib/supabase'
 
+interface CopyItem {
+  title: string
+  description: string
+  review?: {
+    good: string
+    bad: string
+    suggestion: string
+    revised: string
+  }
+}
+
 interface CopySet {
   id: string
   timestamp: Date
   mediaType: 'image' | 'video'
-  copies: { title: string; description: string }[]
+  copies: CopyItem[]
 }
 
 export default function PlanDetailPage() {
@@ -35,15 +46,26 @@ export default function PlanDetailPage() {
   
   // AI 카피 생성 상태
   const [aiLoading, setAiLoading] = useState(false)
-  const [aiResults, setAiResults] = useState<{ title: string; description: string }[]>([])
+  const [aiResults, setAiResults] = useState<CopyItem[]>([])
   const [streamText, setStreamText] = useState('')
   const [showAiPanel, setShowAiPanel] = useState(false)
+  
+  // 검토 상태
+  const [reviewingIndex, setReviewingIndex] = useState<number | null>(null)
+  
+  // 베리에이션 상태
+  const [variationIndex, setVariationIndex] = useState<number | null>(null)
+  const [variationResults, setVariationResults] = useState<CopyItem[]>([])
+  const [variationLoading, setVariationLoading] = useState(false)
   
   // 카피 히스토리
   const [copyHistory, setCopyHistory] = useState<CopySet[]>([])
   
-  // AI 도우미 입력
-  const [customPrompt, setCustomPrompt] = useState('')
+  // 왼쪽 입력 섹션
+  const [referenceLinks, setReferenceLinks] = useState<string[]>([''])
+  const [ctaTexts, setCtaTexts] = useState<string[]>([''])
+  const [tdTitle, setTdTitle] = useState('')
+  const [tdDescription, setTdDescription] = useState('')
   
   const [formData, setFormData] = useState({
     title: '',
@@ -141,21 +163,26 @@ export default function PlanDetailPage() {
   }
 
   // AI 카피 생성
-  async function generateAiCopies(extraPrompt?: string) {
-    // 기존 결과가 있으면 히스토리에 저장
-    if (aiResults.length > 0) {
-      setCopyHistory(prev => [{
-        id: Date.now().toString(),
-        timestamp: new Date(),
-        mediaType: formData.media_type,
-        copies: aiResults
-      }, ...prev])
-    }
-    
+  async function generateAiCopies() {
     setAiLoading(true)
     setAiResults([])
     setStreamText('')
     setShowAiPanel(true)
+    setVariationIndex(null)
+    setVariationResults([])
+
+    // 추가 컨텍스트 구성
+    let extraContext = ''
+    const validCtas = ctaTexts.filter(c => c.trim())
+    if (validCtas.length > 0) {
+      extraContext += `CTA 문구 참고: ${validCtas.join(', ')}\n`
+    }
+    if (tdTitle.trim()) {
+      extraContext += `T&D 제목: ${tdTitle.trim()}\n`
+    }
+    if (tdDescription.trim()) {
+      extraContext += `T&D 설명: ${tdDescription.trim()}\n`
+    }
 
     try {
       const res = await fetch('/api/ai/plans/stream', {
@@ -171,13 +198,11 @@ export default function PlanDetailPage() {
             appeals: selectedAdvertiser.appeals,
             cautions: selectedAdvertiser.cautions,
           } : null,
-          extraPrompt: extraPrompt || customPrompt || undefined,
+          extraPrompt: extraContext || undefined,
         }),
       })
 
-      if (!res.ok) {
-        throw new Error('API 오류')
-      }
+      if (!res.ok) throw new Error('API 오류')
 
       const reader = res.body?.getReader()
       if (!reader) throw new Error('스트림 읽기 불가')
@@ -205,7 +230,7 @@ export default function PlanDetailPage() {
             }
             if (data.done) {
               const lines = fullText.split('\n').filter(l => l.trim())
-              const results: { title: string; description: string }[] = []
+              const results: CopyItem[] = []
               for (const line of lines) {
                 const match = line.match(/^\d+\.\s*(.+?):\s*(.+)$/)
                 if (match) {
@@ -213,6 +238,15 @@ export default function PlanDetailPage() {
                 }
               }
               setAiResults(results)
+              // 생성되면 바로 히스토리에 추가
+              if (results.length > 0) {
+                setCopyHistory(prev => [{
+                  id: Date.now().toString(),
+                  timestamp: new Date(),
+                  mediaType: formData.media_type,
+                  copies: results
+                }, ...prev])
+              }
             }
           } catch {
             // ignore
@@ -227,24 +261,136 @@ export default function PlanDetailPage() {
     }
   }
 
+  // 검토 기능
+  async function reviewCopy(index: number) {
+    const copy = aiResults[index]
+    if (!copy) return
+    
+    setReviewingIndex(index)
+    
+    try {
+      const res = await fetch('/api/ai/review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          copy: `${copy.title}: ${copy.description}`,
+          advertiserName: selectedAdvertiser?.name,
+          mediaType: formData.media_type,
+        }),
+      })
+      
+      if (!res.ok) throw new Error('API 오류')
+      
+      const data = await res.json()
+      
+      setAiResults(prev => {
+        const updated = [...prev]
+        updated[index] = { ...updated[index], review: data }
+        return updated
+      })
+    } catch (error) {
+      console.error('검토 실패:', error)
+      alert('검토에 실패했습니다.')
+    } finally {
+      setReviewingIndex(null)
+    }
+  }
+
+  // 베리에이션 기능
+  async function generateVariation(index: number) {
+    const copy = aiResults[index]
+    if (!copy) return
+    
+    // 검토된 수정본이 있으면 그걸로, 없으면 원본으로
+    const baseCopy = copy.review?.revised 
+      ? copy.review.revised 
+      : `${copy.title}: ${copy.description}`
+    
+    setVariationIndex(index)
+    setVariationLoading(true)
+    setVariationResults([])
+    
+    try {
+      const res = await fetch('/api/ai/variation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          baseCopy,
+          advertiserName: selectedAdvertiser?.name,
+          mediaType: formData.media_type,
+          advertiser: selectedAdvertiser ? {
+            guidelines_image: selectedAdvertiser.guidelines_image,
+            guidelines_video: selectedAdvertiser.guidelines_video,
+            products: selectedAdvertiser.products,
+            appeals: selectedAdvertiser.appeals,
+            cautions: selectedAdvertiser.cautions,
+          } : null,
+        }),
+      })
+      
+      if (!res.ok) throw new Error('API 오류')
+      
+      const data = await res.json()
+      setVariationResults(data.variations || [])
+    } catch (error) {
+      console.error('베리에이션 실패:', error)
+      alert('베리에이션 생성에 실패했습니다.')
+    } finally {
+      setVariationLoading(false)
+    }
+  }
+
   function removeFromHistory(historyId: string) {
     setCopyHistory(prev => prev.filter(h => h.id !== historyId))
   }
 
   function restoreFromHistory(history: CopySet) {
-    // 현재 결과를 히스토리로 이동
-    if (aiResults.length > 0) {
-      setCopyHistory(prev => [{
-        id: Date.now().toString(),
-        timestamp: new Date(),
-        mediaType: formData.media_type,
-        copies: aiResults
-      }, ...prev.filter(h => h.id !== history.id)])
-    } else {
-      setCopyHistory(prev => prev.filter(h => h.id !== history.id))
-    }
     setAiResults(history.copies)
     setShowAiPanel(true)
+    setVariationIndex(null)
+    setVariationResults([])
+  }
+
+  // 링크/CTA 관련 함수
+  function updateReferenceLink(index: number, value: string) {
+    setReferenceLinks(prev => {
+      const next = [...prev]
+      next[index] = value
+      return next
+    })
+  }
+  function addReferenceLink() {
+    setReferenceLinks(prev => [...prev, ''])
+  }
+  function removeReferenceLink(index: number) {
+    setReferenceLinks(prev => prev.length > 1 ? prev.filter((_, i) => i !== index) : [''])
+  }
+
+  function updateCtaText(index: number, value: string) {
+    setCtaTexts(prev => {
+      const next = [...prev]
+      next[index] = value
+      return next
+    })
+  }
+  function addCtaText() {
+    setCtaTexts(prev => [...prev, ''])
+  }
+  function removeCtaText(index: number) {
+    setCtaTexts(prev => prev.length > 1 ? prev.filter((_, i) => i !== index) : [''])
+  }
+
+  // URL 임베드 가능 여부 체크 (YouTube, 이미지 등)
+  function getEmbedType(url: string): 'youtube' | 'image' | 'none' {
+    if (!url.trim()) return 'none'
+    if (url.includes('youtube.com') || url.includes('youtu.be')) return 'youtube'
+    if (/\.(jpg|jpeg|png|gif|webp)$/i.test(url)) return 'image'
+    return 'none'
+  }
+
+  function getYoutubeEmbedUrl(url: string): string {
+    const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\s]+)/)
+    return match ? `https://www.youtube.com/embed/${match[1]}` : ''
   }
 
   if (loading) {
@@ -265,108 +411,107 @@ export default function PlanDetailPage() {
 
   return (
     <div className="flex gap-6 pb-24">
-      {/* 왼쪽: AI 도우미 */}
+      {/* 왼쪽: 레퍼런스, CTA, T&D */}
       <div className="w-72 flex-shrink-0 space-y-4">
-        <Card className="border-amber-200 bg-amber-50">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base text-amber-800 flex items-center gap-2">
-              <Lightbulb className="h-4 w-4" />
-              AI 도우미
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="space-y-2">
-              <Label className="text-xs text-amber-700">추가 요청사항</Label>
-              <Textarea
-                rows={3}
-                placeholder="예: 젊은 층 타겟, 유머러스하게..."
-                className="text-sm"
-                value={customPrompt}
-                onChange={(e) => setCustomPrompt(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label className="text-xs text-amber-700">빠른 스타일</Label>
-              <div className="grid grid-cols-2 gap-2">
-                <Button 
-                  type="button" 
-                  variant="outline" 
-                  size="sm" 
-                  className="text-xs"
-                  onClick={() => generateAiCopies('감성적이고 따뜻한 톤으로')}
-                  disabled={aiLoading}
-                >
-                  <MessageSquare className="h-3 w-3 mr-1" />
-                  감성적
-                </Button>
-                <Button 
-                  type="button" 
-                  variant="outline" 
-                  size="sm" 
-                  className="text-xs"
-                  onClick={() => generateAiCopies('직접적이고 강렬한 톤으로')}
-                  disabled={aiLoading}
-                >
-                  <Zap className="h-3 w-3 mr-1" />
-                  강렬한
-                </Button>
-                <Button 
-                  type="button" 
-                  variant="outline" 
-                  size="sm" 
-                  className="text-xs"
-                  onClick={() => generateAiCopies('유머러스하고 재치있게')}
-                  disabled={aiLoading}
-                >
-                  😄 유머
-                </Button>
-                <Button 
-                  type="button" 
-                  variant="outline" 
-                  size="sm" 
-                  className="text-xs"
-                  onClick={() => generateAiCopies('고급스럽고 프리미엄 느낌으로')}
-                  disabled={aiLoading}
-                >
-                  ✨ 프리미엄
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-emerald-200 bg-emerald-50">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base text-emerald-800 flex items-center gap-2">
-              <TrendingUp className="h-4 w-4" />
-              카피 팁
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="text-xs text-emerald-700 space-y-2">
-            <p>• 메인 카피는 15자 이내가 좋아요</p>
-            <p>• 숫자를 넣으면 신뢰도 UP</p>
-            <p>• 질문형은 클릭률이 높아요</p>
-            <p>• 이모지는 적절히 사용하세요</p>
-            <p>• CTA는 명확한 행동 유도</p>
-          </CardContent>
-        </Card>
-
+        {/* 레퍼런스 링크 */}
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Sparkles className="h-4 w-4" />
-              추천 키워드
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Link2 className="h-4 w-4" />
+              레퍼런스 링크
             </CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="flex flex-wrap gap-1">
-              {['한정', '무료', '지금', '단독', '특가', '신상', 'BEST', '인기'].map(kw => (
-                <span key={kw} className="text-xs bg-gray-100 px-2 py-1 rounded cursor-pointer hover:bg-gray-200"
-                  onClick={() => setCustomPrompt(prev => prev ? `${prev}, ${kw} 키워드 포함` : `${kw} 키워드 포함`)}
-                >
-                  {kw}
-                </span>
-              ))}
+          <CardContent className="space-y-2">
+            {referenceLinks.map((link, index) => (
+              <div key={index} className="space-y-1">
+                <div className="flex items-center gap-1">
+                  <Input
+                    placeholder="https://..."
+                    value={link}
+                    onChange={(e) => updateReferenceLink(index, e.target.value)}
+                    className="text-xs"
+                  />
+                  <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => removeReferenceLink(index)}>
+                    <Minus className="h-3 w-3" />
+                  </Button>
+                  {index === referenceLinks.length - 1 && (
+                    <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={addReferenceLink}>
+                      <Plus className="h-3 w-3" />
+                    </Button>
+                  )}
+                </div>
+                {/* 임베드 미리보기 */}
+                {getEmbedType(link) === 'youtube' && (
+                  <div className="rounded overflow-hidden">
+                    <iframe
+                      src={getYoutubeEmbedUrl(link)}
+                      className="w-full h-32"
+                      allowFullScreen
+                    />
+                  </div>
+                )}
+                {getEmbedType(link) === 'image' && (
+                  <img src={link} alt="레퍼런스" className="w-full rounded" />
+                )}
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+
+        {/* CTA 문구 */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">CTA 문구</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {ctaTexts.map((cta, index) => (
+              <div key={index} className="flex items-center gap-1">
+                <Input
+                  placeholder="예: 지금 구매하기"
+                  value={cta}
+                  onChange={(e) => updateCtaText(index, e.target.value)}
+                  className="text-xs"
+                />
+                <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => removeCtaText(index)}>
+                  <Minus className="h-3 w-3" />
+                </Button>
+                {index === ctaTexts.length - 1 && (
+                  <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={addCtaText}>
+                    <Plus className="h-3 w-3" />
+                  </Button>
+                )}
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+
+        {/* T&D (제목/설명) */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <FileText className="h-4 w-4" />
+              T&D (제목/설명)
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <div>
+              <Label className="text-xs">제목</Label>
+              <Input
+                placeholder="광고 제목"
+                value={tdTitle}
+                onChange={(e) => setTdTitle(e.target.value)}
+                className="text-xs"
+              />
+            </div>
+            <div>
+              <Label className="text-xs">설명</Label>
+              <Textarea
+                placeholder="광고 설명"
+                rows={3}
+                value={tdDescription}
+                onChange={(e) => setTdDescription(e.target.value)}
+                className="text-xs"
+              />
             </div>
           </CardContent>
         </Card>
@@ -476,7 +621,7 @@ export default function PlanDetailPage() {
           </div>
         </form>
 
-        {/* AI 생성 결과 패널 */}
+        {/* AI 생성 결과 패널 - 2x3 그리드 */}
         {showAiPanel && (
           <Card className="border-purple-200 bg-purple-50">
             <CardHeader className="pb-2">
@@ -497,22 +642,72 @@ export default function PlanDetailPage() {
                   </pre>
                 </div>
               ) : aiResults.length > 0 ? (
-                <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-3">
                   {aiResults.map((result, index) => (
-                    <div key={index} className="bg-white p-3 rounded-lg shadow-sm border border-purple-100 group">
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <div className="font-medium text-purple-800 text-sm">{index + 1}. {result.title}</div>
-                          <div className="text-xs text-gray-600 mt-1">{result.description}</div>
-                        </div>
+                    <div key={index} className="bg-white p-3 rounded-lg shadow-sm border border-purple-100">
+                      <div className="flex items-start justify-between mb-2">
+                        <div className="font-medium text-purple-800 text-sm">{index + 1}. {result.title}</div>
                         <Button 
                           type="button" 
                           variant="ghost" 
                           size="sm" 
-                          className="opacity-0 group-hover:opacity-100 h-6 w-6 p-0"
+                          className="h-6 w-6 p-0"
                           onClick={() => copyToClipboard(`${result.title}: ${result.description}`)}
                         >
                           <Copy className="h-3 w-3" />
+                        </Button>
+                      </div>
+                      <div className="text-xs text-gray-600 mb-3">{result.description}</div>
+                      
+                      {/* 검토 결과 */}
+                      {result.review && (
+                        <div className="space-y-2 mt-3 pt-3 border-t text-xs">
+                          <div className="bg-green-50 text-green-800 p-2 rounded">
+                            <span className="font-medium">👍 좋은 점: </span>{result.review.good}
+                          </div>
+                          <div className="bg-red-50 text-red-800 p-2 rounded">
+                            <span className="font-medium">👎 아쉬운 점: </span>{result.review.bad}
+                          </div>
+                          <div className="bg-blue-50 text-blue-800 p-2 rounded">
+                            <span className="font-medium">💡 수정 제안: </span>{result.review.suggestion}
+                          </div>
+                          <div className="bg-purple-100 text-purple-900 p-2 rounded font-medium">
+                            ✨ 수정본: {result.review.revised}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* 버튼들 */}
+                      <div className="flex gap-2 mt-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="text-xs flex-1"
+                          onClick={() => reviewCopy(index)}
+                          disabled={reviewingIndex === index}
+                        >
+                          {reviewingIndex === index ? (
+                            <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                          ) : (
+                            <Search className="h-3 w-3 mr-1" />
+                          )}
+                          검토
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="text-xs flex-1"
+                          onClick={() => generateVariation(index)}
+                          disabled={variationLoading && variationIndex === index}
+                        >
+                          {variationLoading && variationIndex === index ? (
+                            <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                          ) : (
+                            <RefreshCw className="h-3 w-3 mr-1" />
+                          )}
+                          베리에이션
                         </Button>
                       </div>
                     </div>
@@ -525,13 +720,46 @@ export default function PlanDetailPage() {
           </Card>
         )}
 
+        {/* 베리에이션 결과 */}
+        {variationIndex !== null && variationResults.length > 0 && (
+          <Card className="border-amber-200 bg-amber-50">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base text-amber-800 flex items-center gap-2">
+                <RefreshCw className="h-4 w-4" />
+                베리에이션 (#{variationIndex + 1} 기반)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 gap-3">
+                {variationResults.map((result, index) => (
+                  <div key={index} className="bg-white p-3 rounded-lg shadow-sm border border-amber-100">
+                    <div className="flex items-start justify-between">
+                      <div className="font-medium text-amber-800 text-sm">{index + 1}. {result.title}</div>
+                      <Button 
+                        type="button" 
+                        variant="ghost" 
+                        size="sm" 
+                        className="h-6 w-6 p-0"
+                        onClick={() => copyToClipboard(`${result.title}: ${result.description}`)}
+                      >
+                        <Copy className="h-3 w-3" />
+                      </Button>
+                    </div>
+                    <div className="text-xs text-gray-600 mt-1">{result.description}</div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* 하단 중앙 플로팅 버튼 */}
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50">
           <Button
             type="button"
             size="lg"
             className="shadow-lg px-8 py-6 text-lg bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
-            onClick={() => generateAiCopies()}
+            onClick={generateAiCopies}
             disabled={aiLoading}
           >
             {aiLoading ? (
@@ -558,7 +786,7 @@ export default function PlanDetailPage() {
           <CardContent>
             {copyHistory.length === 0 ? (
               <p className="text-xs text-muted-foreground">
-                AI 카피를 여러 번 생성하면 이전 결과가 여기에 저장됩니다.
+                AI 카피를 생성하면 여기에 저장됩니다.
               </p>
             ) : (
               <div className="space-y-3 max-h-[calc(100vh-300px)] overflow-y-auto">

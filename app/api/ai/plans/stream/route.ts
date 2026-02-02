@@ -20,56 +20,71 @@ function buildPrompt(
 ): string {
   const typeLabel = mediaType === 'image' ? '이미지' : '영상'
   
-  let contextParts: string[] = []
-  
-  if (advertiserName?.trim()) {
-    contextParts.push(`- 광고주: ${advertiserName.trim()}`)
-  }
-  
-  if (advertiser) {
-    if (advertiser.products && advertiser.products.length > 0) {
-      contextParts.push(`- 제품: ${advertiser.products.join(', ')}`)
+  // 지침서 선택
+  const guidelines = advertiser 
+    ? (mediaType === 'image' ? advertiser.guidelines_image : advertiser.guidelines_video)
+    : null
+
+  // 광고주 정보 구성
+  let advertiserSection = ''
+  if (advertiserName || advertiser) {
+    advertiserSection = '\n\n=== 광고주 정보 (반드시 숙지) ===\n'
+    if (advertiserName?.trim()) {
+      advertiserSection += `광고주명: ${advertiserName.trim()}\n`
     }
-    if (advertiser.appeals && advertiser.appeals.length > 0) {
-      contextParts.push(`- 소구점 (반드시 카피에 반영): ${advertiser.appeals.join(', ')}`)
+    if (advertiser?.products && advertiser.products.length > 0) {
+      advertiserSection += `제품: ${advertiser.products.join(', ')}\n`
     }
-    // 소재 유형에 맞는 지침서 선택
-    const guidelines = mediaType === 'image' 
-      ? advertiser.guidelines_image 
-      : advertiser.guidelines_video
-    if (guidelines) {
-      contextParts.push(`- ${typeLabel} 광고 지침서:\n${guidelines}`)
-    }
-    if (advertiser.cautions) {
-      contextParts.push(`- ⚠️ 주의사항 (절대 위반 금지):\n${advertiser.cautions}`)
+    if (advertiser?.appeals && advertiser.appeals.length > 0) {
+      advertiserSection += `\n★ 소구점 (모든 카피에 반드시 1개 이상 반영할 것):\n`
+      advertiser.appeals.forEach((appeal, i) => {
+        advertiserSection += `  ${i + 1}. ${appeal}\n`
+      })
     }
   }
 
-  const contextSection = contextParts.length > 0 
-    ? `\n\n[광고주 정보]\n${contextParts.join('\n')}\n`
-    : ''
+  // 지침서 섹션 (강조)
+  let guidelinesSection = ''
+  if (guidelines?.trim()) {
+    guidelinesSection = `\n\n=== ${typeLabel} 광고 지침서 (가장 중요! 반드시 따를 것) ===\n${guidelines.trim()}\n`
+  }
 
+  // 주의사항 섹션
+  let cautionsSection = ''
+  if (advertiser?.cautions?.trim()) {
+    cautionsSection = `\n\n=== ⚠️ 주의사항 (절대 위반 금지) ===\n${advertiser.cautions.trim()}\n`
+  }
+
+  // 추가 요청사항
   const extraSection = extraPrompt?.trim()
-    ? `\n[추가 요청사항]\n${extraPrompt.trim()}\n`
+    ? `\n\n=== 추가 요청 ===\n${extraPrompt.trim()}\n`
     : ''
 
-  return `당신은 DA(디스플레이 광고) 카피라이터입니다.
+  return `당신은 10년 경력의 DA(디스플레이 광고) 전문 카피라이터입니다.
 ${typeLabel} 광고 소재용 카피를 정확히 6개 작성해주세요.
-${contextSection}${extraSection}
-[작성 규칙]
-- 각 카피는 메인 카피(헤드라인)와 서브 카피로 구성
-- 짧고 임팩트 있게 작성 (메인 카피 15자 이내 권장)
-- 소구점이 있다면 반드시 카피에 자연스럽게 녹여내기
-- 주의사항이 있다면 절대 위반하지 않기
-- 광고 심의에 걸리지 않는 표현 사용
 
-[출력 형식]
+중요: 아래 정보를 모두 꼼꼼히 읽고, 지침서와 소구점을 반드시 반영해서 작성하세요.
+${advertiserSection}${guidelinesSection}${cautionsSection}${extraSection}
+
+=== 카피 작성 규칙 ===
+1. 각 카피는 "메인 카피(헤드라인)"와 "서브 카피(부제/설명)"로 구성
+2. 메인 카피: 15자 이내, 강렬하고 기억에 남는 문구
+3. 서브 카피: 메인 카피를 보완하는 구체적인 설명
+4. 소구점이 있다면 각 카피에 최소 1개 이상 자연스럽게 녹여내기
+5. 지침서가 있다면 지침서의 톤앤매너, 스타일, 방향성을 반드시 따르기
+6. 주의사항이 있다면 절대 위반하지 않기
+7. 광고 심의에 걸리지 않는 표현 사용
+8. 클리셰나 식상한 표현 피하기
+
+=== 출력 형식 (이 형식 정확히 따를 것) ===
 1. 메인카피: 서브카피 설명
 2. 메인카피: 서브카피 설명
-...
+3. 메인카피: 서브카피 설명
+4. 메인카피: 서브카피 설명
+5. 메인카피: 서브카피 설명
 6. 메인카피: 서브카피 설명
 
-다른 설명 없이 6개만 출력하세요.`
+다른 설명이나 서두 없이 위 형식으로 6개만 출력하세요.`
 }
 
 export async function POST(request: NextRequest) {
