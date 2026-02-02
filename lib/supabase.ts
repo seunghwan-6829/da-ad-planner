@@ -36,6 +36,13 @@ export interface AdPlan {
   sub_copy: string | null
   cta_text: string | null
   notes: string | null
+  // 새 필드들
+  reference_links: string[] | null
+  cta_texts: string[] | null
+  td_title: string | null
+  td_description: string | null
+  copy_history: string | null  // JSON string
+  custom_prompt: string | null  // 추가 입력란
   created_at: string
   advertiser?: Advertiser
 }

@@ -47,8 +47,22 @@ CREATE TABLE IF NOT EXISTS ad_plans (
   sub_copy TEXT,
   cta_text TEXT,
   notes TEXT,
+  reference_links TEXT[],
+  cta_texts TEXT[],
+  td_title TEXT,
+  td_description TEXT,
+  copy_history TEXT,
+  custom_prompt TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- 기존 ad_plans 테이블에 새 컬럼 추가
+ALTER TABLE ad_plans ADD COLUMN IF NOT EXISTS reference_links TEXT[];
+ALTER TABLE ad_plans ADD COLUMN IF NOT EXISTS cta_texts TEXT[];
+ALTER TABLE ad_plans ADD COLUMN IF NOT EXISTS td_title TEXT;
+ALTER TABLE ad_plans ADD COLUMN IF NOT EXISTS td_description TEXT;
+ALTER TABLE ad_plans ADD COLUMN IF NOT EXISTS copy_history TEXT;
+ALTER TABLE ad_plans ADD COLUMN IF NOT EXISTS custom_prompt TEXT;
 
 -- =============================================
 -- 템플릿 테이블

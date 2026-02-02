@@ -2,11 +2,11 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Plus, Search, Trash2, Eye, Image, Video, Filter } from 'lucide-react'
+import { Plus, Search, Trash2, Image, Video } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { getPlans, deletePlan } from '@/lib/api/plans'
 import { getAdvertisers } from '@/lib/api/advertisers'
@@ -39,7 +39,9 @@ export default function PlansPage() {
     }
   }
 
-  async function handleDelete(id: string) {
+  async function handleDelete(e: React.MouseEvent, id: string) {
+    e.preventDefault()
+    e.stopPropagation()
     if (!confirm('정말 삭제하시겠습니까?')) return
     
     try {
@@ -137,76 +139,48 @@ export default function PlansPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
           {filteredPlans.map((plan) => (
-            <Card key={plan.id} className="hover:shadow-md transition-shadow">
-              <CardContent className="p-6">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-2">
-                      {plan.media_type === 'video' ? (
-                        <Video className="h-5 w-5 text-purple-500" />
-                      ) : (
-                        <Image className="h-5 w-5 text-blue-500" />
-                      )}
-                      <h3 className="text-lg font-semibold">{plan.title}</h3>
-                      <Badge variant={plan.media_type === 'video' ? 'secondary' : 'default'}>
-                        {plan.media_type === 'video' ? '영상' : '이미지'}
-                      </Badge>
-                      {plan.size && (
-                        <Badge variant="outline">{plan.size.split(' ')[0]}</Badge>
-                      )}
-                    </div>
-                    
-                    {(plan.advertiser as unknown as { name: string })?.name && (
-                      <p className="text-sm text-muted-foreground mb-2">
-                        광고주: {(plan.advertiser as unknown as { name: string }).name}
-                      </p>
+            <Link key={plan.id} href={`/plans/${plan.id}`}>
+              <Card className="hover:shadow-md transition-shadow cursor-pointer h-full group">
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    {plan.media_type === 'video' ? (
+                      <Video className="h-4 w-4 text-purple-500 flex-shrink-0" />
+                    ) : (
+                      <Image className="h-4 w-4 text-blue-500 flex-shrink-0" />
                     )}
-                    
-                    {plan.concept && (
-                      <p className="text-sm text-gray-600 mb-2 line-clamp-2">
-                        {plan.concept}
-                      </p>
-                    )}
-                    
-                    <div className="flex flex-wrap gap-4 text-sm mt-3">
-                      {plan.main_copy && (
-                        <div>
-                          <span className="text-muted-foreground">메인 카피: </span>
-                          <span className="font-medium">{plan.main_copy}</span>
-                        </div>
-                      )}
-                      {plan.cta_text && (
-                        <div>
-                          <span className="text-muted-foreground">CTA: </span>
-                          <Badge variant="outline">{plan.cta_text}</Badge>
-                        </div>
-                      )}
-                    </div>
-                    
-                    <p className="text-xs text-muted-foreground mt-3">
-                      작성일: {new Date(plan.created_at).toLocaleDateString('ko-KR')}
-                    </p>
+                    <Badge variant={plan.media_type === 'video' ? 'secondary' : 'default'} className="text-xs">
+                      {plan.media_type === 'video' ? '영상' : '이미지'}
+                    </Badge>
                   </div>
                   
-                  <div className="flex gap-1 ml-4">
-                    <Link href={`/plans/${plan.id}`}>
-                      <Button variant="ghost" size="icon">
-                        <Eye className="h-4 w-4" />
-                      </Button>
-                    </Link>
+                  <h3 className="font-semibold text-sm line-clamp-2 mb-2 group-hover:text-primary transition-colors">
+                    {plan.title}
+                  </h3>
+                  
+                  {(plan.advertiser as unknown as { name: string })?.name && (
+                    <p className="text-xs text-muted-foreground mb-2">
+                      {(plan.advertiser as unknown as { name: string }).name}
+                    </p>
+                  )}
+                  
+                  <div className="flex items-center justify-between mt-auto pt-2 border-t">
+                    <span className="text-xs text-muted-foreground">
+                      {new Date(plan.created_at).toLocaleDateString('ko-KR')}
+                    </span>
                     <Button 
                       variant="ghost" 
-                      size="icon"
-                      onClick={() => handleDelete(plan.id)}
+                      size="sm"
+                      className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                      onClick={(e) => handleDelete(e, plan.id)}
                     >
-                      <Trash2 className="h-4 w-4 text-destructive" />
+                      <Trash2 className="h-3 w-3 text-destructive" />
                     </Button>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            </Link>
           ))}
         </div>
       )}

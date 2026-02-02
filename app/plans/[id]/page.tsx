@@ -66,6 +66,7 @@ export default function PlanDetailPage() {
   const [ctaTexts, setCtaTexts] = useState<string[]>([''])
   const [tdTitle, setTdTitle] = useState('')
   const [tdDescription, setTdDescription] = useState('')
+  const [customPrompt, setCustomPrompt] = useState('')  // 추가 입력란
   
   const [formData, setFormData] = useState({
     title: '',
@@ -92,6 +93,24 @@ export default function PlanDetailPage() {
         advertiser_id: planData.advertiser_id || '',
         media_type: planData.media_type,
       })
+
+      // 새 필드들 불러오기
+      setReferenceLinks(planData.reference_links?.length ? planData.reference_links : [''])
+      setCtaTexts(planData.cta_texts?.length ? planData.cta_texts : [''])
+      setTdTitle(planData.td_title || '')
+      setTdDescription(planData.td_description || '')
+      setCustomPrompt(planData.custom_prompt || '')
+      
+      // 카피 히스토리 불러오기
+      if (planData.copy_history) {
+        try {
+          const parsed = JSON.parse(planData.copy_history)
+          setCopyHistory(parsed.map((h: CopySet) => ({
+            ...h,
+            timestamp: new Date(h.timestamp)
+          })))
+        } catch { /* ignore */ }
+      }
 
       if (planData.advertiser_id) {
         const advertiser = advertisersData.find(a => a.id === planData.advertiser_id)
@@ -121,6 +140,10 @@ export default function PlanDetailPage() {
 
     setSaving(true)
     try {
+      // 필터링된 배열들
+      const validRefs = referenceLinks.filter(r => r.trim())
+      const validCtas = ctaTexts.filter(c => c.trim())
+      
       await updatePlan(id, {
         title: formData.title,
         advertiser_id: formData.advertiser_id || null,
@@ -131,6 +154,12 @@ export default function PlanDetailPage() {
         sub_copy: null,
         cta_text: null,
         notes: null,
+        reference_links: validRefs.length ? validRefs : null,
+        cta_texts: validCtas.length ? validCtas : null,
+        td_title: tdTitle || null,
+        td_description: tdDescription || null,
+        copy_history: copyHistory.length ? JSON.stringify(copyHistory) : null,
+        custom_prompt: customPrompt || null,
       })
       alert('저장되었습니다.')
     } catch (error) {
@@ -173,6 +202,12 @@ export default function PlanDetailPage() {
 
     // 추가 컨텍스트 구성
     let extraContext = ''
+    
+    // 사용자 커스텀 프롬프트 (가장 먼저 반영)
+    if (customPrompt.trim()) {
+      extraContext += `[사용자 추가 요청사항 - 최우선 반영]\n${customPrompt.trim()}\n\n`
+    }
+    
     const validCtas = ctaTexts.filter(c => c.trim())
     if (validCtas.length > 0) {
       extraContext += `CTA 문구 참고: ${validCtas.join(', ')}\n`
@@ -513,6 +548,25 @@ export default function PlanDetailPage() {
                 className="text-xs"
               />
             </div>
+          </CardContent>
+        </Card>
+
+        {/* 추가 요청사항 (선택) */}
+        <Card className="border-amber-200 bg-amber-50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-amber-800 flex items-center gap-2">
+              <Sparkles className="h-4 w-4" />
+              AI 추가 요청 (선택)
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Textarea
+              placeholder="AI가 카피 작성 시 추가로 참고할 내용을 적어주세요.&#10;&#10;예: 20대 여성 타겟, 감성적인 톤으로, 이모지 사용해줘...&#10;&#10;※ 지침서 확인 후 이 내용을 2순위로 반영합니다."
+              rows={4}
+              value={customPrompt}
+              onChange={(e) => setCustomPrompt(e.target.value)}
+              className="text-xs"
+            />
           </CardContent>
         </Card>
       </div>
