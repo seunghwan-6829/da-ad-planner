@@ -145,8 +145,45 @@ export default function AdvertiserDetailPage() {
                 id="name"
                 placeholder="예: ABC 화장품"
                 value={formData.name}
+                autoComplete="off"
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               />
+            </div>
+            <div className="space-y-2">
+              <Label>제품 정보</Label>
+              <p className="text-sm text-muted-foreground">
+                이 광고주가 보유한 제품 이름을 입력하세요. 여러 개라면 + 버튼으로 추가할 수 있습니다.
+              </p>
+              <div className="space-y-3">
+                {formData.products.map((product, index) => (
+                  <div key={index} className="flex items-center gap-2">
+                    <Input
+                      placeholder="예: 이공이샴푸 500ml"
+                      value={product}
+                      onChange={(e) => updateProduct(index, e.target.value)}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={() => removeProduct(index)}
+                      disabled={formData.products.length === 1}
+                    >
+                      -
+                    </Button>
+                    {index === formData.products.length - 1 && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={addProduct}
+                      >
+                        +
+                      </Button>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -169,48 +206,7 @@ export default function AdvertiserDetailPage() {
           </CardContent>
         </Card>
 
-        <Card className="mt-4">
-          <CardHeader>
-            <CardTitle>제품 정보</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              이 광고주가 보유한 제품 이름을 입력하세요. 여러 개라면 + 버튼으로 추가할 수 있습니다.
-            </p>
-            <div className="space-y-3">
-              {formData.products.map((product, index) => (
-                <div key={index} className="flex items-center gap-2">
-                  <Input
-                    placeholder="예: 이공이샴푸 500ml"
-                    value={product}
-                    onChange={(e) => updateProduct(index, e.target.value)}
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    onClick={() => removeProduct(index)}
-                    disabled={formData.products.length === 1}
-                  >
-                    -
-                  </Button>
-                  {index === formData.products.length - 1 && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      onClick={addProduct}
-                    >
-                      +
-                    </Button>
-                  )}
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="mt-4">
+        <Card className="mt-4 border-red-200 bg-red-50">
           <CardHeader>
             <CardTitle>주의사항 (선택)</CardTitle>
           </CardHeader>
