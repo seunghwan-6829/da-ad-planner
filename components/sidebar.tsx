@@ -7,6 +7,7 @@ import {
   FileText, 
   Users, 
   FileCode,
+  Sparkles,
   ChevronRight
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -16,6 +17,7 @@ const navigation = [
   { name: '광고 기획서', href: '/plans', icon: FileText },
   { name: '광고주 관리', href: '/advertisers', icon: Users },
   { name: '템플릿', href: '/templates', icon: FileCode },
+  { name: 'AI 테스트', href: '/ai-test', icon: Sparkles },
 ]
 
 export function Sidebar() {

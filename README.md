@@ -49,27 +49,51 @@ npm run dev
 
 ## Vercel 배포
 
-### 1. GitHub 연동
+### 원클릭 배포 (이 폴더에서)
+
+- **Windows**: 프로젝트 폴더의 `deploy.bat` 파일을 **더블클릭**하면, 변경사항을 커밋·push하고 Vercel이 자동으로 배포합니다.
+- **터미널**: `npm run deploy` 실행 시 동일하게 동작합니다.
+
+(최초 1회: GitHub 저장소 연결 및 Vercel 프로젝트 연결이 되어 있어야 합니다. 아래 2~3단계 참고.)
+
+### 1. 빌드 확인 (로컬)
 
 ```bash
-git init
+npm run build
+```
+
+### 2. GitHub 연동
+
+```bash
 git add .
-git commit -m "Initial commit"
+git commit -m "Prepare for deployment"
 git remote add origin https://github.com/YOUR_USERNAME/da-ad-planner.git
 git push -u origin main
 ```
 
-### 2. Vercel 프로젝트 생성
+(이미 `git init` 되어 있다면 `git remote add`부터 실행)
+
+### 3. Vercel 프로젝트 생성
 
 1. [Vercel](https://vercel.com)에 로그인
-2. "Add New Project" 클릭
-3. GitHub 레포지토리 선택 (da-ad-planner)
-4. Environment Variables 설정:
-   - `NEXT_PUBLIC_SUPABASE_URL`
-   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-5. "Deploy" 클릭
+2. **Add New Project** 클릭
+3. **Import Git Repository** → GitHub에서 `da-ad-planner` 선택 (또는 먼저 GitHub에 푸시)
+4. **Environment Variables**에 아래 변수 추가:
+   - `NEXT_PUBLIC_SUPABASE_URL` = Supabase 프로젝트 URL
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY` = Supabase anon key
+   - `ANTHROPIC_API_KEY` = Anthropic(Claude) API 키 (AI 테스트용, 서버 전용)
+5. **Deploy** 클릭
 
 이후 main 브랜치에 push할 때마다 자동으로 배포됩니다.
+
+### 4. Vercel CLI로 배포 (선택)
+
+```bash
+npm i -g vercel
+vercel
+```
+
+최초 실행 시 로그인 및 프로젝트 연결 후, 환경 변수는 Vercel 대시보드에서 설정하세요.
 
 ## Supabase 설정 가이드
 
