@@ -41,8 +41,15 @@ export function Sidebar() {
   const { user, profile, isAdmin, signOut } = useAuth()
 
   async function handleSignOut() {
-    await signOut()
-    router.push('/login')
+    try {
+      await signOut()
+      // 강제로 페이지 이동 (캐시 무시)
+      window.location.href = '/login'
+    } catch (err) {
+      console.error('로그아웃 실패:', err)
+      // 그래도 로그인 페이지로 이동
+      window.location.href = '/login'
+    }
   }
 
   return (
