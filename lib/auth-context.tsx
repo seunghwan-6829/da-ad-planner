@@ -120,11 +120,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function signIn(email: string, password: string) {
     if (!supabase) return { error: new Error('Supabase not configured') }
     
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
-    return { error }
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
+      
+      if (error) {
+        return { error }
+      }
+      
+      // 로그인 성공 시 상태 즉시 업데이트
+      if (data.user) {
+        setUser(data.user)
+        setSession(data.session)
+        const profileData = await fetchProfile(data.user.id)
+        setProfile(profileData)
+      }
+      
+      return { error: null }
+    } catch (err) {
+      console.error('SignIn error:', err)
+      return { error: err as Error }
+    }
   }
 
   async function signUp(email: string, password: string, name?: string) {

@@ -32,9 +32,12 @@ export default function LoginPage() {
           setError(error.message === 'Invalid login credentials' 
             ? '이메일 또는 비밀번호가 올바르지 않습니다.' 
             : error.message)
+          setLoading(false)
           return
         }
-        router.push('/')
+        // 강제 페이지 이동
+        window.location.href = '/'
+        return
       } else {
         if (password.length < 6) {
           setError('비밀번호는 6자 이상이어야 합니다.')
