@@ -14,23 +14,36 @@ export async function POST(request: NextRequest) {
 
   const isVideo = mediaType === 'video'
   const typeLabel = isVideo ? '영상 광고 대본' : '이미지 광고 카피'
-  const revisedFormat = isVideo 
-    ? '위 제안을 반영한 개선된 대본 (같은 씬 구조로)'
-    : '위 제안을 반영한 개선된 카피 (메인카피: 서브카피 형식)'
 
-  const prompt = `당신은 광고 ${isVideo ? '대본' : '카피'} 전문 리뷰어입니다.
-아래 ${typeLabel}을 분석해주세요.
+  const prompt = isVideo 
+    ? `당신은 영상 광고 대본 전문 리뷰어입니다.
+아래 영상 광고 대본을 분석해주세요.
 ${advertiserName ? `광고주: ${advertiserName}` : ''}
 
-${isVideo ? '대본' : '카피'}: "${copy}"
+대본:
+${copy}
 
-다음 4가지를 각각 ${isVideo ? '2-3문장' : '1-2문장'}으로 간결하게 작성하세요:
-1. 좋은 점 (good): 이 ${isVideo ? '대본' : '카피'}의 강점
-2. 아쉬운 점 (bad): 개선이 필요한 부분
-3. 수정 제안 (suggestion): 구체적인 개선 방향
-4. 수정본 (revised): ${revisedFormat}
+다음 4가지를 분석해주세요:
+1. good: 이 대본의 강점 (1-2문장)
+2. bad: 개선이 필요한 부분 (1-2문장)
+3. suggestion: 구체적인 개선 방향 (1-2문장)
+4. revised: 위 제안을 반영한 개선된 대본 (원본과 같은 씬 구조 유지)
 
-JSON 형식으로만 응답하세요:
+반드시 아래 JSON 형식으로만 응답하세요. 다른 텍스트 없이 JSON만:
+{"good":"강점 내용","bad":"아쉬운 점","suggestion":"개선 방향","revised":"개선된 대본 전체"}`
+    : `당신은 이미지 광고 카피 전문 리뷰어입니다.
+아래 이미지 광고 카피를 분석해주세요.
+${advertiserName ? `광고주: ${advertiserName}` : ''}
+
+카피: "${copy}"
+
+다음 4가지를 각각 1-2문장으로 간결하게 작성하세요:
+1. good: 이 카피의 강점
+2. bad: 개선이 필요한 부분
+3. suggestion: 구체적인 개선 방향
+4. revised: 개선된 카피 (메인카피: 서브카피 형식)
+
+반드시 아래 JSON 형식으로만 응답하세요:
 {"good":"...","bad":"...","suggestion":"...","revised":"..."}`
 
   try {
@@ -43,7 +56,7 @@ JSON 형식으로만 응답하세요:
       },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: 1024,
+        max_tokens: isVideo ? 4096 : 1024,  // 영상 대본용 토큰 증가
         messages: [{ role: 'user', content: prompt }],
       }),
     })

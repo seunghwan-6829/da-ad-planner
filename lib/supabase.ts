@@ -43,6 +43,7 @@ export interface AdPlan {
   td_description: string | null
   copy_history: string | null  // JSON string
   custom_prompt: string | null  // 추가 입력란
+  ai_results: string | null  // 현재 AI 결과 JSON string
   created_at: string
   advertiser?: Advertiser
 }

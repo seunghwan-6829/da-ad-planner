@@ -118,6 +118,17 @@ export default function PlanDetailPage() {
         } catch { /* ignore */ }
       }
 
+      // AI 결과 불러오기
+      if (planData.ai_results) {
+        try {
+          const parsed = JSON.parse(planData.ai_results)
+          setAiResults(parsed)
+          if (parsed.length > 0) {
+            setShowAiPanel(true)
+          }
+        } catch { /* ignore */ }
+      }
+
       if (planData.advertiser_id) {
         const advertiser = advertisersData.find(a => a.id === planData.advertiser_id)
         setSelectedAdvertiser(advertiser || null)
@@ -166,6 +177,7 @@ export default function PlanDetailPage() {
         td_description: tdDescription || null,
         copy_history: copyHistory.length ? JSON.stringify(copyHistory) : null,
         custom_prompt: customPrompt || null,
+        ai_results: aiResults.length ? JSON.stringify(aiResults) : null,
       })
       alert('저장되었습니다.')
     } catch (error) {

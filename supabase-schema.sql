@@ -63,6 +63,7 @@ ALTER TABLE ad_plans ADD COLUMN IF NOT EXISTS td_title TEXT;
 ALTER TABLE ad_plans ADD COLUMN IF NOT EXISTS td_description TEXT;
 ALTER TABLE ad_plans ADD COLUMN IF NOT EXISTS copy_history TEXT;
 ALTER TABLE ad_plans ADD COLUMN IF NOT EXISTS custom_prompt TEXT;
+ALTER TABLE ad_plans ADD COLUMN IF NOT EXISTS ai_results TEXT;  -- 현재 AI 생성 결과
 
 -- =============================================
 -- 템플릿 테이블
