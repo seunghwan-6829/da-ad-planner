@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
-import { Loader2, Lock, LogIn } from 'lucide-react'
+import { Loader2, Lock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/lib/auth-context'
 
@@ -17,12 +17,21 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const { user, profile, loading, isApproved } = useAuth()
   const [showModal, setShowModal] = useState(false)
+  const [forceReady, setForceReady] = useState(false)
 
   const isPublicPath = publicPaths.includes(pathname)
   const isDashboardOnly = dashboardOnlyPaths.includes(pathname)
 
+  // 3초 후 강제 로딩 해제 (무한 로딩 방지)
   useEffect(() => {
-    if (loading) return
+    const timer = setTimeout(() => {
+      setForceReady(true)
+    }, 3000)
+    return () => clearTimeout(timer)
+  }, [])
+
+  useEffect(() => {
+    if (loading && !forceReady) return
 
     // 로그인 안 된 상태에서 비공개 페이지 접근
     if (!user && !isPublicPath) {
@@ -36,10 +45,10 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     } else {
       setShowModal(false)
     }
-  }, [user, isApproved, loading, pathname, router, isPublicPath, isDashboardOnly])
+  }, [user, isApproved, loading, forceReady, pathname, router, isPublicPath, isDashboardOnly])
 
   // 로딩 중
-  if (loading) {
+  if (loading && !forceReady) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -52,8 +61,9 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     return <>{children}</>
   }
 
-  // 로그인 안 됨
-  if (!user) {
+  // 로그인 안 됨 (3초 후에도)
+  if (!user && forceReady) {
+    router.push('/login')
     return null
   }
 
@@ -96,7 +106,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
               </Button>
             </div>
             <p className="text-xs text-muted-foreground mt-4">
-              현재 상태: {profile?.role === 'pending' ? '승인 대기중' : profile?.role}
+              현재 상태: {profile?.role === 'pending' ? '승인 대기중' : profile?.role || '알 수 없음'}
             </p>
           </div>
         </div>

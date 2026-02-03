@@ -37,17 +37,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function fetchProfile(userId: string) {
     if (!supabase) return null
     
-    const { data, error } = await supabase
-      .from('user_profiles')
-      .select('*')
-      .eq('id', userId)
-      .single()
-    
-    if (error) {
-      console.error('Profile fetch error:', error)
+    try {
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('*')
+        .eq('id', userId)
+        .single()
+      
+      if (error) {
+        console.error('Profile fetch error:', error)
+        // 프로필이 없으면 기본값 반환
+        return null
+      }
+      return data as UserProfile
+    } catch (err) {
+      console.error('Profile fetch exception:', err)
       return null
     }
-    return data as UserProfile
   }
 
   async function refreshProfile() {
@@ -63,27 +69,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return
     }
 
+    let mounted = true
+
     // 현재 세션 가져오기
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      setSession(session)
-      setUser(session?.user ?? null)
-      
-      if (session?.user) {
-        const profileData = await fetchProfile(session.user.id)
-        setProfile(profileData)
+    async function initAuth() {
+      try {
+        const { data: { session } } = await supabase!.auth.getSession()
+        
+        if (!mounted) return
+        
+        setSession(session)
+        setUser(session?.user ?? null)
+        
+        if (session?.user) {
+          const profileData = await fetchProfile(session.user.id)
+          if (mounted) setProfile(profileData)
+        }
+      } catch (err) {
+        console.error('Auth init error:', err)
+      } finally {
+        if (mounted) setLoading(false)
       }
-      
-      setLoading(false)
-    })
+    }
+
+    initAuth()
 
     // 인증 상태 변경 리스너
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (!mounted) return
+      
       setSession(session)
       setUser(session?.user ?? null)
       
       if (session?.user) {
         const profileData = await fetchProfile(session.user.id)
-        setProfile(profileData)
+        if (mounted) setProfile(profileData)
       } else {
         setProfile(null)
       }
@@ -91,7 +111,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false)
     })
 
-    return () => subscription.unsubscribe()
+    return () => {
+      mounted = false
+      subscription.unsubscribe()
+    }
   }, [])
 
   async function signIn(email: string, password: string) {
