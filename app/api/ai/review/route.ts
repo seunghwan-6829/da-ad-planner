@@ -23,28 +23,37 @@ ${advertiserName ? `광고주: ${advertiserName}` : ''}
 대본:
 ${copy}
 
-다음 4가지를 분석해주세요:
+다음을 분석해주세요:
 1. good: 이 대본의 강점 (1-2문장)
 2. bad: 개선이 필요한 부분 (1-2문장)
 3. suggestion: 구체적인 개선 방향 (1-2문장)
-4. revised: 위 제안을 반영한 개선된 대본 (원본과 같은 씬 구조 유지)
+4. revised: 개선된 대본 (원본과 같은 씬 구조 유지)
 
-반드시 아래 JSON 형식으로만 응답하세요. 다른 텍스트 없이 JSON만:
-{"good":"강점 내용","bad":"아쉬운 점","suggestion":"개선 방향","revised":"개선된 대본 전체"}`
+중요: revised에서 수정된 부분을 마킹해주세요:
+- 좋은 점(유지된 부분): [[good]]텍스트[[/good]]
+- 수정/개선된 부분: [[fix]]텍스트[[/fix]]
+- 삭제된 부분은 표시하지 마세요
+
+반드시 아래 JSON 형식으로만 응답하세요:
+{"good":"강점","bad":"아쉬운 점","suggestion":"개선 방향","revised":"[[good]]좋은부분[[/good]] [[fix]]수정된부분[[/fix]] 일반텍스트"}`
     : `당신은 이미지 광고 카피 전문 리뷰어입니다.
 아래 이미지 광고 카피를 분석해주세요.
 ${advertiserName ? `광고주: ${advertiserName}` : ''}
 
 카피: "${copy}"
 
-다음 4가지를 각각 1-2문장으로 간결하게 작성하세요:
-1. good: 이 카피의 강점
-2. bad: 개선이 필요한 부분
-3. suggestion: 구체적인 개선 방향
+다음을 분석해주세요:
+1. good: 이 카피의 강점 (1-2문장)
+2. bad: 개선이 필요한 부분 (1-2문장)
+3. suggestion: 구체적인 개선 방향 (1-2문장)
 4. revised: 개선된 카피 (메인카피: 서브카피 형식)
 
+중요: revised에서 수정된 부분을 마킹해주세요:
+- 좋은 점(유지된 부분): [[good]]텍스트[[/good]]
+- 수정/개선된 부분: [[fix]]텍스트[[/fix]]
+
 반드시 아래 JSON 형식으로만 응답하세요:
-{"good":"...","bad":"...","suggestion":"...","revised":"..."}`
+{"good":"...","bad":"...","suggestion":"...","revised":"[[good]]좋은부분[[/good]]: [[fix]]수정된부분[[/fix]]"}`
 
   try {
     const res = await fetch(ANTHROPIC_BASE, {

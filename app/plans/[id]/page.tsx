@@ -188,6 +188,72 @@ export default function PlanDetailPage() {
     }
   }
 
+  // 마킹된 텍스트를 React 요소로 변환
+  function renderMarkedText(text: string) {
+    const parts: React.ReactNode[] = []
+    let remaining = text
+    let key = 0
+
+    while (remaining.length > 0) {
+      // [[good]]...[[/good]] 찾기
+      const goodMatch = remaining.match(/\[\[good\]\]([\s\S]*?)\[\[\/good\]\]/)
+      // [[fix]]...[[/fix]] 찾기
+      const fixMatch = remaining.match(/\[\[fix\]\]([\s\S]*?)\[\[\/fix\]\]/)
+
+      // 가장 먼저 나오는 매치 찾기
+      const goodIndex = goodMatch ? remaining.indexOf(goodMatch[0]) : -1
+      const fixIndex = fixMatch ? remaining.indexOf(fixMatch[0]) : -1
+
+      if (goodIndex === -1 && fixIndex === -1) {
+        // 더 이상 매치 없음
+        parts.push(<span key={key++}>{remaining}</span>)
+        break
+      }
+
+      // 더 먼저 나오는 것 처리
+      if (goodIndex !== -1 && (fixIndex === -1 || goodIndex < fixIndex)) {
+        // good 먼저
+        if (goodIndex > 0) {
+          parts.push(<span key={key++}>{remaining.substring(0, goodIndex)}</span>)
+        }
+        parts.push(
+          <span 
+            key={key++} 
+            className="bg-green-100 text-green-800 underline decoration-green-500 decoration-2 px-0.5 rounded"
+          >
+            {goodMatch![1]}
+          </span>
+        )
+        remaining = remaining.substring(goodIndex + goodMatch![0].length)
+      } else {
+        // fix 먼저
+        if (fixIndex > 0) {
+          parts.push(<span key={key++}>{remaining.substring(0, fixIndex)}</span>)
+        }
+        parts.push(
+          <span 
+            key={key++} 
+            className="bg-amber-100 text-amber-800 underline decoration-amber-500 decoration-2 px-0.5 rounded"
+          >
+            {fixMatch![1]}
+          </span>
+        )
+        remaining = remaining.substring(fixIndex + fixMatch![0].length)
+      }
+    }
+
+    return parts
+  }
+
+  // 마킹 제거 (저장 시 사용)
+  function removeMarks(text: string) {
+    return text
+      .replace(/\[\[good\]\]/g, '')
+      .replace(/\[\[\/good\]\]/g, '')
+      .replace(/\[\[fix\]\]/g, '')
+      .replace(/\[\[\/fix\]\]/g, '')
+  }
+
   function copyToClipboard(text?: string) {
     const copyText = text || (() => {
       let t = `[광고 기획서: ${formData.title}]\n\n`
@@ -281,58 +347,58 @@ export default function PlanDetailPage() {
               fullText += data.text
               setStreamText(fullText)
             }
-            if (data.done) {
-              const results: CopyItem[] = []
-              
-              if (formData.media_type === 'video') {
-                // 영상 대본 파싱: [대본 N] 또는 --- 기준으로 분리
-                const scripts = fullText.split(/---|\[대본\s*\d+\]/).filter(s => s.trim())
-                for (const script of scripts) {
-                  const trimmed = script.trim()
-                  if (trimmed.length > 10) { // 최소 길이 체크
-                    // 첫 번째 줄을 제목으로, 나머지를 내용으로
-                    const lines = trimmed.split('\n').filter(l => l.trim())
-                    if (lines.length > 0) {
-                      // Scene 1의 나레이션이나 첫 줄을 제목으로
-                      let title = ''
-                      const narationMatch = trimmed.match(/나레이션:\s*"?([^"\n]+)"?/)
-                      if (narationMatch) {
-                        title = narationMatch[1].substring(0, 30) + (narationMatch[1].length > 30 ? '...' : '')
-                      } else {
-                        title = lines[0].replace(/Scene\s*\d+:?\s*/i, '').substring(0, 30)
-                      }
-                      results.push({ 
-                        title: title || `대본 ${results.length + 1}`,
-                        description: trimmed 
-                      })
-                    }
-                  }
-                }
-              } else {
-                // 이미지 카피 파싱
-                const lines = fullText.split('\n').filter(l => l.trim())
-                for (const line of lines) {
-                  const match = line.match(/^\d+\.\s*(.+?):\s*(.+)$/)
-                  if (match) {
-                    results.push({ title: match[1].trim(), description: match[2].trim() })
-                  }
-                }
-              }
-              
-              setAiResults(results)
-              // 생성되면 바로 히스토리에 추가
-              if (results.length > 0) {
-                setCopyHistory(prev => [{
-                  id: Date.now().toString(),
-                  timestamp: new Date(),
-                  mediaType: formData.media_type,
-                  copies: results
-                }, ...prev])
-              }
-            }
           } catch {
             // ignore
           }
+        }
+      }
+
+      // 스트리밍 완료 후 결과 파싱 (done 이벤트와 상관없이)
+      if (fullText.trim()) {
+        const results: CopyItem[] = []
+        
+        if (formData.media_type === 'video') {
+          // 영상 대본 파싱: [대본 N] 또는 --- 기준으로 분리
+          const scripts = fullText.split(/---|\[대본\s*\d+\]/).filter(s => s.trim())
+          for (const script of scripts) {
+            const trimmed = script.trim()
+            if (trimmed.length > 10) {
+              const lines = trimmed.split('\n').filter(l => l.trim())
+              if (lines.length > 0) {
+                let title = ''
+                const narationMatch = trimmed.match(/나레이션:\s*"?([^"\n]+)"?/)
+                if (narationMatch) {
+                  title = narationMatch[1].substring(0, 30) + (narationMatch[1].length > 30 ? '...' : '')
+                } else {
+                  title = lines[0].replace(/Scene\s*\d+:?\s*/i, '').substring(0, 30)
+                }
+                results.push({ 
+                  title: title || `대본 ${results.length + 1}`,
+                  description: trimmed 
+                })
+              }
+            }
+          }
+        } else {
+          // 이미지 카피 파싱
+          const lines = fullText.split('\n').filter(l => l.trim())
+          for (const line of lines) {
+            const match = line.match(/^\d+\.\s*(.+?):\s*(.+)$/)
+            if (match) {
+              results.push({ title: match[1].trim(), description: match[2].trim() })
+            }
+          }
+        }
+        
+        setAiResults(results)
+        // 생성되면 바로 히스토리에 추가
+        if (results.length > 0) {
+          setCopyHistory(prev => [{
+            id: Date.now().toString(),
+            timestamp: new Date(),
+            mediaType: formData.media_type,
+            copies: results
+          }, ...prev])
         }
       }
     } catch (error) {
@@ -385,6 +451,8 @@ export default function PlanDetailPage() {
     if (!reviewModalData) return
     
     const { index, review } = reviewModalData
+    // 마킹 제거한 순수 텍스트
+    const cleanRevised = removeMarks(review.revised)
     
     setAiResults(prev => {
       const updated = [...prev]
@@ -393,20 +461,20 @@ export default function PlanDetailPage() {
         // 영상: description 전체를 수정본으로
         updated[index] = {
           ...updated[index],
-          description: review.revised,
-          review: review
+          description: cleanRevised,
+          review: { ...review, revised: cleanRevised }
         }
       } else {
         // 이미지: 메인카피: 서브카피 형식 파싱
-        const match = review.revised.match(/^(.+?):\s*(.+)$/)
+        const match = cleanRevised.match(/^(.+?):\s*(.+)$/)
         if (match) {
           updated[index] = {
             title: match[1].trim(),
             description: match[2].trim(),
-            review: review
+            review: { ...review, revised: cleanRevised }
           }
         } else {
-          updated[index] = { ...updated[index], description: review.revised, review: review }
+          updated[index] = { ...updated[index], description: cleanRevised, review: { ...review, revised: cleanRevised } }
         }
       }
       return updated
@@ -1037,16 +1105,30 @@ export default function PlanDetailPage() {
                 {/* 수정본 */}
                 <div className="border-2 border-purple-300 rounded-lg overflow-hidden">
                   <div className="bg-purple-100 px-4 py-2 border-b border-purple-200">
-                    <span className="font-medium text-sm text-purple-800">✨ 수정본</span>
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium text-sm text-purple-800">✨ 수정본</span>
+                      <div className="flex items-center gap-3 text-xs">
+                        <span className="flex items-center gap-1">
+                          <span className="w-3 h-3 bg-green-100 border border-green-400 rounded"></span>
+                          <span className="text-green-700">유지된 부분</span>
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <span className="w-3 h-3 bg-amber-100 border border-amber-400 rounded"></span>
+                          <span className="text-amber-700">수정된 부분</span>
+                        </span>
+                      </div>
+                    </div>
                   </div>
                   <div className="p-4">
                     {formData.media_type === 'video' ? (
-                      <pre className="whitespace-pre-wrap text-sm text-gray-700 bg-purple-50 p-3 rounded max-h-80 overflow-y-auto">
-                        {reviewModalData.review.revised}
-                      </pre>
+                      <div className="whitespace-pre-wrap text-sm text-gray-700 bg-purple-50 p-3 rounded max-h-80 overflow-y-auto">
+                        {renderMarkedText(reviewModalData.review.revised)}
+                      </div>
                     ) : (
                       <div className="bg-purple-50 p-3 rounded">
-                        <div className="font-medium text-purple-700">{reviewModalData.review.revised}</div>
+                        <div className="font-medium text-gray-700">
+                          {renderMarkedText(reviewModalData.review.revised)}
+                        </div>
                       </div>
                     )}
                   </div>
