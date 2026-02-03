@@ -8,8 +8,10 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { useAuth } from '@/lib/auth-context'
+import { isSupabaseConfigured } from '@/lib/supabase'
 
 export default function LoginPage() {
+  const supabaseReady = isSupabaseConfigured()
   const router = useRouter()
   const { signIn, signUp } = useAuth()
   const [isLogin, setIsLogin] = useState(true)
@@ -25,39 +27,60 @@ export default function LoginPage() {
     setError('')
     setLoading(true)
 
+    // 타임아웃 설정 (10초)
+    const timeout = setTimeout(() => {
+      setLoading(false)
+      setError('요청 시간이 초과되었습니다. 다시 시도해주세요.')
+    }, 10000)
+
     try {
       if (isLogin) {
+        console.log('로그인 시도:', email)
         const { error } = await signIn(email, password)
+        clearTimeout(timeout)
+        
         if (error) {
+          console.log('로그인 에러:', error)
           setError(error.message === 'Invalid login credentials' 
             ? '이메일 또는 비밀번호가 올바르지 않습니다.' 
             : error.message)
           setLoading(false)
           return
         }
-        // 강제 페이지 이동
-        window.location.href = '/'
+        
+        console.log('로그인 성공, 페이지 이동')
+        // 약간의 딜레이 후 페이지 이동
+        setTimeout(() => {
+          window.location.replace('/')
+        }, 100)
         return
       } else {
         if (password.length < 6) {
+          clearTimeout(timeout)
           setError('비밀번호는 6자 이상이어야 합니다.')
+          setLoading(false)
           return
         }
         const { error } = await signUp(email, password, name)
+        clearTimeout(timeout)
+        
         if (error) {
           if (error.message.includes('already registered')) {
             setError('이미 가입된 이메일입니다.')
           } else {
             setError(error.message)
           }
+          setLoading(false)
           return
         }
         alert('회원가입이 완료되었습니다!\n관리자 승인 후 서비스를 이용할 수 있습니다.')
         setIsLogin(true)
+        setLoading(false)
       }
     } catch (err) {
-      setError('오류가 발생했습니다.')
-    } finally {
+      clearTimeout(timeout)
+      console.error('로그인 예외:', err)
+      setError('오류가 발생했습니다. 다시 시도해주세요.')
       setLoading(false)
     }
   }
@@ -125,6 +148,12 @@ export default function LoginPage() {
                 />
               </div>
             </div>
+
+            {!supabaseReady && (
+              <div className="text-sm text-yellow-700 bg-yellow-50 p-3 rounded-lg">
+                ⚠️ Supabase가 설정되지 않았습니다. 환경변수를 확인해주세요.
+              </div>
+            )}
 
             {error && (
               <div className="text-sm text-red-600 bg-red-50 p-3 rounded-lg">

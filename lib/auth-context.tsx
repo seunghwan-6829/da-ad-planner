@@ -118,13 +118,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   async function signIn(email: string, password: string) {
-    if (!supabase) return { error: new Error('Supabase not configured') }
+    if (!supabase) {
+      console.error('Supabase not configured')
+      return { error: new Error('Supabase not configured') }
+    }
     
     try {
+      console.log('Supabase signIn 호출 중...')
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       })
+      
+      console.log('Supabase signIn 결과:', { data: !!data, error: error?.message })
       
       if (error) {
         return { error }
@@ -132,15 +138,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       
       // 로그인 성공 시 상태 즉시 업데이트
       if (data.user) {
+        console.log('로그인 성공, 사용자:', data.user.email)
         setUser(data.user)
         setSession(data.session)
-        const profileData = await fetchProfile(data.user.id)
-        setProfile(profileData)
+        
+        try {
+          const profileData = await fetchProfile(data.user.id)
+          console.log('프로필 데이터:', profileData)
+          setProfile(profileData)
+        } catch (profileErr) {
+          console.error('프로필 로드 실패:', profileErr)
+          // 프로필 로드 실패해도 로그인은 성공 처리
+        }
       }
       
       return { error: null }
     } catch (err) {
-      console.error('SignIn error:', err)
+      console.error('SignIn exception:', err)
       return { error: err as Error }
     }
   }
