@@ -5,6 +5,7 @@ const MODEL = 'claude-opus-4-5-20251101'
 const MAX_TOKENS = 4096  // 영상 대본용 증가
 
 interface AdvertiserInfo {
+  category?: string | null
   guidelines_image?: string | null
   guidelines_video?: string | null
   products?: string[] | null
@@ -12,11 +13,17 @@ interface AdvertiserInfo {
   cautions?: string | null
 }
 
+interface BPReference {
+  name: string
+  extracted_text: string
+}
+
 function buildPrompt(
   mediaType: 'image' | 'video',
   advertiserName?: string,
   advertiser?: AdvertiserInfo | null,
-  extraPrompt?: string
+  extraPrompt?: string,
+  bpReferences?: BPReference[]
 ): string {
   const typeLabel = mediaType === 'image' ? '이미지' : '영상'
   
@@ -60,13 +67,24 @@ function buildPrompt(
     ? `\n\n=== 추가 요청 ===\n${extraPrompt.trim()}\n`
     : ''
 
+  // BP 참고 자료 섹션
+  let bpSection = ''
+  if (bpReferences && bpReferences.length > 0) {
+    bpSection = '\n\n=== 📚 BP(Best Practice) 참고 자료 ===\n'
+    bpSection += '아래는 같은 카테고리에서 성과가 좋았던 광고 카피 예시입니다.\n'
+    bpSection += '이 스타일과 톤을 참고하되, 그대로 복사하지 말고 새롭게 창작하세요.\n\n'
+    bpReferences.forEach((bp, i) => {
+      bpSection += `[참고 ${i + 1}] ${bp.name}\n${bp.extracted_text}\n\n`
+    })
+  }
+
   // 이미지 vs 영상에 따라 다른 프롬프트
   if (mediaType === 'image') {
     return `당신은 10년 경력의 DA(디스플레이 광고) 전문 카피라이터입니다.
 이미지 광고 소재용 카피를 정확히 6개 작성해주세요.
 
 중요: 아래 정보를 모두 꼼꼼히 읽고, 지침서와 소구점을 반드시 반영해서 작성하세요.
-${advertiserSection}${guidelinesSection}${cautionsSection}${extraSection}
+${advertiserSection}${guidelinesSection}${cautionsSection}${bpSection}${extraSection}
 
 === 카피 작성 규칙 ===
 1. 각 카피는 "메인 카피(헤드라인)"와 "서브 카피(부제/설명)"로 구성
@@ -93,7 +111,7 @@ ${advertiserSection}${guidelinesSection}${cautionsSection}${extraSection}
 영상 광고 소재용 대본을 정확히 6개 작성해주세요.
 
 중요: 아래 정보를 모두 꼼꼼히 읽고, 지침서와 소구점을 반드시 반영해서 작성하세요.
-${advertiserSection}${guidelinesSection}${cautionsSection}${extraSection}
+${advertiserSection}${guidelinesSection}${cautionsSection}${bpSection}${extraSection}
 
 === 대본 작성 규칙 ===
 1. 각 대본은 약 30초 분량
@@ -126,6 +144,7 @@ export async function POST(request: NextRequest) {
     advertiserName?: string
     advertiser?: AdvertiserInfo | null
     extraPrompt?: string
+    bpReferences?: BPReference[]
   }
   try {
     body = await request.json()
@@ -140,7 +159,8 @@ export async function POST(request: NextRequest) {
   const advertiserName = typeof body.advertiserName === 'string' ? body.advertiserName : undefined
   const advertiser = body.advertiser ?? null
   const extraPrompt = typeof body.extraPrompt === 'string' ? body.extraPrompt : undefined
-  const prompt = buildPrompt(mediaType, advertiserName, advertiser, extraPrompt)
+  const bpReferences = body.bpReferences ?? []
+  const prompt = buildPrompt(mediaType, advertiserName, advertiser, extraPrompt, bpReferences)
 
   const encoder = new TextEncoder()
   const stream = new ReadableStream({

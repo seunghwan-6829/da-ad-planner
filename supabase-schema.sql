@@ -74,6 +74,7 @@ UPDATE user_profiles SET role = 'admin' WHERE email = 'motiol_6829@naver.com';
 CREATE TABLE IF NOT EXISTS advertisers (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL,
+  category TEXT,
   guidelines_image TEXT,
   guidelines_video TEXT,
   products TEXT[],
@@ -81,6 +82,8 @@ CREATE TABLE IF NOT EXISTS advertisers (
   cautions TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE advertisers ADD COLUMN IF NOT EXISTS category TEXT;
 
 ALTER TABLE advertisers ADD COLUMN IF NOT EXISTS guidelines_image TEXT;
 ALTER TABLE advertisers ADD COLUMN IF NOT EXISTS guidelines_video TEXT;

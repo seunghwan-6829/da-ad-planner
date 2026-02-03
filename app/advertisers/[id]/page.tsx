@@ -8,10 +8,13 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
+import { Select } from '@/components/ui/select'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { getAdvertiser, updateAdvertiser } from '@/lib/api/advertisers'
 import { Advertiser } from '@/lib/supabase'
+
+const CATEGORIES = ['뷰티', '건강', '식품', '패션', '가전', '금융', '교육', '여행', '자동차', '기타']
 
 export default function AdvertiserDetailPage() {
   const router = useRouter()
@@ -25,6 +28,7 @@ export default function AdvertiserDetailPage() {
   const videoFileRef = useRef<HTMLInputElement>(null)
   const [formData, setFormData] = useState({
     name: '',
+    category: '',
     guidelines_image: '',
     guidelines_video: '',
     products: [''],
@@ -64,6 +68,7 @@ export default function AdvertiserDetailPage() {
       setAdvertiser(data)
       setFormData({
         name: data.name,
+        category: data.category || '',
         guidelines_image: data.guidelines_image || '',
         guidelines_video: data.guidelines_video || '',
         products: (data.products && data.products.length ? data.products : ['']),
@@ -97,6 +102,7 @@ export default function AdvertiserDetailPage() {
 
       await updateAdvertiser(id, {
         name: formData.name,
+        category: formData.category || null,
         guidelines_image: formData.guidelines_image || null,
         guidelines_video: formData.guidelines_video || null,
         products: products.length ? products : null,
@@ -191,15 +197,30 @@ export default function AdvertiserDetailPage() {
             <CardTitle>기본 정보</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="name">광고주명 *</Label>
-              <Input
-                id="name"
-                placeholder="예: ABC 화장품"
-                value={formData.name}
-                autoComplete="off"
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              />
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="name">광고주명 *</Label>
+                <Input
+                  id="name"
+                  placeholder="예: ABC 화장품"
+                  value={formData.name}
+                  autoComplete="off"
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="category">카테고리</Label>
+                <Select
+                  id="category"
+                  value={formData.category}
+                  onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                >
+                  <option value="">카테고리 선택</option>
+                  {CATEGORIES.map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </Select>
+              </div>
             </div>
             <div className="space-y-2">
               <Label>제품 정보</Label>

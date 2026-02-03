@@ -12,7 +12,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { getPlan, updatePlan } from '@/lib/api/plans'
 import { getAdvertisers } from '@/lib/api/advertisers'
-import { AdPlan, Advertiser } from '@/lib/supabase'
+import { getBPMaterials } from '@/lib/api/bp-materials'
+import { AdPlan, Advertiser, BPMaterial } from '@/lib/supabase'
 
 interface CopyItem {
   title: string
@@ -304,6 +305,20 @@ export default function PlanDetailPage() {
     }
 
     try {
+      // BP 데이터 가져오기 (카테고리 매칭)
+      let bpReferences: { name: string; extracted_text: string }[] = []
+      if (selectedAdvertiser?.category) {
+        const allBp = await getBPMaterials()
+        const matchedBp = allBp.filter(bp => 
+          bp.category === selectedAdvertiser.category && bp.extracted_text
+        )
+        // 최대 5개만 참조
+        bpReferences = matchedBp.slice(0, 5).map(bp => ({
+          name: bp.name,
+          extracted_text: bp.extracted_text || ''
+        }))
+      }
+
       const res = await fetch('/api/ai/plans/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -311,6 +326,7 @@ export default function PlanDetailPage() {
           mediaType: formData.media_type,
           advertiserName: selectedAdvertiser?.name,
           advertiser: selectedAdvertiser ? {
+            category: selectedAdvertiser.category,
             guidelines_image: selectedAdvertiser.guidelines_image,
             guidelines_video: selectedAdvertiser.guidelines_video,
             products: selectedAdvertiser.products,
@@ -318,6 +334,7 @@ export default function PlanDetailPage() {
             cautions: selectedAdvertiser.cautions,
           } : null,
           extraPrompt: extraContext || undefined,
+          bpReferences,
         }),
       })
 
