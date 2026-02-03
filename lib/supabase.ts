@@ -62,5 +62,6 @@ export interface BPMaterial {
   name: string
   image_url: string | null
   extracted_text: string | null
+  category: string | null
   created_at: string
 }

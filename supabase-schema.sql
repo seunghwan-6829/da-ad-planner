@@ -162,8 +162,11 @@ CREATE TABLE IF NOT EXISTS bp_materials (
   name TEXT NOT NULL,
   image_url TEXT,
   extracted_text TEXT,
+  category TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE bp_materials ADD COLUMN IF NOT EXISTS category TEXT;
 
 ALTER TABLE bp_materials ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Allow all operations on bp_materials" ON bp_materials;

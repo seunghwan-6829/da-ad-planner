@@ -28,16 +28,19 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const prompt = `이 광고 이미지에서 보이는 모든 텍스트(카피)를 추출해주세요.
+  const prompt = `이 광고 이미지를 분석해주세요.
+
+다음 형식으로만 답변해주세요:
+
+[카테고리]
+(이미지의 광고 카테고리를 한 단어로: 뷰티/건강/식품/패션/가전/금융/교육/여행/자동차/기타 중 하나)
+
+[카피]
+(이미지에서 보이는 모든 텍스트를 추출. 메인 카피, 서브 카피, CTA 등 줄바꿈으로 구분)
 
 규칙:
-1. 이미지에 보이는 텍스트를 정확하게 그대로 추출
-2. 메인 카피, 서브 카피, CTA 등을 구분해서 줄바꿈으로 표시
-3. 브랜드명이나 제품명도 포함
-4. 작은 글씨(법적 고지 등)는 제외해도 됨
-5. 텍스트만 출력하고 다른 설명은 하지 마세요
-
-텍스트가 없으면 "텍스트 없음"이라고만 답하세요.`
+- 텍스트가 없으면 [카피] 아래에 "텍스트 없음"
+- 카테고리와 카피만 출력, 다른 설명 금지`
 
   try {
     const res = await fetch(ANTHROPIC_BASE, {
@@ -77,9 +80,25 @@ export async function POST(request: NextRequest) {
     }
 
     const data = await res.json()
-    const text = data.content?.[0]?.text || ''
+    const fullText = data.content?.[0]?.text || ''
     
-    return NextResponse.json({ text })
+    // 카테고리와 카피 분리
+    let category = ''
+    let text = ''
+    
+    const categoryMatch = fullText.match(/\[카테고리\]\s*\n?([^\n\[]+)/)
+    if (categoryMatch) {
+      category = categoryMatch[1].trim()
+    }
+    
+    const copyMatch = fullText.match(/\[카피\]\s*\n?([\s\S]*)/)
+    if (copyMatch) {
+      text = copyMatch[1].trim()
+    } else {
+      text = fullText
+    }
+    
+    return NextResponse.json({ text, category })
   } catch (error) {
     console.error('OCR error:', error)
     return NextResponse.json({ error: '텍스트 추출 실패' }, { status: 500 })
