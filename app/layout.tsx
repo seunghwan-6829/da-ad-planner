@@ -1,8 +1,7 @@
 import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
-import { Sidebar } from '@/components/sidebar'
-import { PlanWriterFloat } from '@/components/plan-writer-float'
+import { LayoutWrapper } from '@/components/layout-wrapper'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -19,13 +18,9 @@ export default function RootLayout({
   return (
     <html lang="ko">
       <body className={inter.className}>
-        <div className="flex h-screen">
-          <Sidebar />
-          <main className="flex-1 overflow-auto bg-gray-50 p-8">
-            {children}
-          </main>
-          <PlanWriterFloat />
-        </div>
+        <LayoutWrapper>
+          {children}
+        </LayoutWrapper>
       </body>
     </html>
   )

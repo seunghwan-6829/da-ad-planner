@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { 
   LayoutDashboard, 
   FileText, 
@@ -12,9 +12,14 @@ import {
   ExternalLink,
   Video,
   FileAudio,
-  FileEdit
+  FileEdit,
+  Shield,
+  LogOut,
+  User
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useAuth } from '@/lib/auth-context'
+import { Button } from '@/components/ui/button'
 
 const navigation = [
   { name: '대시보드', href: '/', icon: LayoutDashboard },
@@ -32,12 +37,20 @@ const externalLinks = [
 
 export function Sidebar() {
   const pathname = usePathname()
+  const router = useRouter()
+  const { user, profile, isAdmin, signOut } = useAuth()
+
+  async function handleSignOut() {
+    await signOut()
+    router.push('/login')
+  }
 
   return (
     <div className="flex h-full w-64 flex-col bg-white border-r">
       <div className="flex h-16 items-center px-6 border-b">
         <h1 className="text-xl font-bold text-primary">DA 광고 플래너</h1>
       </div>
+      
       <nav className="flex-1 space-y-1 p-4 overflow-y-auto">
         {navigation.map((item) => {
           const isActive = pathname === item.href || 
@@ -60,6 +73,23 @@ export function Sidebar() {
           )
         })}
 
+        {/* 관리자 메뉴 */}
+        {isAdmin && (
+          <Link
+            href="/admin"
+            className={cn(
+              'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+              pathname === '/admin'
+                ? 'bg-red-600 text-white'
+                : 'text-red-600 hover:bg-red-50'
+            )}
+          >
+            <Shield className="h-5 w-5" />
+            관리자
+            {pathname === '/admin' && <ChevronRight className="ml-auto h-4 w-4" />}
+          </Link>
+        )}
+
         {/* 외부 링크 구분선 */}
         <div className="my-4 border-t pt-4">
           <p className="px-3 mb-2 text-xs font-medium text-gray-400 uppercase">
@@ -80,8 +110,47 @@ export function Sidebar() {
           ))}
         </div>
       </nav>
-      <div className="p-4 border-t">
-        <p className="text-xs text-gray-500">
+
+      {/* 사용자 정보 및 로그아웃 */}
+      <div className="p-4 border-t space-y-3">
+        {user && profile && (
+          <div className="flex items-center gap-3 px-2">
+            <div className="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center">
+              <User className="h-4 w-4 text-primary" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium truncate">
+                {profile.name || profile.email}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {profile.role === 'admin' ? '관리자' : 
+                 profile.role === 'approved' ? '승인됨' : '대기중'}
+              </p>
+            </div>
+          </div>
+        )}
+        
+        {user ? (
+          <Button 
+            variant="outline" 
+            size="sm" 
+            className="w-full"
+            onClick={handleSignOut}
+          >
+            <LogOut className="h-4 w-4 mr-2" />
+            로그아웃
+          </Button>
+        ) : (
+          <Button 
+            size="sm" 
+            className="w-full"
+            onClick={() => router.push('/login')}
+          >
+            로그인
+          </Button>
+        )}
+        
+        <p className="text-xs text-gray-500 text-center">
           © 2026 DA Ad Planner
         </p>
       </div>

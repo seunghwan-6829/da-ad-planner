@@ -3,6 +3,70 @@
 -- ⚠️ 기존 테이블이 있어도 안전하게 실행됩니다
 
 -- =============================================
+-- 사용자 프로필 테이블 (인증용)
+-- =============================================
+CREATE TABLE IF NOT EXISTS user_profiles (
+  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  name TEXT,
+  role TEXT DEFAULT 'pending' CHECK (role IN ('admin', 'approved', 'pending')),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 기존 테이블에 컬럼 추가
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS email TEXT;
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS name TEXT;
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'pending';
+
+-- 어드민 계정 설정 (이메일로)
+-- 회원가입 후 아래 쿼리 실행
+-- UPDATE user_profiles SET role = 'admin' WHERE email = 'motiol_6829@naver.com';
+
+-- user_profiles RLS
+ALTER TABLE user_profiles ENABLE ROW LEVEL SECURITY;
+
+-- 모든 사용자가 자신의 프로필 읽기 가능
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'user_profiles' AND policyname = 'Users can read own profile') THEN
+    CREATE POLICY "Users can read own profile" ON user_profiles FOR SELECT USING (auth.uid() = id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'user_profiles' AND policyname = 'Users can update own profile') THEN
+    CREATE POLICY "Users can update own profile" ON user_profiles FOR UPDATE USING (auth.uid() = id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'user_profiles' AND policyname = 'Admins can read all profiles') THEN
+    CREATE POLICY "Admins can read all profiles" ON user_profiles FOR SELECT USING (
+      EXISTS (SELECT 1 FROM user_profiles WHERE id = auth.uid() AND role = 'admin')
+    );
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'user_profiles' AND policyname = 'Admins can update all profiles') THEN
+    CREATE POLICY "Admins can update all profiles" ON user_profiles FOR UPDATE USING (
+      EXISTS (SELECT 1 FROM user_profiles WHERE id = auth.uid() AND role = 'admin')
+    );
+  END IF;
+END $$;
+
+-- 새 사용자 가입 시 자동으로 프로필 생성하는 함수
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.user_profiles (id, email, role)
+  VALUES (
+    NEW.id,
+    NEW.email,
+    CASE WHEN NEW.email = 'motiol_6829@naver.com' THEN 'admin' ELSE 'pending' END
+  );
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 트리거 생성 (이미 있으면 무시)
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+-- =============================================
 -- 광고주 테이블
 -- =============================================
 CREATE TABLE IF NOT EXISTS advertisers (
