@@ -56,3 +56,11 @@ export interface Template {
   structure: Record<string, unknown> | null
   created_at: string
 }
+
+export interface BPMaterial {
+  id: string
+  name: string
+  image_url: string | null
+  extracted_text: string | null
+  created_at: string
+}

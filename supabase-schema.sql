@@ -155,6 +155,21 @@ CREATE POLICY "Allow all operations on ad_plans" ON ad_plans FOR ALL USING (true
 CREATE POLICY "Allow all operations on templates" ON templates FOR ALL USING (true) WITH CHECK (true);
 
 -- =============================================
+-- BP 소재 테이블
+-- =============================================
+CREATE TABLE IF NOT EXISTS bp_materials (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  image_url TEXT,
+  extracted_text TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE bp_materials ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow all operations on bp_materials" ON bp_materials;
+CREATE POLICY "Allow all operations on bp_materials" ON bp_materials FOR ALL USING (true) WITH CHECK (true);
+
+-- =============================================
 -- 인덱스
 -- =============================================
 CREATE INDEX IF NOT EXISTS idx_ad_plans_advertiser_id ON ad_plans(advertiser_id);

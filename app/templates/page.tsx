@@ -1,134 +1,164 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Plus, Trash2, Edit, FileCode, Image, Video, X, Check } from 'lucide-react'
+import { Plus, Trash2, Upload, Image as ImageIcon, Loader2, Copy, Check, X, RefreshCw, Eye } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
-import { Select } from '@/components/ui/select'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { getTemplates, createTemplate, updateTemplate, deleteTemplate } from '@/lib/api/templates'
-import { Template } from '@/lib/supabase'
+import { getBPMaterials, createBPMaterial, updateBPMaterial, deleteBPMaterial } from '@/lib/api/bp-materials'
+import { BPMaterial } from '@/lib/supabase'
 
-const COMMON_SIZES = [
-  '1080x1080 (Instagram Square)',
-  '1200x628 (Facebook Feed)',
-  '1080x1920 (Story/Reels)',
-  '300x250 (Medium Rectangle)',
-  '728x90 (Leaderboard)',
-  '160x600 (Wide Skyscraper)',
-  '320x100 (Mobile Banner)',
-]
-
-export default function TemplatesPage() {
-  const [templates, setTemplates] = useState<Template[]>([])
+export default function BPMaterialsPage() {
+  const [items, setItems] = useState<BPMaterial[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [formData, setFormData] = useState({
-    name: '',
-    media_type: 'image',
-    default_size: '',
-    structure: {
-      fields: ['main_copy', 'sub_copy', 'cta_text'],
-      description: '',
-    },
-  })
+  const [extracting, setExtracting] = useState<string[]>([])
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [viewImage, setViewImage] = useState<string | null>(null)
+  
+  // 업로드 폼
+  const [previewUrls, setPreviewUrls] = useState<string[]>([])
+  const [bpName, setBpName] = useState('')
+  const [uploading, setUploading] = useState(false)
 
+  // 데이터 로드
   useEffect(() => {
-    loadTemplates()
+    loadData()
   }, [])
 
-  async function loadTemplates() {
+  async function loadData() {
+    setLoading(true)
+    const data = await getBPMaterials()
+    setItems(data)
+    setLoading(false)
+  }
+
+  // 파일 선택
+  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files || [])
+    const imageFiles = files.filter(f => f.type.startsWith('image/'))
+    
+    imageFiles.forEach(file => {
+      const reader = new FileReader()
+      reader.onload = (event) => {
+        setPreviewUrls(prev => [...prev, event.target?.result as string])
+      }
+      reader.readAsDataURL(file)
+    })
+    
+    e.target.value = ''
+  }
+
+  // 미리보기 삭제
+  function removePreview(index: number) {
+    setPreviewUrls(prev => prev.filter((_, i) => i !== index))
+  }
+
+  // OCR 추출
+  async function extractText(imageBase64: string): Promise<string> {
     try {
-      const data = await getTemplates()
-      setTemplates(data)
-    } catch (error) {
-      console.error('템플릿 로드 실패:', error)
-    } finally {
-      setLoading(false)
+      const res = await fetch('/api/ai/ocr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: imageBase64 }),
+      })
+      if (!res.ok) return ''
+      const data = await res.json()
+      return data.text || ''
+    } catch {
+      return ''
     }
   }
 
-  function resetForm() {
-    setFormData({
-      name: '',
-      media_type: 'image',
-      default_size: '',
-      structure: {
-        fields: ['main_copy', 'sub_copy', 'cta_text'],
-        description: '',
-      },
-    })
-    setShowForm(false)
-    setEditingId(null)
-  }
-
-  function handleEdit(template: Template) {
-    setFormData({
-      name: template.name,
-      media_type: template.media_type || 'image',
-      default_size: template.default_size || '',
-      structure: (template.structure as typeof formData.structure) || {
-        fields: ['main_copy', 'sub_copy', 'cta_text'],
-        description: '',
-      },
-    })
-    setEditingId(template.id)
-    setShowForm(true)
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    
-    if (!formData.name.trim()) {
-      alert('템플릿 이름을 입력해주세요.')
+  // 업로드
+  async function handleUpload() {
+    if (previewUrls.length === 0) {
+      alert('이미지를 선택해주세요.')
       return
     }
 
-    try {
-      if (editingId) {
-        const updated = await updateTemplate(editingId, {
-          name: formData.name,
-          media_type: formData.media_type,
-          default_size: formData.default_size || null,
-          structure: formData.structure,
-        })
-        setTemplates(templates.map(t => t.id === editingId ? updated : t))
-      } else {
-        const created = await createTemplate({
-          name: formData.name,
-          media_type: formData.media_type,
-          default_size: formData.default_size || null,
-          structure: formData.structure,
-        })
-        setTemplates([created, ...templates])
+    setUploading(true)
+
+    for (let i = 0; i < previewUrls.length; i++) {
+      const name = bpName ? `${bpName} ${i + 1}` : `BP 소재 ${items.length + i + 1}`
+      
+      // DB에 저장
+      const created = await createBPMaterial({
+        name,
+        image_url: previewUrls[i],
+        extracted_text: null,
+      })
+      
+      if (created) {
+        setItems(prev => [created, ...prev])
+        
+        // 백그라운드에서 텍스트 추출
+        setExtracting(prev => [...prev, created.id])
+        const text = await extractText(previewUrls[i])
+        await updateBPMaterial(created.id, { extracted_text: text })
+        setItems(prev => prev.map(item => 
+          item.id === created.id ? { ...item, extracted_text: text } : item
+        ))
+        setExtracting(prev => prev.filter(id => id !== created.id))
       }
-      resetForm()
-    } catch (error) {
-      console.error('저장 실패:', error)
-      alert('저장에 실패했습니다.')
+    }
+
+    // 폼 초기화
+    setPreviewUrls([])
+    setBpName('')
+    setShowForm(false)
+    setUploading(false)
+  }
+
+  // 재추출
+  async function reExtract(item: BPMaterial) {
+    if (!item.image_url) return
+    
+    setExtracting(prev => [...prev, item.id])
+    const text = await extractText(item.image_url)
+    await updateBPMaterial(item.id, { extracted_text: text })
+    setItems(prev => prev.map(i => 
+      i.id === item.id ? { ...i, extracted_text: text } : i
+    ))
+    setExtracting(prev => prev.filter(id => id !== item.id))
+  }
+
+  // 텍스트 수정
+  async function handleTextChange(id: string, text: string) {
+    setItems(prev => prev.map(item => 
+      item.id === id ? { ...item, extracted_text: text } : item
+    ))
+  }
+
+  async function saveText(id: string) {
+    const item = items.find(i => i.id === id)
+    if (item) {
+      await updateBPMaterial(id, { extracted_text: item.extracted_text })
     }
   }
 
+  // 복사
+  function copyText(text: string, id: string) {
+    navigator.clipboard.writeText(text)
+    setCopiedId(id)
+    setTimeout(() => setCopiedId(null), 2000)
+  }
+
+  // 삭제
   async function handleDelete(id: string) {
     if (!confirm('정말 삭제하시겠습니까?')) return
-    
-    try {
-      await deleteTemplate(id)
-      setTemplates(templates.filter(t => t.id !== id))
-    } catch (error) {
-      console.error('삭제 실패:', error)
-      alert('삭제에 실패했습니다.')
+    const success = await deleteBPMaterial(id)
+    if (success) {
+      setItems(prev => prev.filter(i => i.id !== id))
     }
   }
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <p className="text-muted-foreground">로딩 중...</p>
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     )
   }
@@ -137,158 +167,230 @@ export default function TemplatesPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">템플릿 관리</h1>
+          <h1 className="text-3xl font-bold">BP 소재 관리</h1>
           <p className="text-muted-foreground mt-1">
-            자주 사용하는 기획서 형식을 템플릿으로 저장합니다
+            Best Practice 소재 이미지를 업로드하면 AI가 카피를 자동으로 추출합니다
           </p>
         </div>
         {!showForm && (
           <Button onClick={() => setShowForm(true)}>
             <Plus className="mr-2 h-4 w-4" />
-            템플릿 추가
+            BP 소재 추가
           </Button>
         )}
       </div>
 
+      {/* 업로드 폼 */}
       {showForm && (
         <Card>
           <CardHeader>
-            <CardTitle>{editingId ? '템플릿 수정' : '새 템플릿'}</CardTitle>
+            <CardTitle>새 BP 소재 업로드</CardTitle>
             <CardDescription>
-              광고 기획서 작성 시 빠르게 적용할 수 있는 템플릿을 만듭니다
+              이미지를 여러 장 선택하면 각각의 카피를 AI가 자동으로 추출합니다
             </CardDescription>
           </CardHeader>
-          <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="name">템플릿 이름 *</Label>
-                  <Input
-                    id="name"
-                    placeholder="예: SNS 피드 기본형"
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="media_type">소재 유형</Label>
-                  <Select
-                    id="media_type"
-                    value={formData.media_type}
-                    onChange={(e) => setFormData({ ...formData, media_type: e.target.value })}
-                  >
-                    <option value="image">이미지</option>
-                    <option value="video">영상</option>
-                  </Select>
-                </div>
-              </div>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label>소재 이름 (선택)</Label>
+              <Input
+                placeholder="예: 2024년 1월 성과 좋았던 소재"
+                value={bpName}
+                onChange={(e) => setBpName(e.target.value)}
+              />
+            </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="default_size">기본 사이즈</Label>
-                <Select
-                  id="default_size"
-                  value={formData.default_size}
-                  onChange={(e) => setFormData({ ...formData, default_size: e.target.value })}
-                >
-                  <option value="">사이즈 선택</option>
-                  {COMMON_SIZES.map((size) => (
-                    <option key={size} value={size}>{size}</option>
-                  ))}
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="description">템플릿 설명</Label>
-                <Textarea
-                  id="description"
-                  placeholder="이 템플릿의 용도나 사용 방법을 설명해주세요..."
-                  value={formData.structure.description}
-                  onChange={(e) => setFormData({
-                    ...formData,
-                    structure: { ...formData.structure, description: e.target.value }
-                  })}
+            <div className="space-y-2">
+              <Label>이미지 업로드</Label>
+              <div
+                className="border-2 border-dashed rounded-lg p-8 text-center cursor-pointer hover:border-primary transition-colors"
+                onClick={() => document.getElementById('bp-upload')?.click()}
+              >
+                <input
+                  id="bp-upload"
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={handleFileSelect}
                 />
+                <Upload className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
+                <p className="text-sm text-muted-foreground">
+                  클릭하거나 이미지를 드래그해서 업로드
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  여러 장 선택 가능
+                </p>
               </div>
+            </div>
 
-              <div className="flex justify-end gap-2">
-                <Button type="button" variant="outline" onClick={resetForm}>
-                  <X className="mr-2 h-4 w-4" />
-                  취소
-                </Button>
-                <Button type="submit">
-                  <Check className="mr-2 h-4 w-4" />
-                  {editingId ? '수정' : '추가'}
-                </Button>
+            {previewUrls.length > 0 && (
+              <div className="space-y-2">
+                <Label>선택된 이미지 ({previewUrls.length}장)</Label>
+                <div className="grid grid-cols-6 gap-2">
+                  {previewUrls.map((url, index) => (
+                    <div key={index} className="relative group">
+                      <img
+                        src={url}
+                        alt={`미리보기 ${index + 1}`}
+                        className="w-full h-20 object-cover rounded border"
+                      />
+                      <button
+                        onClick={() => removePreview(index)}
+                        className="absolute top-0 right-0 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </form>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <Button 
+                variant="outline" 
+                onClick={() => {
+                  setShowForm(false)
+                  setPreviewUrls([])
+                  setBpName('')
+                }}
+              >
+                취소
+              </Button>
+              <Button onClick={handleUpload} disabled={uploading || previewUrls.length === 0}>
+                {uploading ? (
+                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" />업로드 중...</>
+                ) : (
+                  <><Upload className="mr-2 h-4 w-4" />업로드</>
+                )}
+              </Button>
+            </div>
           </CardContent>
         </Card>
       )}
 
-      {templates.length === 0 && !showForm ? (
+      {/* 테이블 형태 목록 */}
+      {items.length === 0 && !showForm ? (
         <Card>
           <CardContent className="py-12 text-center">
-            <FileCode className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
-            <p className="text-muted-foreground">등록된 템플릿이 없습니다.</p>
+            <ImageIcon className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
+            <p className="text-muted-foreground">등록된 BP 소재가 없습니다.</p>
             <Button variant="outline" className="mt-4" onClick={() => setShowForm(true)}>
-              첫 템플릿 만들기
+              첫 BP 소재 업로드
             </Button>
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {templates.map((template) => (
-            <Card key={template.id} className="hover:shadow-md transition-shadow">
-              <CardHeader className="pb-3">
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-2">
-                    {template.media_type === 'video' ? (
-                      <Video className="h-5 w-5 text-purple-500" />
+        <div className="bg-white rounded-lg border overflow-hidden">
+          <table className="w-full">
+            <thead className="bg-gray-50 border-b">
+              <tr>
+                <th className="px-4 py-3 text-left text-sm font-medium text-gray-600 w-12">No.</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-gray-600 w-24">이미지</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-gray-600 w-40">이름</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">추출된 카피</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-gray-600 w-28">등록일</th>
+                <th className="px-4 py-3 text-center text-sm font-medium text-gray-600 w-32">작업</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {items.map((item, index) => (
+                <tr key={item.id} className="hover:bg-gray-50">
+                  <td className="px-4 py-3 text-sm text-gray-600">
+                    {items.length - index}
+                  </td>
+                  <td className="px-4 py-3">
+                    {item.image_url && (
+                      <img
+                        src={item.image_url}
+                        alt={item.name}
+                        className="w-16 h-16 object-cover rounded cursor-pointer hover:opacity-80"
+                        onClick={() => setViewImage(item.image_url)}
+                      />
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="text-sm font-medium">{item.name}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    {extracting.includes(item.id) ? (
+                      <div className="flex items-center text-sm text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        AI가 카피 추출 중...
+                      </div>
                     ) : (
-                      <Image className="h-5 w-5 text-blue-500" />
+                      <Textarea
+                        value={item.extracted_text || ''}
+                        onChange={(e) => handleTextChange(item.id, e.target.value)}
+                        onBlur={() => saveText(item.id)}
+                        placeholder="추출된 카피가 여기 표시됩니다"
+                        className="text-sm h-20 resize-none"
+                      />
                     )}
-                    <CardTitle className="text-lg">{template.name}</CardTitle>
-                  </div>
-                  <div className="flex gap-1">
-                    <Button 
-                      variant="ghost" 
-                      size="icon"
-                      onClick={() => handleEdit(template)}
-                    >
-                      <Edit className="h-4 w-4" />
-                    </Button>
-                    <Button 
-                      variant="ghost" 
-                      size="icon"
-                      onClick={() => handleDelete(template.id)}
-                    >
-                      <Trash2 className="h-4 w-4 text-destructive" />
-                    </Button>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2 text-sm">
-                  <div className="flex gap-2">
-                    <Badge variant={template.media_type === 'video' ? 'secondary' : 'default'}>
-                      {template.media_type === 'video' ? '영상' : '이미지'}
-                    </Badge>
-                    {template.default_size && (
-                      <Badge variant="outline">{template.default_size.split(' ')[0]}</Badge>
-                    )}
-                  </div>
-                  {(template.structure as { description?: string })?.description && (
-                    <p className="text-muted-foreground line-clamp-2 mt-2">
-                      {(template.structure as { description: string }).description}
-                    </p>
-                  )}
-                  <div className="text-xs text-muted-foreground pt-2">
-                    생성일: {new Date(template.created_at).toLocaleDateString('ko-KR')}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-gray-500">
+                    {new Date(item.created_at).toLocaleDateString('ko-KR')}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center justify-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="재추출"
+                        onClick={() => reExtract(item)}
+                        disabled={extracting.includes(item.id)}
+                      >
+                        <RefreshCw className={`h-4 w-4 ${extracting.includes(item.id) ? 'animate-spin' : ''}`} />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="복사"
+                        onClick={() => copyText(item.extracted_text || '', item.id)}
+                        disabled={!item.extracted_text}
+                      >
+                        {copiedId === item.id ? (
+                          <Check className="h-4 w-4 text-green-600" />
+                        ) : (
+                          <Copy className="h-4 w-4" />
+                        )}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="삭제"
+                        onClick={() => handleDelete(item.id)}
+                      >
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* 이미지 확대 모달 */}
+      {viewImage && (
+        <div 
+          className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-8"
+          onClick={() => setViewImage(null)}
+        >
+          <div className="relative max-w-4xl max-h-full">
+            <img
+              src={viewImage}
+              alt="확대 이미지"
+              className="max-w-full max-h-[80vh] object-contain rounded-lg"
+            />
+            <button
+              onClick={() => setViewImage(null)}
+              className="absolute top-2 right-2 bg-white rounded-full p-2 shadow-lg"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
         </div>
       )}
     </div>
