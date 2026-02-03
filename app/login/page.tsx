@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { LogIn, UserPlus, Loader2, Mail, Lock, User } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { useAuth } from '@/lib/auth-context'
 
 export default function LoginPage() {
-  const { signIn, signUp, user, loading: authLoading } = useAuth()
+  const { signIn, signUp } = useAuth()
   const [isLogin, setIsLogin] = useState(true)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -18,61 +18,36 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [name, setName] = useState('')
 
-  // 이미 로그인된 경우 메인으로 이동
-  useEffect(() => {
-    if (!authLoading && user) {
-      window.location.href = '/'
-    }
-  }, [user, authLoading])
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
     setLoading(true)
 
-    try {
-      if (isLogin) {
-        const { error } = await signIn(email, password)
-        if (error) {
-          setError(error.message === 'Invalid login credentials' 
-            ? '이메일 또는 비밀번호가 올바르지 않습니다.' 
-            : error.message)
-          setLoading(false)
-          return
-        }
-        // 로그인 성공 - 페이지 새로고침으로 이동
-        window.location.href = '/'
+    if (isLogin) {
+      const result = await signIn(email, password)
+      if (result.error) {
+        setError(result.error)
+        setLoading(false)
       } else {
-        if (password.length < 6) {
-          setError('비밀번호는 6자 이상이어야 합니다.')
-          setLoading(false)
-          return
-        }
-        const { error } = await signUp(email, password, name)
-        if (error) {
-          setError(error.message.includes('already registered') 
-            ? '이미 가입된 이메일입니다.' 
-            : error.message)
-          setLoading(false)
-          return
-        }
-        alert('회원가입이 완료되었습니다!\n관리자 승인 후 서비스를 이용할 수 있습니다.')
+        // 로그인 성공
+        window.location.href = '/'
+      }
+    } else {
+      if (password.length < 6) {
+        setError('비밀번호는 6자 이상이어야 합니다')
+        setLoading(false)
+        return
+      }
+      const result = await signUp(email, password, name)
+      if (result.error) {
+        setError(result.error)
+        setLoading(false)
+      } else {
+        alert('회원가입 완료! 관리자 승인 후 이용 가능합니다.')
         setIsLogin(true)
         setLoading(false)
       }
-    } catch (err) {
-      setError('오류가 발생했습니다.')
-      setLoading(false)
     }
-  }
-
-  // 로딩 중일 때
-  if (authLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-purple-50">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    )
   }
 
   return (
@@ -88,11 +63,10 @@ export default function LoginPage() {
           <form onSubmit={handleSubmit} className="space-y-4">
             {!isLogin && (
               <div className="space-y-2">
-                <Label htmlFor="name">이름</Label>
+                <Label>이름</Label>
                 <div className="relative">
                   <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
                   <Input
-                    id="name"
                     type="text"
                     placeholder="홍길동"
                     value={name}
@@ -105,11 +79,10 @@ export default function LoginPage() {
             )}
             
             <div className="space-y-2">
-              <Label htmlFor="email">이메일</Label>
+              <Label>이메일</Label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
                 <Input
-                  id="email"
                   type="email"
                   placeholder="example@email.com"
                   value={email}
@@ -122,11 +95,10 @@ export default function LoginPage() {
             </div>
             
             <div className="space-y-2">
-              <Label htmlFor="password">비밀번호</Label>
+              <Label>비밀번호</Label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
                 <Input
-                  id="password"
                   type="password"
                   placeholder="••••••••"
                   value={password}
@@ -134,7 +106,6 @@ export default function LoginPage() {
                   className="pl-10"
                   required
                   disabled={loading}
-                  minLength={6}
                 />
               </div>
             </div>
@@ -165,22 +136,12 @@ export default function LoginPage() {
           <div className="mt-4 text-center">
             <button
               type="button"
-              onClick={() => {
-                setIsLogin(!isLogin)
-                setError('')
-              }}
+              onClick={() => { setIsLogin(!isLogin); setError('') }}
               className="text-sm text-primary hover:underline"
-              disabled={loading}
             >
               {isLogin ? '계정이 없으신가요? 회원가입' : '이미 계정이 있으신가요? 로그인'}
             </button>
           </div>
-
-          {!isLogin && (
-            <p className="mt-4 text-xs text-center text-muted-foreground">
-              회원가입 후 관리자 승인이 필요합니다.
-            </p>
-          )}
         </CardContent>
       </Card>
     </div>

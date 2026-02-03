@@ -41,24 +41,8 @@ export function Sidebar() {
   const router = useRouter()
   const { user, profile, isAdmin, signOut } = useAuth()
 
-  async function handleSignOut() {
-    // 먼저 로컬 스토리지 강제 정리
-    if (typeof window !== 'undefined') {
-      Object.keys(localStorage).forEach(key => {
-        if (key.startsWith('sb-') || key.includes('supabase')) {
-          localStorage.removeItem(key)
-        }
-      })
-    }
-    
-    try {
-      await signOut()
-    } catch (err) {
-      console.error('로그아웃 실패:', err)
-    }
-    
-    // 강제로 페이지 새로고침하면서 이동
-    window.location.replace('/login')
+  function handleSignOut() {
+    signOut()
   }
 
   return (

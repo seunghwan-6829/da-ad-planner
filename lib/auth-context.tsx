@@ -1,8 +1,8 @@
 'use client'
 
-import { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react'
+import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
 import { User, Session } from '@supabase/supabase-js'
-import { supabase } from './supabase'
+import { supabase, isSupabaseConfigured } from './supabase'
 
 export type UserRole = 'admin' | 'approved' | 'pending'
 
@@ -16,159 +16,135 @@ interface UserProfile {
 interface AuthContextType {
   user: User | null
   profile: UserProfile | null
-  session: Session | null
   loading: boolean
-  signIn: (email: string, password: string) => Promise<{ error: Error | null }>
-  signUp: (email: string, password: string, name?: string) => Promise<{ error: Error | null }>
-  signOut: () => Promise<void>
+  error: string | null
+  signIn: (email: string, password: string) => Promise<{ error: string | null }>
+  signUp: (email: string, password: string, name?: string) => Promise<{ error: string | null }>
+  signOut: () => void
   isAdmin: boolean
   isApproved: boolean
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined)
+const AuthContext = createContext<AuthContextType>({
+  user: null,
+  profile: null,
+  loading: true,
+  error: null,
+  signIn: async () => ({ error: null }),
+  signUp: async () => ({ error: null }),
+  signOut: () => {},
+  isAdmin: false,
+  isApproved: false,
+})
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [profile, setProfile] = useState<UserProfile | null>(null)
-  const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   // 프로필 가져오기
-  const fetchProfile = useCallback(async (userId: string): Promise<UserProfile | null> => {
+  async function getProfile(userId: string): Promise<UserProfile | null> {
     if (!supabase) return null
     
-    try {
-      const { data, error } = await supabase
-        .from('user_profiles')
-        .select('*')
-        .eq('id', userId)
-        .single()
-      
-      if (error) {
-        console.error('Profile fetch error:', error.message)
-        return null
-      }
-      return data as UserProfile
-    } catch (err) {
-      console.error('Profile fetch exception:', err)
+    const { data, error } = await supabase
+      .from('user_profiles')
+      .select('*')
+      .eq('id', userId)
+      .single()
+    
+    if (error) {
+      console.log('Profile error:', error.message)
       return null
     }
-  }, [])
+    return data
+  }
 
   // 초기화
   useEffect(() => {
-    if (!supabase) {
+    // Supabase가 설정되지 않은 경우
+    if (!isSupabaseConfigured() || !supabase) {
+      setError('Supabase가 설정되지 않았습니다')
       setLoading(false)
       return
     }
 
-    let isMounted = true
-
-    const initialize = async () => {
-      try {
-        const { data: { session: currentSession } } = await supabase.auth.getSession()
-        
-        if (!isMounted) return
-        
-        if (currentSession?.user) {
-          setSession(currentSession)
-          setUser(currentSession.user)
-          const profileData = await fetchProfile(currentSession.user.id)
-          if (isMounted) setProfile(profileData)
-        }
-      } catch (err) {
-        console.error('Init error:', err)
-      } finally {
-        if (isMounted) setLoading(false)
+    // 세션 확인
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        setUser(session.user)
+        getProfile(session.user.id).then(setProfile)
       }
-    }
+      setLoading(false)
+    })
 
-    initialize()
-
-    // Auth 상태 변경 리스너
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, newSession) => {
-        if (!isMounted) return
-        
-        console.log('Auth event:', event)
-        
-        if (newSession?.user) {
-          setSession(newSession)
-          setUser(newSession.user)
-          const profileData = await fetchProfile(newSession.user.id)
-          if (isMounted) setProfile(profileData)
-        } else {
-          setSession(null)
-          setUser(null)
-          setProfile(null)
-        }
-        
-        if (isMounted) setLoading(false)
+    // Auth 리스너
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log('Auth event:', event)
+      if (session?.user) {
+        setUser(session.user)
+        getProfile(session.user.id).then(setProfile)
+      } else {
+        setUser(null)
+        setProfile(null)
       }
-    )
+    })
 
-    return () => {
-      isMounted = false
-      subscription.unsubscribe()
-    }
-  }, [fetchProfile])
+    return () => subscription.unsubscribe()
+  }, [])
 
   // 로그인
-  const signIn = async (email: string, password: string) => {
-    if (!supabase) return { error: new Error('Supabase not configured') }
+  async function signIn(email: string, password: string): Promise<{ error: string | null }> {
+    if (!supabase) return { error: 'Supabase 연결 안됨' }
     
-    try {
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-      
-      if (error) return { error }
-      
-      if (data.user && data.session) {
-        setUser(data.user)
-        setSession(data.session)
-        const profileData = await fetchProfile(data.user.id)
-        setProfile(profileData)
-      }
-      
-      return { error: null }
-    } catch (err) {
-      return { error: err as Error }
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+    
+    if (error) {
+      return { error: error.message === 'Invalid login credentials' 
+        ? '이메일 또는 비밀번호가 틀렸습니다' 
+        : error.message }
     }
+    
+    if (data.user) {
+      setUser(data.user)
+      const p = await getProfile(data.user.id)
+      setProfile(p)
+    }
+    
+    return { error: null }
   }
 
   // 회원가입
-  const signUp = async (email: string, password: string, name?: string) => {
-    if (!supabase) return { error: new Error('Supabase not configured') }
+  async function signUp(email: string, password: string, name?: string): Promise<{ error: string | null }> {
+    if (!supabase) return { error: 'Supabase 연결 안됨' }
     
-    const { data, error } = await supabase.auth.signUp({
+    const { error } = await supabase.auth.signUp({
       email,
       password,
       options: { data: { name } }
     })
-
-    if (!error && data.user && name) {
-      // 이름 업데이트 시도
-      await supabase.from('user_profiles').update({ name }).eq('id', data.user.id)
+    
+    if (error) {
+      return { error: error.message.includes('already registered') 
+        ? '이미 가입된 이메일입니다' 
+        : error.message }
     }
-
-    return { error }
+    
+    return { error: null }
   }
 
   // 로그아웃
-  const signOut = async () => {
+  function signOut() {
+    if (supabase) {
+      supabase.auth.signOut()
+    }
     setUser(null)
     setProfile(null)
-    setSession(null)
-    
-    if (supabase) {
-      await supabase.auth.signOut()
-    }
-    
     // 로컬 스토리지 클리어
-    if (typeof window !== 'undefined') {
-      Object.keys(localStorage).forEach(key => {
-        if (key.startsWith('sb-')) localStorage.removeItem(key)
-      })
-    }
+    Object.keys(localStorage).forEach(key => {
+      if (key.startsWith('sb-')) localStorage.removeItem(key)
+    })
+    window.location.href = '/login'
   }
 
   const isAdmin = profile?.role === 'admin'
@@ -176,15 +152,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider value={{
-      user,
-      profile,
-      session,
-      loading,
-      signIn,
-      signUp,
-      signOut,
-      isAdmin,
-      isApproved,
+      user, profile, loading, error, signIn, signUp, signOut, isAdmin, isApproved
     }}>
       {children}
     </AuthContext.Provider>
@@ -192,9 +160,5 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 }
 
 export function useAuth() {
-  const context = useContext(AuthContext)
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider')
-  }
-  return context
+  return useContext(AuthContext)
 }
