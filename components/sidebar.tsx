@@ -41,15 +41,23 @@ export function Sidebar() {
   const { user, profile, isAdmin, signOut } = useAuth()
 
   async function handleSignOut() {
+    // 먼저 로컬 스토리지 강제 정리
+    if (typeof window !== 'undefined') {
+      Object.keys(localStorage).forEach(key => {
+        if (key.startsWith('sb-') || key.includes('supabase')) {
+          localStorage.removeItem(key)
+        }
+      })
+    }
+    
     try {
       await signOut()
-      // 강제로 페이지 이동 (캐시 무시)
-      window.location.href = '/login'
     } catch (err) {
       console.error('로그아웃 실패:', err)
-      // 그래도 로그인 페이지로 이동
-      window.location.href = '/login'
     }
+    
+    // 강제로 페이지 새로고침하면서 이동
+    window.location.replace('/login')
   }
 
   return (

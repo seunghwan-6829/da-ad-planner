@@ -150,11 +150,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function signOut() {
-    if (!supabase) return
-    await supabase.auth.signOut()
+    // 상태 먼저 초기화
     setUser(null)
     setProfile(null)
     setSession(null)
+    
+    // Supabase 로그아웃 시도
+    if (supabase) {
+      try {
+        await supabase.auth.signOut({ scope: 'local' })
+      } catch (err) {
+        console.error('Supabase signOut error:', err)
+      }
+    }
+    
+    // 로컬 스토리지 정리
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('supabase.auth.token')
+      // Supabase가 사용하는 모든 키 정리
+      Object.keys(localStorage).forEach(key => {
+        if (key.startsWith('sb-')) {
+          localStorage.removeItem(key)
+        }
+      })
+    }
   }
 
   const isAdmin = profile?.role === 'admin'
