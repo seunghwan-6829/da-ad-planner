@@ -18,33 +18,28 @@ ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS email TEXT;
 ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS name TEXT;
 ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'pending';
 
--- 어드민 계정 설정 (이메일로)
--- 회원가입 후 아래 쿼리 실행
--- UPDATE user_profiles SET role = 'admin' WHERE email = 'motiol_6829@naver.com';
-
 -- user_profiles RLS
 ALTER TABLE user_profiles ENABLE ROW LEVEL SECURITY;
 
--- 모든 사용자가 자신의 프로필 읽기 가능
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'user_profiles' AND policyname = 'Users can read own profile') THEN
-    CREATE POLICY "Users can read own profile" ON user_profiles FOR SELECT USING (auth.uid() = id);
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'user_profiles' AND policyname = 'Users can update own profile') THEN
-    CREATE POLICY "Users can update own profile" ON user_profiles FOR UPDATE USING (auth.uid() = id);
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'user_profiles' AND policyname = 'Admins can read all profiles') THEN
-    CREATE POLICY "Admins can read all profiles" ON user_profiles FOR SELECT USING (
-      EXISTS (SELECT 1 FROM user_profiles WHERE id = auth.uid() AND role = 'admin')
-    );
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'user_profiles' AND policyname = 'Admins can update all profiles') THEN
-    CREATE POLICY "Admins can update all profiles" ON user_profiles FOR UPDATE USING (
-      EXISTS (SELECT 1 FROM user_profiles WHERE id = auth.uid() AND role = 'admin')
-    );
-  END IF;
-END $$;
+-- 기존 정책 삭제
+DROP POLICY IF EXISTS "Users can read own profile" ON user_profiles;
+DROP POLICY IF EXISTS "Users can update own profile" ON user_profiles;
+DROP POLICY IF EXISTS "Admins can read all profiles" ON user_profiles;
+DROP POLICY IF EXISTS "Admins can update all profiles" ON user_profiles;
+DROP POLICY IF EXISTS "Authenticated users can read all profiles" ON user_profiles;
+DROP POLICY IF EXISTS "Authenticated users can insert own profile" ON user_profiles;
+DROP POLICY IF EXISTS "Anyone can read profiles" ON user_profiles;
+DROP POLICY IF EXISTS "Anyone can update profiles" ON user_profiles;
+
+-- 단순화된 RLS 정책: 로그인한 사용자 누구나 읽기/쓰기 가능
+CREATE POLICY "Enable read for authenticated users" ON user_profiles 
+  FOR SELECT TO authenticated USING (true);
+
+CREATE POLICY "Enable update for authenticated users" ON user_profiles 
+  FOR UPDATE TO authenticated USING (true);
+
+CREATE POLICY "Enable insert for authenticated users" ON user_profiles 
+  FOR INSERT TO authenticated WITH CHECK (true);
 
 -- 새 사용자 가입 시 자동으로 프로필 생성하는 함수
 CREATE OR REPLACE FUNCTION public.handle_new_user()
@@ -55,16 +50,23 @@ BEGIN
     NEW.id,
     NEW.email,
     CASE WHEN NEW.email = 'motiol_6829@naver.com' THEN 'admin' ELSE 'pending' END
-  );
+  )
+  ON CONFLICT (id) DO UPDATE SET
+    email = EXCLUDED.email;
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 트리거 생성 (이미 있으면 무시)
+-- 트리거 생성
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+-- =============================================
+-- motiol_6829@naver.com 관리자 설정
+-- =============================================
+UPDATE user_profiles SET role = 'admin' WHERE email = 'motiol_6829@naver.com';
 
 -- =============================================
 -- 광고주 테이블
@@ -80,17 +82,13 @@ CREATE TABLE IF NOT EXISTS advertisers (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 기존 테이블에 새 컬럼 추가 (이미 테이블이 있을 때)
 ALTER TABLE advertisers ADD COLUMN IF NOT EXISTS guidelines_image TEXT;
 ALTER TABLE advertisers ADD COLUMN IF NOT EXISTS guidelines_video TEXT;
 ALTER TABLE advertisers ADD COLUMN IF NOT EXISTS products TEXT[];
 ALTER TABLE advertisers ADD COLUMN IF NOT EXISTS appeals TEXT[];
 ALTER TABLE advertisers ADD COLUMN IF NOT EXISTS cautions TEXT;
 
--- 기존 guidelines 컬럼 삭제 (있으면)
 ALTER TABLE advertisers DROP COLUMN IF EXISTS guidelines;
-
--- 기존에 쓰던 불필요한 컬럼 삭제 (있으면 삭제, 없으면 무시)
 ALTER TABLE advertisers DROP COLUMN IF EXISTS brand_color;
 ALTER TABLE advertisers DROP COLUMN IF EXISTS brand_font;
 ALTER TABLE advertisers DROP COLUMN IF EXISTS tone_manner;
@@ -117,17 +115,17 @@ CREATE TABLE IF NOT EXISTS ad_plans (
   td_description TEXT,
   copy_history TEXT,
   custom_prompt TEXT,
+  ai_results TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 기존 ad_plans 테이블에 새 컬럼 추가
 ALTER TABLE ad_plans ADD COLUMN IF NOT EXISTS reference_links TEXT[];
 ALTER TABLE ad_plans ADD COLUMN IF NOT EXISTS cta_texts TEXT[];
 ALTER TABLE ad_plans ADD COLUMN IF NOT EXISTS td_title TEXT;
 ALTER TABLE ad_plans ADD COLUMN IF NOT EXISTS td_description TEXT;
 ALTER TABLE ad_plans ADD COLUMN IF NOT EXISTS copy_history TEXT;
 ALTER TABLE ad_plans ADD COLUMN IF NOT EXISTS custom_prompt TEXT;
-ALTER TABLE ad_plans ADD COLUMN IF NOT EXISTS ai_results TEXT;  -- 현재 AI 생성 결과
+ALTER TABLE ad_plans ADD COLUMN IF NOT EXISTS ai_results TEXT;
 
 -- =============================================
 -- 템플릿 테이블
@@ -142,28 +140,22 @@ CREATE TABLE IF NOT EXISTS templates (
 );
 
 -- =============================================
--- RLS (Row Level Security) - 로그인 없이 사용
+-- RLS - 모든 테이블 공개
 -- =============================================
 ALTER TABLE advertisers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ad_plans ENABLE ROW LEVEL SECURITY;
 ALTER TABLE templates ENABLE ROW LEVEL SECURITY;
 
--- 모든 사용자에게 CRUD 권한 부여 (정책이 없으면 생성)
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'advertisers' AND policyname = 'Allow all operations on advertisers') THEN
-    CREATE POLICY "Allow all operations on advertisers" ON advertisers FOR ALL USING (true) WITH CHECK (true);
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'ad_plans' AND policyname = 'Allow all operations on ad_plans') THEN
-    CREATE POLICY "Allow all operations on ad_plans" ON ad_plans FOR ALL USING (true) WITH CHECK (true);
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'templates' AND policyname = 'Allow all operations on templates') THEN
-    CREATE POLICY "Allow all operations on templates" ON templates FOR ALL USING (true) WITH CHECK (true);
-  END IF;
-END $$;
+DROP POLICY IF EXISTS "Allow all operations on advertisers" ON advertisers;
+DROP POLICY IF EXISTS "Allow all operations on ad_plans" ON ad_plans;
+DROP POLICY IF EXISTS "Allow all operations on templates" ON templates;
+
+CREATE POLICY "Allow all operations on advertisers" ON advertisers FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all operations on ad_plans" ON ad_plans FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all operations on templates" ON templates FOR ALL USING (true) WITH CHECK (true);
 
 -- =============================================
--- 인덱스 (성능 최적화)
+-- 인덱스
 -- =============================================
 CREATE INDEX IF NOT EXISTS idx_ad_plans_advertiser_id ON ad_plans(advertiser_id);
 CREATE INDEX IF NOT EXISTS idx_ad_plans_created_at ON ad_plans(created_at DESC);

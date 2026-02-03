@@ -1,19 +1,15 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect } from 'react'
 import { LogIn, UserPlus, Loader2, Mail, Lock, User } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { useAuth } from '@/lib/auth-context'
-import { isSupabaseConfigured } from '@/lib/supabase'
 
 export default function LoginPage() {
-  const supabaseReady = isSupabaseConfigured()
-  const router = useRouter()
-  const { signIn, signUp } = useAuth()
+  const { signIn, signUp, user, loading: authLoading } = useAuth()
   const [isLogin, setIsLogin] = useState(true)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -22,54 +18,41 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [name, setName] = useState('')
 
+  // 이미 로그인된 경우 메인으로 이동
+  useEffect(() => {
+    if (!authLoading && user) {
+      window.location.href = '/'
+    }
+  }, [user, authLoading])
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
     setLoading(true)
 
-    // 타임아웃 설정 (10초)
-    const timeout = setTimeout(() => {
-      setLoading(false)
-      setError('요청 시간이 초과되었습니다. 다시 시도해주세요.')
-    }, 10000)
-
     try {
       if (isLogin) {
-        console.log('로그인 시도:', email)
         const { error } = await signIn(email, password)
-        clearTimeout(timeout)
-        
         if (error) {
-          console.log('로그인 에러:', error)
           setError(error.message === 'Invalid login credentials' 
             ? '이메일 또는 비밀번호가 올바르지 않습니다.' 
             : error.message)
           setLoading(false)
           return
         }
-        
-        console.log('로그인 성공, 페이지 이동')
-        // 약간의 딜레이 후 페이지 이동
-        setTimeout(() => {
-          window.location.replace('/')
-        }, 100)
-        return
+        // 로그인 성공 - 페이지 새로고침으로 이동
+        window.location.href = '/'
       } else {
         if (password.length < 6) {
-          clearTimeout(timeout)
           setError('비밀번호는 6자 이상이어야 합니다.')
           setLoading(false)
           return
         }
         const { error } = await signUp(email, password, name)
-        clearTimeout(timeout)
-        
         if (error) {
-          if (error.message.includes('already registered')) {
-            setError('이미 가입된 이메일입니다.')
-          } else {
-            setError(error.message)
-          }
+          setError(error.message.includes('already registered') 
+            ? '이미 가입된 이메일입니다.' 
+            : error.message)
           setLoading(false)
           return
         }
@@ -78,11 +61,18 @@ export default function LoginPage() {
         setLoading(false)
       }
     } catch (err) {
-      clearTimeout(timeout)
-      console.error('로그인 예외:', err)
-      setError('오류가 발생했습니다. 다시 시도해주세요.')
+      setError('오류가 발생했습니다.')
       setLoading(false)
     }
+  }
+
+  // 로딩 중일 때
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-purple-50">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    )
   }
 
   return (
@@ -148,12 +138,6 @@ export default function LoginPage() {
                 />
               </div>
             </div>
-
-            {!supabaseReady && (
-              <div className="text-sm text-yellow-700 bg-yellow-50 p-3 rounded-lg">
-                ⚠️ Supabase가 설정되지 않았습니다. 환경변수를 확인해주세요.
-              </div>
-            )}
 
             {error && (
               <div className="text-sm text-red-600 bg-red-50 p-3 rounded-lg">

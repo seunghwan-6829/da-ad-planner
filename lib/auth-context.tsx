@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react'
 import { User, Session } from '@supabase/supabase-js'
 import { supabase } from './supabase'
 
@@ -23,7 +23,6 @@ interface AuthContextType {
   signOut: () => Promise<void>
   isAdmin: boolean
   isApproved: boolean
-  refreshProfile: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -34,7 +33,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
 
-  async function fetchProfile(userId: string) {
+  // 프로필 가져오기
+  const fetchProfile = useCallback(async (userId: string): Promise<UserProfile | null> => {
     if (!supabase) return null
     
     try {
@@ -45,8 +45,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .single()
       
       if (error) {
-        console.error('Profile fetch error:', error)
-        // 프로필이 없으면 기본값 반환
+        console.error('Profile fetch error:', error.message)
         return null
       }
       return data as UserProfile
@@ -54,156 +53,120 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.error('Profile fetch exception:', err)
       return null
     }
-  }
+  }, [])
 
-  async function refreshProfile() {
-    if (user) {
-      const profileData = await fetchProfile(user.id)
-      setProfile(profileData)
-    }
-  }
-
+  // 초기화
   useEffect(() => {
     if (!supabase) {
       setLoading(false)
       return
     }
 
-    let mounted = true
+    let isMounted = true
 
-    // 현재 세션 가져오기
-    async function initAuth() {
+    const initialize = async () => {
       try {
-        const { data: { session } } = await supabase!.auth.getSession()
+        const { data: { session: currentSession } } = await supabase.auth.getSession()
         
-        if (!mounted) return
+        if (!isMounted) return
         
-        setSession(session)
-        setUser(session?.user ?? null)
-        
-        if (session?.user) {
-          const profileData = await fetchProfile(session.user.id)
-          if (mounted) setProfile(profileData)
+        if (currentSession?.user) {
+          setSession(currentSession)
+          setUser(currentSession.user)
+          const profileData = await fetchProfile(currentSession.user.id)
+          if (isMounted) setProfile(profileData)
         }
       } catch (err) {
-        console.error('Auth init error:', err)
+        console.error('Init error:', err)
       } finally {
-        if (mounted) setLoading(false)
+        if (isMounted) setLoading(false)
       }
     }
 
-    initAuth()
+    initialize()
 
-    // 인증 상태 변경 리스너
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (!mounted) return
-      
-      setSession(session)
-      setUser(session?.user ?? null)
-      
-      if (session?.user) {
-        const profileData = await fetchProfile(session.user.id)
-        if (mounted) setProfile(profileData)
-      } else {
-        setProfile(null)
+    // Auth 상태 변경 리스너
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, newSession) => {
+        if (!isMounted) return
+        
+        console.log('Auth event:', event)
+        
+        if (newSession?.user) {
+          setSession(newSession)
+          setUser(newSession.user)
+          const profileData = await fetchProfile(newSession.user.id)
+          if (isMounted) setProfile(profileData)
+        } else {
+          setSession(null)
+          setUser(null)
+          setProfile(null)
+        }
+        
+        if (isMounted) setLoading(false)
       }
-      
-      setLoading(false)
-    })
+    )
 
     return () => {
-      mounted = false
+      isMounted = false
       subscription.unsubscribe()
     }
-  }, [])
+  }, [fetchProfile])
 
-  async function signIn(email: string, password: string) {
-    if (!supabase) {
-      console.error('Supabase not configured')
-      return { error: new Error('Supabase not configured') }
-    }
+  // 로그인
+  const signIn = async (email: string, password: string) => {
+    if (!supabase) return { error: new Error('Supabase not configured') }
     
     try {
-      console.log('Supabase signIn 호출 중...')
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      })
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password })
       
-      console.log('Supabase signIn 결과:', { data: !!data, error: error?.message })
+      if (error) return { error }
       
-      if (error) {
-        return { error }
-      }
-      
-      // 로그인 성공 시 상태 즉시 업데이트
-      if (data.user) {
-        console.log('로그인 성공, 사용자:', data.user.email)
+      if (data.user && data.session) {
         setUser(data.user)
         setSession(data.session)
-        
-        try {
-          const profileData = await fetchProfile(data.user.id)
-          console.log('프로필 데이터:', profileData)
-          setProfile(profileData)
-        } catch (profileErr) {
-          console.error('프로필 로드 실패:', profileErr)
-          // 프로필 로드 실패해도 로그인은 성공 처리
-        }
+        const profileData = await fetchProfile(data.user.id)
+        setProfile(profileData)
       }
       
       return { error: null }
     } catch (err) {
-      console.error('SignIn exception:', err)
       return { error: err as Error }
     }
   }
 
-  async function signUp(email: string, password: string, name?: string) {
+  // 회원가입
+  const signUp = async (email: string, password: string, name?: string) => {
     if (!supabase) return { error: new Error('Supabase not configured') }
     
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: {
-        data: { name }
-      }
+      options: { data: { name } }
     })
 
-    // 프로필에 이름 업데이트
     if (!error && data.user && name) {
-      await supabase
-        .from('user_profiles')
-        .update({ name })
-        .eq('id', data.user.id)
+      // 이름 업데이트 시도
+      await supabase.from('user_profiles').update({ name }).eq('id', data.user.id)
     }
 
     return { error }
   }
 
-  async function signOut() {
-    // 상태 먼저 초기화
+  // 로그아웃
+  const signOut = async () => {
     setUser(null)
     setProfile(null)
     setSession(null)
     
-    // Supabase 로그아웃 시도
     if (supabase) {
-      try {
-        await supabase.auth.signOut({ scope: 'local' })
-      } catch (err) {
-        console.error('Supabase signOut error:', err)
-      }
+      await supabase.auth.signOut()
     }
     
-    // 로컬 스토리지 정리
+    // 로컬 스토리지 클리어
     if (typeof window !== 'undefined') {
-      localStorage.removeItem('supabase.auth.token')
-      // Supabase가 사용하는 모든 키 정리
       Object.keys(localStorage).forEach(key => {
-        if (key.startsWith('sb-')) {
-          localStorage.removeItem(key)
-        }
+        if (key.startsWith('sb-')) localStorage.removeItem(key)
       })
     }
   }
@@ -222,7 +185,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signOut,
       isAdmin,
       isApproved,
-      refreshProfile,
     }}>
       {children}
     </AuthContext.Provider>

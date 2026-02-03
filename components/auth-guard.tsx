@@ -2,53 +2,60 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
-import { Loader2, Lock } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { Loader2, X, AlertTriangle } from 'lucide-react'
 import { useAuth } from '@/lib/auth-context'
-
-// 로그인 없이 접근 가능한 페이지
-const publicPaths = ['/login']
-
-// 대시보드만 볼 수 있는 경로 (승인 없이)
-const dashboardOnlyPaths = ['/']
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
   const { user, profile, loading, isApproved } = useAuth()
-  const [showModal, setShowModal] = useState(false)
-  const [forceReady, setForceReady] = useState(false)
+  const [showNoPermission, setShowNoPermission] = useState(false)
+  const [ready, setReady] = useState(false)
 
-  const isPublicPath = publicPaths.includes(pathname)
-  const isDashboardOnly = dashboardOnlyPaths.includes(pathname)
-
-  // 3초 후 강제 로딩 해제 (무한 로딩 방지)
+  // 타임아웃으로 무한 로딩 방지
   useEffect(() => {
     const timer = setTimeout(() => {
-      setForceReady(true)
+      setReady(true)
     }, 3000)
+
+    if (!loading) {
+      setReady(true)
+      clearTimeout(timer)
+    }
+
     return () => clearTimeout(timer)
-  }, [])
+  }, [loading])
 
+  // 인증 체크
   useEffect(() => {
-    if (loading && !forceReady) return
+    if (!ready) return
 
-    // 로그인 안 된 상태에서 비공개 페이지 접근
-    if (!user && !isPublicPath) {
-      router.push('/login')
+    // 로그인 안 됨 -> 로그인 페이지로
+    if (!user) {
+      router.replace('/login')
       return
     }
 
-    // 로그인 됐지만 승인 안 된 상태에서 기능 페이지 접근
-    if (user && !isApproved && !isPublicPath && !isDashboardOnly) {
-      setShowModal(true)
-    } else {
-      setShowModal(false)
+    // 로그인은 됐는데 승인 안 됨 -> 권한 없음 표시
+    if (user && profile && !isApproved) {
+      setShowNoPermission(true)
     }
-  }, [user, isApproved, loading, forceReady, pathname, router, isPublicPath, isDashboardOnly])
+  }, [ready, user, profile, isApproved, router])
 
   // 로딩 중
-  if (loading && !forceReady) {
+  if (!ready) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto mb-3" />
+          <p className="text-sm text-muted-foreground">로딩 중...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // 유저 없으면 (로그인 페이지로 리다이렉트 중)
+  if (!user) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -56,58 +63,37 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     )
   }
 
-  // 로그인 페이지
-  if (isPublicPath) {
-    return <>{children}</>
-  }
-
-  // 로그인 안 됨 (3초 후에도)
-  if (!user && forceReady) {
-    router.push('/login')
-    return null
-  }
-
   return (
     <>
       {children}
       
       {/* 권한 없음 모달 */}
-      {showModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 text-center">
-            <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <Lock className="h-8 w-8 text-red-600" />
+      {showNoPermission && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-sm mx-4 shadow-xl">
+            <div className="flex items-center justify-center mb-4">
+              <div className="w-12 h-12 rounded-full bg-yellow-100 flex items-center justify-center">
+                <AlertTriangle className="h-6 w-6 text-yellow-600" />
+              </div>
             </div>
-            <h2 className="text-xl font-bold mb-2">접근 권한이 없습니다</h2>
-            <p className="text-muted-foreground mb-6">
-              이 기능을 사용하려면 관리자의 승인이 필요합니다.
-              <br />
-              승인을 기다려주세요.
+            <h3 className="text-lg font-semibold text-center mb-2">
+              권한이 없습니다
+            </h3>
+            <p className="text-sm text-gray-600 text-center mb-4">
+              관리자 승인 후 서비스를 이용할 수 있습니다.<br />
+              승인이 완료되면 다시 로그인해주세요.
             </p>
-            <div className="flex gap-3">
-              <Button 
-                variant="outline" 
-                className="flex-1"
+            <div className="flex justify-center">
+              <button
                 onClick={() => {
-                  setShowModal(false)
-                  router.push('/')
+                  setShowNoPermission(false)
+                  window.location.href = '/login'
                 }}
+                className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90"
               >
-                대시보드로 이동
-              </Button>
-              <Button 
-                className="flex-1"
-                onClick={() => {
-                  setShowModal(false)
-                  router.back()
-                }}
-              >
-                뒤로가기
-              </Button>
+                확인
+              </button>
             </div>
-            <p className="text-xs text-muted-foreground mt-4">
-              현재 상태: {profile?.role === 'pending' ? '승인 대기중' : profile?.role || '알 수 없음'}
-            </p>
           </div>
         </div>
       )}
