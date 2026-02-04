@@ -13,6 +13,7 @@ import { BPMaterial } from '@/lib/supabase'
 
 const CATEGORIES = ['전체', '뷰티', '건강', '식품', '패션', '가전', '금융', '교육', '여행', '자동차', '대행', '기타']
 const CATEGORY_OPTIONS = ['뷰티', '건강', '식품', '패션', '가전', '금융', '교육', '여행', '자동차', '대행', '기타']
+const PAGE_SIZE_OPTIONS = [30, 50, 100]
 
 export default function BPMaterialsPage() {
   const [items, setItems] = useState<BPMaterial[]>([])
@@ -24,6 +25,10 @@ export default function BPMaterialsPage() {
   const [viewImage, setViewImage] = useState<BPMaterial | null>(null)
   const [selectedCategory, setSelectedCategory] = useState('전체')
   
+  // 페이지네이션
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(30)
+  
   // 업로드 폼
   const [previewUrls, setPreviewUrls] = useState<string[]>([])
   const [bpName, setBpName] = useState('')
@@ -33,6 +38,22 @@ export default function BPMaterialsPage() {
   const filteredItems = selectedCategory === '전체' 
     ? items 
     : items.filter(item => item.category === selectedCategory)
+  
+  // 페이지네이션 적용
+  const totalPages = Math.ceil(filteredItems.length / pageSize)
+  const paginatedItems = filteredItems.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+  
+  // 카테고리 변경 시 페이지 리셋
+  function handleCategorySelect(cat: string) {
+    setSelectedCategory(cat)
+    setCurrentPage(1)
+  }
+  
+  // 페이지 사이즈 변경 시 페이지 리셋
+  function handlePageSizeChange(size: number) {
+    setPageSize(size)
+    setCurrentPage(1)
+  }
   
   // 카테고리별 개수
   const categoryCounts = CATEGORIES.reduce((acc, cat) => {
@@ -227,29 +248,49 @@ export default function BPMaterialsPage() {
         </div>
       </div>
 
-      {/* 카테고리 필터 */}
+      {/* 카테고리 필터 + 페이지 사이즈 */}
       {items.length > 0 && !showForm && (
-        <div className="flex flex-wrap gap-2">
-          {CATEGORIES.map(cat => (
-            <button
-              key={cat}
-              onClick={() => setSelectedCategory(cat)}
-              className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
-                selectedCategory === cat
-                  ? 'bg-primary text-white shadow-md'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
-            >
-              {cat}
-              {categoryCounts[cat] > 0 && (
-                <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-xs ${
-                  selectedCategory === cat ? 'bg-white/20' : 'bg-gray-200'
-                }`}>
-                  {categoryCounts[cat]}
-                </span>
-              )}
-            </button>
-          ))}
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex flex-wrap gap-2">
+            {CATEGORIES.map(cat => (
+              <button
+                key={cat}
+                onClick={() => handleCategorySelect(cat)}
+                className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                  selectedCategory === cat
+                    ? 'bg-primary text-white shadow-md'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                {cat}
+                {categoryCounts[cat] > 0 && (
+                  <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-xs ${
+                    selectedCategory === cat ? 'bg-white/20' : 'bg-gray-200'
+                  }`}>
+                    {categoryCounts[cat]}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+          
+          {/* 페이지 사이즈 선택 */}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <span className="text-sm text-gray-500">표시:</span>
+            {PAGE_SIZE_OPTIONS.map(size => (
+              <button
+                key={size}
+                onClick={() => handlePageSizeChange(size)}
+                className={`px-3 py-1 rounded text-sm ${
+                  pageSize === size
+                    ? 'bg-gray-800 text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                {size}개
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
@@ -338,14 +379,15 @@ export default function BPMaterialsPage() {
           <CardContent className="py-12 text-center">
             <ImageIcon className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
             <p className="text-muted-foreground">'{selectedCategory}' 카테고리에 소재가 없습니다.</p>
-            <Button variant="outline" className="mt-4" onClick={() => setSelectedCategory('전체')}>
+            <Button variant="outline" className="mt-4" onClick={() => handleCategorySelect('전체')}>
               전체 보기
             </Button>
           </CardContent>
         </Card>
       ) : (
+        <>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-          {filteredItems.map((item) => (
+          {paginatedItems.map((item) => (
             <div
               key={item.id}
               className="group relative bg-white rounded-lg border overflow-hidden hover:shadow-lg transition-shadow cursor-pointer"
@@ -396,6 +438,74 @@ export default function BPMaterialsPage() {
             </div>
           ))}
         </div>
+        
+        {/* 페이지네이션 */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-center gap-2 mt-6">
+            <button
+              onClick={() => setCurrentPage(1)}
+              disabled={currentPage === 1}
+              className="px-3 py-2 rounded text-sm bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              처음
+            </button>
+            <button
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+              className="px-3 py-2 rounded text-sm bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              이전
+            </button>
+            
+            <div className="flex items-center gap-1">
+              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                let pageNum
+                if (totalPages <= 5) {
+                  pageNum = i + 1
+                } else if (currentPage <= 3) {
+                  pageNum = i + 1
+                } else if (currentPage >= totalPages - 2) {
+                  pageNum = totalPages - 4 + i
+                } else {
+                  pageNum = currentPage - 2 + i
+                }
+                return (
+                  <button
+                    key={pageNum}
+                    onClick={() => setCurrentPage(pageNum)}
+                    className={`w-10 h-10 rounded text-sm ${
+                      currentPage === pageNum
+                        ? 'bg-primary text-white'
+                        : 'bg-gray-100 hover:bg-gray-200'
+                    }`}
+                  >
+                    {pageNum}
+                  </button>
+                )
+              })}
+            </div>
+            
+            <button
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              disabled={currentPage === totalPages}
+              className="px-3 py-2 rounded text-sm bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              다음
+            </button>
+            <button
+              onClick={() => setCurrentPage(totalPages)}
+              disabled={currentPage === totalPages}
+              className="px-3 py-2 rounded text-sm bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              끝
+            </button>
+            
+            <span className="ml-4 text-sm text-gray-500">
+              {filteredItems.length}개 중 {(currentPage - 1) * pageSize + 1}-{Math.min(currentPage * pageSize, filteredItems.length)}
+            </span>
+          </div>
+        )}
+        </>
       )}
 
       {/* 이미지 상세 모달 */}
