@@ -236,6 +236,26 @@ export default function BPMaterialsPage() {
     ))
     setExtracting(prev => prev.filter(id => id !== item.id))
   }
+  
+  // 카테고리 없는 소재 일괄 재분석
+  async function reExtractMissingCategories() {
+    const itemsWithoutCategory = items.filter(i => !i.category && i.image_url)
+    if (itemsWithoutCategory.length === 0) return
+    
+    if (!confirm(`카테고리가 없는 ${itemsWithoutCategory.length}개 소재를 재분석하시겠습니까?`)) return
+    
+    for (const item of itemsWithoutCategory) {
+      if (!item.image_url) continue
+      
+      setExtracting(prev => [...prev, item.id])
+      const { text, category } = await extractData(item.image_url)
+      await updateBPMaterial(item.id, { extracted_text: text || item.extracted_text, category })
+      setItems(prev => prev.map(i => 
+        i.id === item.id ? { ...i, extracted_text: text || i.extracted_text, category } : i
+      ))
+      setExtracting(prev => prev.filter(id => id !== item.id))
+    }
+  }
 
   async function handleTextChange(id: string, text: string) {
     setItems(prev => prev.map(item => 
@@ -316,6 +336,12 @@ export default function BPMaterialsPage() {
                 <Database className="mr-2 h-4 w-4" />
                 BP 데이터
               </Button>
+              {items.filter(i => !i.category).length > 0 && (
+                <Button variant="outline" onClick={reExtractMissingCategories}>
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  카테고리 없는 {items.filter(i => !i.category).length}개 재분석
+                </Button>
+              )}
               <Button variant="outline" onClick={() => setSelectMode(true)}>
                 <Check className="mr-2 h-4 w-4" />
                 선택

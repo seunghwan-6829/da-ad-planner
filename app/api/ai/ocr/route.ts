@@ -82,21 +82,35 @@ export async function POST(request: NextRequest) {
     const data = await res.json()
     const fullText = data.content?.[0]?.text || ''
     
+    console.log('OCR Raw Response:', fullText)
+    
     // 카테고리와 카피 분리
     let category = ''
     let text = ''
     
-    const categoryMatch = fullText.match(/\[카테고리\]\s*\n?([^\n\[]+)/)
+    // 유효한 카테고리 목록
+    const validCategories = ['뷰티', '건강', '식품', '패션', '가전', '금융', '교육', '여행', '자동차', '대행', '기타']
+    
+    // 카테고리 추출 (여러 패턴 시도)
+    const categoryMatch = fullText.match(/\[카테고리\]\s*\n?\s*([^\n\[]+)/) ||
+                          fullText.match(/카테고리[:\s]*([^\n]+)/)
     if (categoryMatch) {
-      category = categoryMatch[1].trim()
+      const rawCategory = categoryMatch[1].trim()
+      // 유효한 카테고리인지 확인
+      const foundCategory = validCategories.find(c => rawCategory.includes(c))
+      category = foundCategory || '기타'
     }
     
-    const copyMatch = fullText.match(/\[카피\]\s*\n?([\s\S]*)/)
+    // 카피 추출
+    const copyMatch = fullText.match(/\[카피\]\s*\n?([\s\S]*)/) ||
+                      fullText.match(/카피[:\s]*\n?([\s\S]*)/)
     if (copyMatch) {
       text = copyMatch[1].trim()
     } else {
       text = fullText
     }
+    
+    console.log('Parsed category:', category, 'text length:', text.length)
     
     return NextResponse.json({ text, category })
   } catch (error) {
