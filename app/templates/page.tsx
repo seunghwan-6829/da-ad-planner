@@ -11,6 +11,8 @@ import { Badge } from '@/components/ui/badge'
 import { getBPMaterials, createBPMaterial, updateBPMaterial, deleteBPMaterial } from '@/lib/api/bp-materials'
 import { BPMaterial } from '@/lib/supabase'
 
+const CATEGORIES = ['전체', '뷰티', '건강', '식품', '패션', '가전', '금융', '교육', '여행', '자동차', '기타']
+
 export default function BPMaterialsPage() {
   const [items, setItems] = useState<BPMaterial[]>([])
   const [loading, setLoading] = useState(true)
@@ -19,11 +21,27 @@ export default function BPMaterialsPage() {
   const [extracting, setExtracting] = useState<string[]>([])
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [viewImage, setViewImage] = useState<BPMaterial | null>(null)
+  const [selectedCategory, setSelectedCategory] = useState('전체')
   
   // 업로드 폼
   const [previewUrls, setPreviewUrls] = useState<string[]>([])
   const [bpName, setBpName] = useState('')
   const [uploading, setUploading] = useState(false)
+  
+  // 필터링된 아이템
+  const filteredItems = selectedCategory === '전체' 
+    ? items 
+    : items.filter(item => item.category === selectedCategory)
+  
+  // 카테고리별 개수
+  const categoryCounts = CATEGORIES.reduce((acc, cat) => {
+    if (cat === '전체') {
+      acc[cat] = items.length
+    } else {
+      acc[cat] = items.filter(item => item.category === cat).length
+    }
+    return acc
+  }, {} as Record<string, number>)
 
   useEffect(() => {
     loadData()
@@ -196,6 +214,32 @@ export default function BPMaterialsPage() {
         </div>
       </div>
 
+      {/* 카테고리 필터 */}
+      {items.length > 0 && !showForm && (
+        <div className="flex flex-wrap gap-2">
+          {CATEGORIES.map(cat => (
+            <button
+              key={cat}
+              onClick={() => setSelectedCategory(cat)}
+              className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                selectedCategory === cat
+                  ? 'bg-primary text-white shadow-md'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              {cat}
+              {categoryCounts[cat] > 0 && (
+                <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-xs ${
+                  selectedCategory === cat ? 'bg-white/20' : 'bg-gray-200'
+                }`}>
+                  {categoryCounts[cat]}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* 업로드 폼 */}
       {showForm && (
         <Card>
@@ -276,9 +320,19 @@ export default function BPMaterialsPage() {
             </Button>
           </CardContent>
         </Card>
+      ) : filteredItems.length === 0 ? (
+        <Card>
+          <CardContent className="py-12 text-center">
+            <ImageIcon className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
+            <p className="text-muted-foreground">'{selectedCategory}' 카테고리에 소재가 없습니다.</p>
+            <Button variant="outline" className="mt-4" onClick={() => setSelectedCategory('전체')}>
+              전체 보기
+            </Button>
+          </CardContent>
+        </Card>
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-          {items.map((item) => (
+          {filteredItems.map((item) => (
             <div
               key={item.id}
               className="group relative bg-white rounded-lg border overflow-hidden hover:shadow-lg transition-shadow cursor-pointer"
