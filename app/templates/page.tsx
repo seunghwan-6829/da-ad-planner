@@ -11,7 +11,8 @@ import { Badge } from '@/components/ui/badge'
 import { getBPMaterials, createBPMaterial, updateBPMaterial, deleteBPMaterial } from '@/lib/api/bp-materials'
 import { BPMaterial } from '@/lib/supabase'
 
-const CATEGORIES = ['전체', '뷰티', '건강', '식품', '패션', '가전', '금융', '교육', '여행', '자동차', '기타']
+const CATEGORIES = ['전체', '뷰티', '건강', '식품', '패션', '가전', '금융', '교육', '여행', '자동차', '대행', '기타']
+const CATEGORY_OPTIONS = ['뷰티', '건강', '식품', '패션', '가전', '금융', '교육', '여행', '자동차', '대행', '기타']
 
 export default function BPMaterialsPage() {
   const [items, setItems] = useState<BPMaterial[]>([])
@@ -177,8 +178,20 @@ export default function BPMaterialsPage() {
       '교육': 'bg-indigo-100 text-indigo-700',
       '여행': 'bg-cyan-100 text-cyan-700',
       '자동차': 'bg-gray-100 text-gray-700',
+      '대행': 'bg-red-100 text-red-700',
     }
     return colors[category || ''] || 'bg-gray-100 text-gray-600'
+  }
+
+  // 카테고리 변경
+  async function handleCategoryChange(itemId: string, newCategory: string) {
+    await updateBPMaterial(itemId, { category: newCategory })
+    setItems(prev => prev.map(item => 
+      item.id === itemId ? { ...item, category: newCategory } : item
+    ))
+    if (viewImage && viewImage.id === itemId) {
+      setViewImage({ ...viewImage, category: newCategory })
+    }
   }
 
   if (loading) {
@@ -406,11 +419,19 @@ export default function BPMaterialsPage() {
                 </button>
               </div>
               
-              {viewImage.category && (
-                <Badge className={`${getCategoryColor(viewImage.category)} w-fit mb-4`}>
-                  {viewImage.category}
-                </Badge>
-              )}
+              <div className="mb-4">
+                <Label className="text-xs text-gray-500 mb-1 block">카테고리</Label>
+                <select
+                  value={viewImage.category || ''}
+                  onChange={(e) => handleCategoryChange(viewImage.id, e.target.value)}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium border cursor-pointer ${getCategoryColor(viewImage.category)}`}
+                >
+                  <option value="">카테고리 선택</option>
+                  {CATEGORY_OPTIONS.map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
+              </div>
               
               <div className="flex-1">
                 <div className="flex items-center justify-between mb-2">

@@ -12,7 +12,7 @@ import { Select } from '@/components/ui/select'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { createAdvertiser } from '@/lib/api/advertisers'
 
-const CATEGORIES = ['뷰티', '건강', '식품', '패션', '가전', '금융', '교육', '여행', '자동차', '기타']
+const CATEGORIES = ['뷰티', '건강', '식품', '패션', '가전', '금융', '교육', '여행', '자동차', '대행', '기타']
 
 export default function NewAdvertiserPage() {
   const router = useRouter()

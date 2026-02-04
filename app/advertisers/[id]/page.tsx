@@ -14,7 +14,7 @@ import { Badge } from '@/components/ui/badge'
 import { getAdvertiser, updateAdvertiser } from '@/lib/api/advertisers'
 import { Advertiser } from '@/lib/supabase'
 
-const CATEGORIES = ['뷰티', '건강', '식품', '패션', '가전', '금융', '교육', '여행', '자동차', '기타']
+const CATEGORIES = ['뷰티', '건강', '식품', '패션', '가전', '금융', '교육', '여행', '자동차', '대행', '기타']
 
 export default function AdvertiserDetailPage() {
   const router = useRouter()
