@@ -15,6 +15,37 @@ const CATEGORIES = ['전체', '뷰티', '건강', '식품', '패션', '가전', 
 const CATEGORY_OPTIONS = ['뷰티', '건강', '식품', '패션', '가전', '금융', '교육', '여행', '자동차', '대행', '기타']
 const PAGE_SIZE_OPTIONS = [30, 50, 100]
 
+// 이미지 압축 함수
+async function compressImage(file: File, maxWidth = 800, quality = 0.7): Promise<string> {
+  return new Promise((resolve) => {
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      const img = new window.Image()
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        let width = img.width
+        let height = img.height
+        
+        // 최대 너비 제한
+        if (width > maxWidth) {
+          height = (height * maxWidth) / width
+          width = maxWidth
+        }
+        
+        canvas.width = width
+        canvas.height = height
+        
+        const ctx = canvas.getContext('2d')
+        ctx?.drawImage(img, 0, 0, width, height)
+        
+        resolve(canvas.toDataURL('image/jpeg', quality))
+      }
+      img.src = e.target?.result as string
+    }
+    reader.readAsDataURL(file)
+  })
+}
+
 export default function BPMaterialsPage() {
   const [items, setItems] = useState<BPMaterial[]>([])
   const [loading, setLoading] = useState(true)
@@ -28,6 +59,10 @@ export default function BPMaterialsPage() {
   // 페이지네이션
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(30)
+  
+  // 선택 모드
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   
   // 업로드 폼
   const [previewUrls, setPreviewUrls] = useState<string[]>([])
@@ -76,19 +111,61 @@ export default function BPMaterialsPage() {
     setLoading(false)
   }
 
-  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files || [])
     const imageFiles = files.filter(f => f.type.startsWith('image/'))
     
-    imageFiles.forEach(file => {
-      const reader = new FileReader()
-      reader.onload = (event) => {
-        setPreviewUrls(prev => [...prev, event.target?.result as string])
-      }
-      reader.readAsDataURL(file)
-    })
+    for (const file of imageFiles) {
+      // 이미지 압축 적용 (최대 800px, 품질 70%)
+      const compressed = await compressImage(file, 800, 0.7)
+      setPreviewUrls(prev => [...prev, compressed])
+    }
     
     e.target.value = ''
+  }
+  
+  // 선택 토글
+  function toggleSelect(id: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }
+  
+  // 전체 선택 (현재 페이지)
+  function selectAll() {
+    const allIds = new Set(paginatedItems.map(item => item.id))
+    setSelectedIds(allIds)
+  }
+  
+  // 전체 해제
+  function deselectAll() {
+    setSelectedIds(new Set())
+  }
+  
+  // 선택 삭제
+  async function deleteSelected() {
+    if (selectedIds.size === 0) return
+    if (!confirm(`선택한 ${selectedIds.size}개 소재를 삭제하시겠습니까?`)) return
+    
+    for (const id of selectedIds) {
+      await deleteBPMaterial(id)
+    }
+    
+    setItems(prev => prev.filter(item => !selectedIds.has(item.id)))
+    setSelectedIds(new Set())
+    setSelectMode(false)
+  }
+  
+  // 선택 모드 종료
+  function exitSelectMode() {
+    setSelectMode(false)
+    setSelectedIds(new Set())
   }
 
   function removePreview(index: number) {
@@ -233,13 +310,40 @@ export default function BPMaterialsPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          {items.length > 0 && (
-            <Button variant="outline" onClick={() => setShowDataModal(true)}>
-              <Database className="mr-2 h-4 w-4" />
-              BP 데이터
-            </Button>
+          {items.length > 0 && !selectMode && (
+            <>
+              <Button variant="outline" onClick={() => setShowDataModal(true)}>
+                <Database className="mr-2 h-4 w-4" />
+                BP 데이터
+              </Button>
+              <Button variant="outline" onClick={() => setSelectMode(true)}>
+                <Check className="mr-2 h-4 w-4" />
+                선택
+              </Button>
+            </>
           )}
-          {!showForm && (
+          {selectMode && (
+            <>
+              <Button variant="outline" onClick={selectAll}>
+                전체 선택
+              </Button>
+              <Button variant="outline" onClick={deselectAll}>
+                선택 해제
+              </Button>
+              <Button 
+                variant="destructive" 
+                onClick={deleteSelected}
+                disabled={selectedIds.size === 0}
+              >
+                <Trash2 className="mr-2 h-4 w-4" />
+                {selectedIds.size}개 삭제
+              </Button>
+              <Button variant="ghost" onClick={exitSelectMode}>
+                취소
+              </Button>
+            </>
+          )}
+          {!showForm && !selectMode && (
             <Button onClick={() => setShowForm(true)}>
               <Plus className="mr-2 h-4 w-4" />
               BP 소재 추가
@@ -386,20 +490,37 @@ export default function BPMaterialsPage() {
         </Card>
       ) : (
         <>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+        <div className="columns-2 md:columns-3 lg:columns-4 xl:columns-5 gap-4 space-y-4">
           {paginatedItems.map((item) => (
             <div
               key={item.id}
-              className="group relative bg-white rounded-lg border overflow-hidden hover:shadow-lg transition-shadow cursor-pointer"
-              onClick={() => setViewImage(item)}
+              className={`group relative bg-white rounded-lg border overflow-hidden hover:shadow-lg transition-all cursor-pointer break-inside-avoid ${
+                selectedIds.has(item.id) ? 'ring-2 ring-primary ring-offset-2' : ''
+              }`}
+              onClick={() => selectMode ? toggleSelect(item.id) : setViewImage(item)}
             >
-              {/* 이미지 */}
-              <div className="aspect-square">
+              {/* 선택 체크박스 */}
+              {selectMode && (
+                <div className="absolute top-2 left-2 z-10">
+                  <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${
+                    selectedIds.has(item.id) 
+                      ? 'bg-primary border-primary text-white' 
+                      : 'bg-white border-gray-300'
+                  }`}>
+                    {selectedIds.has(item.id) && <Check className="h-4 w-4" />}
+                  </div>
+                </div>
+              )}
+              
+              {/* 이미지 - 원본 비율 유지 */}
+              <div className="bg-gray-100">
                 {item.image_url && (
                   <img
                     src={item.image_url}
                     alt={item.name}
-                    className="w-full h-full object-cover"
+                    className="w-full h-auto object-contain"
+                    loading="lazy"
+                    decoding="async"
                   />
                 )}
               </div>
@@ -423,13 +544,15 @@ export default function BPMaterialsPage() {
                 </div>
               )}
               
-              {/* 호버 시 삭제 버튼 */}
-              <button
-                onClick={(e) => { e.stopPropagation(); handleDelete(item.id) }}
-                className="absolute top-2 right-2 bg-red-500 text-white rounded-full p-1.5 opacity-0 group-hover:opacity-100 transition-opacity"
-              >
-                <Trash2 className="h-3 w-3" />
-              </button>
+              {/* 호버 시 삭제 버튼 (선택 모드가 아닐 때만) */}
+              {!selectMode && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleDelete(item.id) }}
+                  className="absolute top-2 right-2 bg-red-500 text-white rounded-full p-1.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              )}
               
               {/* 이름 */}
               <div className="p-2 border-t">
