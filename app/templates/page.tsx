@@ -8,7 +8,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { getBPMaterials, createBPMaterial, updateBPMaterial, deleteBPMaterial } from '@/lib/api/bp-materials'
+import { getBPMaterialsPaginated, createBPMaterial, updateBPMaterial, deleteBPMaterial } from '@/lib/api/bp-materials'
 import { BPMaterial } from '@/lib/supabase'
 
 const CATEGORIES = ['전체', '뷰티', '건강', '식품', '패션', '가전', '금융', '교육', '여행', '자동차', '대행', '기타']
@@ -56,9 +56,11 @@ export default function BPMaterialsPage() {
   const [viewImage, setViewImage] = useState<BPMaterial | null>(null)
   const [selectedCategory, setSelectedCategory] = useState('전체')
   
-  // 페이지네이션
+  // 서버 사이드 페이지네이션
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(30)
+  const [totalCount, setTotalCount] = useState(0)
+  const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({})
   
   // 선택 모드
   const [selectMode, setSelectMode] = useState(false)
@@ -69,16 +71,10 @@ export default function BPMaterialsPage() {
   const [bpName, setBpName] = useState('')
   const [uploading, setUploading] = useState(false)
   
-  // 필터링된 아이템
-  const filteredItems = selectedCategory === '전체' 
-    ? items 
-    : items.filter(item => item.category === selectedCategory)
+  // 페이지 계산 (서버에서 받은 totalCount 사용)
+  const totalPages = Math.ceil(totalCount / pageSize)
   
-  // 페이지네이션 적용
-  const totalPages = Math.ceil(filteredItems.length / pageSize)
-  const paginatedItems = filteredItems.slice((currentPage - 1) * pageSize, currentPage * pageSize)
-  
-  // 카테고리 변경 시 페이지 리셋
+  // 카테고리 변경 시 페이지 리셋 및 데이터 로드
   function handleCategorySelect(cat: string) {
     setSelectedCategory(cat)
     setCurrentPage(1)
@@ -89,25 +85,18 @@ export default function BPMaterialsPage() {
     setPageSize(size)
     setCurrentPage(1)
   }
-  
-  // 카테고리별 개수
-  const categoryCounts = CATEGORIES.reduce((acc, cat) => {
-    if (cat === '전체') {
-      acc[cat] = items.length
-    } else {
-      acc[cat] = items.filter(item => item.category === cat).length
-    }
-    return acc
-  }, {} as Record<string, number>)
 
+  // 페이지, 카테고리, 페이지사이즈 변경 시 데이터 로드
   useEffect(() => {
     loadData()
-  }, [])
+  }, [currentPage, selectedCategory, pageSize])
 
   async function loadData() {
     setLoading(true)
-    const data = await getBPMaterials()
-    setItems(data)
+    const result = await getBPMaterialsPaginated(currentPage, pageSize, selectedCategory)
+    setItems(result.data)
+    setTotalCount(result.totalCount)
+    setCategoryCounts(result.categoryCounts)
     setLoading(false)
   }
 
@@ -139,7 +128,7 @@ export default function BPMaterialsPage() {
   
   // 전체 선택 (현재 페이지)
   function selectAll() {
-    const allIds = new Set(paginatedItems.map(item => item.id))
+    const allIds = new Set(items.map(item => item.id))
     setSelectedIds(allIds)
   }
   
@@ -157,9 +146,10 @@ export default function BPMaterialsPage() {
       await deleteBPMaterial(id)
     }
     
-    setItems(prev => prev.filter(item => !selectedIds.has(item.id)))
     setSelectedIds(new Set())
     setSelectMode(false)
+    // 데이터 다시 로드
+    await loadData()
   }
   
   // 선택 모드 종료
@@ -223,6 +213,10 @@ export default function BPMaterialsPage() {
     setBpName('')
     setShowForm(false)
     setUploading(false)
+    
+    // 첫 페이지로 이동하여 새로 업로드한 소재 표시
+    setSelectedCategory('전체')
+    setCurrentPage(1)
   }
 
   async function reExtract(item: BPMaterial) {
@@ -379,7 +373,7 @@ export default function BPMaterialsPage() {
       </div>
 
       {/* 카테고리 필터 + 페이지 사이즈 */}
-      {items.length > 0 && !showForm && (
+      {(totalCount > 0 || categoryCounts['전체'] > 0) && !showForm && (
         <div className="flex items-center justify-between gap-4">
           <div className="flex flex-wrap gap-2">
             {CATEGORIES.map(cat => (
@@ -494,7 +488,7 @@ export default function BPMaterialsPage() {
       )}
 
       {/* 갤러리 뷰 */}
-      {items.length === 0 && !showForm ? (
+      {categoryCounts['전체'] === 0 && !showForm && !loading ? (
         <Card>
           <CardContent className="py-12 text-center">
             <ImageIcon className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
@@ -504,7 +498,7 @@ export default function BPMaterialsPage() {
             </Button>
           </CardContent>
         </Card>
-      ) : filteredItems.length === 0 ? (
+      ) : totalCount === 0 && !loading ? (
         <Card>
           <CardContent className="py-12 text-center">
             <ImageIcon className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
@@ -514,10 +508,10 @@ export default function BPMaterialsPage() {
             </Button>
           </CardContent>
         </Card>
-      ) : (
+      ) : !loading && items.length > 0 ? (
         <>
         <div className="columns-2 md:columns-3 lg:columns-4 xl:columns-5 gap-4 space-y-4">
-          {paginatedItems.map((item) => (
+          {items.map((item) => (
             <div
               key={item.id}
               className={`group relative bg-white rounded-lg border overflow-hidden hover:shadow-lg transition-all cursor-pointer break-inside-avoid ${
@@ -650,12 +644,12 @@ export default function BPMaterialsPage() {
             </button>
             
             <span className="ml-4 text-sm text-gray-500">
-              {filteredItems.length}개 중 {(currentPage - 1) * pageSize + 1}-{Math.min(currentPage * pageSize, filteredItems.length)}
+              {totalCount}개 중 {(currentPage - 1) * pageSize + 1}-{Math.min(currentPage * pageSize, totalCount)}
             </span>
           </div>
         )}
         </>
-      )}
+      ) : null}
 
       {/* 이미지 상세 모달 */}
       {viewImage && (
