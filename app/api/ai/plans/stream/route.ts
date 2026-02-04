@@ -70,11 +70,15 @@ function buildPrompt(
   // BP 참고 자료 섹션
   let bpSection = ''
   if (bpReferences && bpReferences.length > 0) {
-    bpSection = '\n\n=== 📚 BP(Best Practice) 참고 자료 ===\n'
-    bpSection += '아래는 같은 카테고리에서 성과가 좋았던 광고 카피 예시입니다.\n'
-    bpSection += '이 스타일과 톤을 참고하되, 그대로 복사하지 말고 새롭게 창작하세요.\n\n'
+    bpSection = '\n\n=== 📚 BP(Best Practice) 학습 자료 [중요!] ===\n'
+    bpSection += `총 ${bpReferences.length}개의 성과 좋은 광고 카피 데이터가 제공됩니다.\n`
+    bpSection += '★★★ 반드시 아래 BP 자료들의 패턴, 구조, 톤앤매너, 문장 스타일을 분석하고 학습하세요! ★★★\n'
+    bpSection += '- 어떤 단어와 표현이 자주 사용되는지 파악\n'
+    bpSection += '- 문장 길이와 리듬감 분석\n'
+    bpSection += '- 후킹 포인트와 CTA 스타일 학습\n'
+    bpSection += '- 이 스타일을 바탕으로 새로운 카피를 창작 (복사 금지)\n\n'
     bpReferences.forEach((bp, i) => {
-      bpSection += `[참고 ${i + 1}] ${bp.name}\n${bp.extracted_text}\n\n`
+      bpSection += `[BP ${i + 1}] ${bp.name}\n${bp.extracted_text}\n\n`
     })
   }
 

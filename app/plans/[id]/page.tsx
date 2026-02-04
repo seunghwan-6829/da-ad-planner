@@ -305,18 +305,28 @@ export default function PlanDetailPage() {
     }
 
     try {
-      // BP 데이터 가져오기 (카테고리 매칭)
+      // BP 데이터 가져오기 (카테고리 매칭 - 전체 사용)
       let bpReferences: { name: string; extracted_text: string }[] = []
+      const allBp = await getBPMaterials()
+      
       if (selectedAdvertiser?.category) {
-        const allBp = await getBPMaterials()
+        // 광고주 카테고리와 일치하는 BP 전체 사용
         const matchedBp = allBp.filter(bp => 
           bp.category === selectedAdvertiser.category && bp.extracted_text
         )
-        // 최대 5개만 참조
-        bpReferences = matchedBp.slice(0, 5).map(bp => ({
+        bpReferences = matchedBp.map(bp => ({
           name: bp.name,
           extracted_text: bp.extracted_text || ''
         }))
+        console.log(`[BP] 카테고리 '${selectedAdvertiser.category}' 매칭: ${bpReferences.length}개`)
+      } else {
+        // 광고주 카테고리 없으면 extracted_text 있는 BP 중 최근 20개 사용
+        const recentBp = allBp.filter(bp => bp.extracted_text).slice(0, 20)
+        bpReferences = recentBp.map(bp => ({
+          name: bp.name,
+          extracted_text: bp.extracted_text || ''
+        }))
+        console.log(`[BP] 카테고리 없음, 최근 BP ${bpReferences.length}개 사용`)
       }
 
       const res = await fetch('/api/ai/plans/stream', {
