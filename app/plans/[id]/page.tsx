@@ -158,28 +158,7 @@ export default function PlanDetailPage() {
 
     setSaving(true)
     try {
-      // 필터링된 배열들
-      const validRefs = referenceLinks.filter(r => r.trim())
-      const validCtas = ctaTexts.filter(c => c.trim())
-      
-      await updatePlan(id, {
-        title: formData.title,
-        advertiser_id: formData.advertiser_id || null,
-        media_type: formData.media_type,
-        size: null,
-        concept: null,
-        main_copy: null,
-        sub_copy: null,
-        cta_text: null,
-        notes: null,
-        reference_links: validRefs.length ? validRefs : null,
-        cta_texts: validCtas.length ? validCtas : null,
-        td_title: tdTitle || null,
-        td_description: tdDescription || null,
-        copy_history: copyHistory.length ? JSON.stringify(copyHistory) : null,
-        custom_prompt: customPrompt || null,
-        ai_results: aiResults.length ? JSON.stringify(aiResults) : null,
-      })
+      await saveToDb()
       alert('저장되었습니다.')
     } catch (error) {
       console.error('저장 실패:', error)
@@ -187,6 +166,34 @@ export default function PlanDetailPage() {
     } finally {
       setSaving(false)
     }
+  }
+  
+  // DB 저장 공통 함수
+  async function saveToDb(newAiResults?: CopyItem[], newCopyHistory?: CopySet[]) {
+    const validRefs = referenceLinks.filter(r => r.trim())
+    const validCtas = ctaTexts.filter(c => c.trim())
+    
+    const resultsToSave = newAiResults ?? aiResults
+    const historyToSave = newCopyHistory ?? copyHistory
+    
+    await updatePlan(id, {
+      title: formData.title,
+      advertiser_id: formData.advertiser_id || null,
+      media_type: formData.media_type,
+      size: null,
+      concept: null,
+      main_copy: null,
+      sub_copy: null,
+      cta_text: null,
+      notes: null,
+      reference_links: validRefs.length ? validRefs : null,
+      cta_texts: validCtas.length ? validCtas : null,
+      td_title: tdTitle || null,
+      td_description: tdDescription || null,
+      copy_history: historyToSave.length ? JSON.stringify(historyToSave) : null,
+      custom_prompt: customPrompt || null,
+      ai_results: resultsToSave.length ? JSON.stringify(resultsToSave) : null,
+    })
   }
 
   // 마킹된 텍스트를 React 요소로 변환
@@ -420,12 +427,21 @@ export default function PlanDetailPage() {
         setAiResults(results)
         // 생성되면 바로 히스토리에 추가
         if (results.length > 0) {
-          setCopyHistory(prev => [{
+          const newHistory: CopySet[] = [{
             id: Date.now().toString(),
             timestamp: new Date(),
             mediaType: formData.media_type,
             copies: results
-          }, ...prev])
+          }, ...copyHistory]
+          setCopyHistory(newHistory)
+          
+          // 자동 저장 (DB에 즉시 반영)
+          try {
+            await saveToDb(results, newHistory)
+            console.log('[자동저장] AI 생성 결과 저장 완료')
+          } catch (err) {
+            console.error('[자동저장] 실패:', err)
+          }
         }
       }
     } catch (error) {
@@ -474,12 +490,14 @@ export default function PlanDetailPage() {
   }
 
   // 검토 결과 저장 (수정본으로 교체)
-  function saveReview() {
+  async function saveReview() {
     if (!reviewModalData) return
     
     const { index, review } = reviewModalData
     // 마킹 제거한 순수 텍스트
     const cleanRevised = removeMarks(review.revised)
+    
+    let updatedResults: CopyItem[] = []
     
     setAiResults(prev => {
       const updated = [...prev]
@@ -504,11 +522,20 @@ export default function PlanDetailPage() {
           updated[index] = { ...updated[index], description: cleanRevised, review: { ...review, revised: cleanRevised } }
         }
       }
+      updatedResults = updated
       return updated
     })
     
     setReviewModalOpen(false)
     setReviewModalData(null)
+    
+    // 자동 저장
+    try {
+      await saveToDb(updatedResults)
+      console.log('[자동저장] 검토 결과 저장 완료')
+    } catch (err) {
+      console.error('[자동저장] 실패:', err)
+    }
   }
 
   // 검토 취소
