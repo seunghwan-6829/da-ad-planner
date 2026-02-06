@@ -56,6 +56,20 @@ export default function PlanDetailPage() {
   // 씬 데이터
   const [scenes, setScenes] = useState<SceneData[]>([])
   
+  // 행 높이 관리 (기본값 설정)
+  const [rowHeights, setRowHeights] = useState({
+    video: 180,
+    timeline: 50,
+    sources: 80,
+    effect: 50,
+    special_notes: 50,
+    script: 120,
+    source_info: 80
+  })
+  const [resizing, setResizing] = useState<string | null>(null)
+  const [startY, setStartY] = useState(0)
+  const [startHeight, setStartHeight] = useState(0)
+  
   // 저장 상태 추적
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const [showExitModal, setShowExitModal] = useState(false)
@@ -170,6 +184,39 @@ export default function PlanDetailPage() {
       router.push('/project-plans')
     }
   }, [hasUnsavedChanges, router])
+
+  // 행 높이 조절 핸들러
+  const handleResizeStart = useCallback((rowKey: string, e: React.MouseEvent) => {
+    e.preventDefault()
+    setResizing(rowKey)
+    setStartY(e.clientY)
+    setStartHeight(rowHeights[rowKey as keyof typeof rowHeights])
+  }, [rowHeights])
+
+  useEffect(() => {
+    if (!resizing) return
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const diff = e.clientY - startY
+      const newHeight = Math.max(40, startHeight + diff) // 최소 40px
+      setRowHeights(prev => ({
+        ...prev,
+        [resizing]: newHeight
+      }))
+    }
+
+    const handleMouseUp = () => {
+      setResizing(null)
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [resizing, startY, startHeight])
 
   function addScene() {
     const newSceneNumber = scenes.length + 1
@@ -302,7 +349,7 @@ export default function PlanDetailPage() {
   }
 
   return (
-    <div className="h-full flex flex-col bg-white">
+    <div className={`h-full flex flex-col bg-white ${resizing ? 'select-none' : ''}`} style={resizing ? { cursor: 'row-resize' } : {}}>
       {/* 상단 헤더 */}
       <div className="flex items-center justify-between p-4 border-b">
         <div className="flex items-center gap-4">
@@ -371,12 +418,19 @@ export default function PlanDetailPage() {
       {/* 씬 테이블 */}
       <div className="flex-1 overflow-auto p-6">
         <div className="border rounded-lg overflow-hidden">
-          <table className="w-full">
+          <table className="w-full table-fixed">
+            <colgroup>
+              <col className="w-24" />
+              {scenes.map((_, index) => (
+                <col key={index} style={{ width: '200px', minWidth: '200px' }} />
+              ))}
+              <col className="w-12" />
+            </colgroup>
             <thead>
               <tr className="bg-gray-50 border-b">
                 <th className="w-24 p-3 text-left text-sm font-medium text-gray-500 border-r"></th>
                 {scenes.map((scene, index) => (
-                  <th key={index} className="min-w-[200px] p-3 text-center text-sm font-medium border-r last:border-r-0 relative group">
+                  <th key={index} className="w-[200px] p-3 text-center text-sm font-medium border-r last:border-r-0 relative group">
                     <div className="flex items-center justify-center gap-1">
                       {/* 왼쪽 이동 버튼 */}
                       <button
@@ -415,16 +469,17 @@ export default function PlanDetailPage() {
             </thead>
             <tbody>
               {/* 영상 (이미지) */}
-              <tr className="border-b">
-                <td className="p-3 bg-orange-50 border-r font-medium text-sm text-gray-700">영상</td>
+              <tr className="border-b relative" style={{ height: rowHeights.video }}>
+                <td className="p-3 bg-orange-50 border-r font-medium text-sm text-gray-700 align-top">영상</td>
                 {scenes.map((scene, index) => (
-                  <td key={index} className="p-3 border-r last:border-r-0">
+                  <td key={index} className="p-2 border-r last:border-r-0 align-top overflow-hidden">
                     <div 
-                      className="aspect-video bg-gray-100 rounded-lg flex items-center justify-center cursor-pointer hover:bg-gray-200 transition-colors overflow-hidden"
+                      className="w-full bg-gray-100 rounded-lg flex items-center justify-center cursor-pointer hover:bg-gray-200 transition-colors overflow-hidden"
+                      style={{ height: rowHeights.video - 16 }}
                       onClick={() => fileInputRefs.current[index]?.click()}
                     >
                       {scene.image_url ? (
-                        <img src={scene.image_url} alt="" className="w-full h-full object-cover" />
+                        <img src={scene.image_url} alt="" className="w-full h-full object-contain" />
                       ) : (
                         <div className="text-center">
                           <ImageIcon className="h-8 w-8 text-gray-400 mx-auto mb-1" />
@@ -441,14 +496,21 @@ export default function PlanDetailPage() {
                     />
                   </td>
                 ))}
-                <td></td>
+                <td className="relative">
+                  <div
+                    className="absolute bottom-0 left-0 right-0 h-2 cursor-row-resize hover:bg-blue-200 bg-transparent group flex items-center justify-center"
+                    onMouseDown={(e) => handleResizeStart('video', e)}
+                  >
+                    <div className="w-8 h-1 bg-gray-300 rounded group-hover:bg-blue-400" />
+                  </div>
+                </td>
               </tr>
 
               {/* 타임라인 */}
-              <tr className="border-b">
-                <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700">타임라인</td>
+              <tr className="border-b relative" style={{ height: rowHeights.timeline }}>
+                <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700 align-middle">타임라인</td>
                 {scenes.map((scene, index) => (
-                  <td key={index} className="p-3 border-r last:border-r-0">
+                  <td key={index} className="p-2 border-r last:border-r-0 align-middle">
                     <Input
                       value={scene.timeline}
                       onChange={(e) => updateScene(index, 'timeline', e.target.value)}
@@ -457,45 +519,59 @@ export default function PlanDetailPage() {
                     />
                   </td>
                 ))}
-                <td></td>
+                <td className="relative">
+                  <div
+                    className="absolute bottom-0 left-0 right-0 h-2 cursor-row-resize hover:bg-blue-200 bg-transparent group flex items-center justify-center"
+                    onMouseDown={(e) => handleResizeStart('timeline', e)}
+                  >
+                    <div className="w-8 h-1 bg-gray-300 rounded group-hover:bg-blue-400" />
+                  </div>
+                </td>
               </tr>
 
               {/* 소스 */}
-              <tr className="border-b">
-                <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700">소스</td>
+              <tr className="border-b relative" style={{ height: rowHeights.sources }}>
+                <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700 align-top">소스</td>
                 {scenes.map((scene, index) => (
-                  <td key={index} className="p-3 border-r last:border-r-0">
-                    <div className="space-y-2">
+                  <td key={index} className="p-2 border-r last:border-r-0 align-top overflow-auto" style={{ maxHeight: rowHeights.sources - 8 }}>
+                    <div className="space-y-1">
                       {scene.sources.map((source, sIndex) => (
                         <div key={sIndex} className="flex gap-1">
                           <Input
                             value={source}
                             onChange={(e) => updateSource(index, sIndex, e.target.value)}
                             placeholder="소스..."
-                            className="text-sm"
+                            className="text-sm h-8"
                           />
                           {scene.sources.length > 1 && (
-                            <Button size="sm" variant="ghost" className="px-2" onClick={() => removeSource(index, sIndex)}>
+                            <Button size="sm" variant="ghost" className="px-2 h-8" onClick={() => removeSource(index, sIndex)}>
                               <X className="h-3 w-3" />
                             </Button>
                           )}
                         </div>
                       ))}
-                      <Button size="sm" variant="ghost" className="w-full text-xs" onClick={() => addSource(index)}>
+                      <Button size="sm" variant="ghost" className="w-full text-xs h-7" onClick={() => addSource(index)}>
                         <Plus className="h-3 w-3 mr-1" />
                         추가
                       </Button>
                     </div>
                   </td>
                 ))}
-                <td></td>
+                <td className="relative">
+                  <div
+                    className="absolute bottom-0 left-0 right-0 h-2 cursor-row-resize hover:bg-blue-200 bg-transparent group flex items-center justify-center"
+                    onMouseDown={(e) => handleResizeStart('sources', e)}
+                  >
+                    <div className="w-8 h-1 bg-gray-300 rounded group-hover:bg-blue-400" />
+                  </div>
+                </td>
               </tr>
 
               {/* 효과 */}
-              <tr className="border-b">
-                <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700">효과</td>
+              <tr className="border-b relative" style={{ height: rowHeights.effect }}>
+                <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700 align-middle">효과</td>
                 {scenes.map((scene, index) => (
-                  <td key={index} className="p-3 border-r last:border-r-0">
+                  <td key={index} className="p-2 border-r last:border-r-0 align-middle">
                     <Input
                       value={scene.effect}
                       onChange={(e) => updateScene(index, 'effect', e.target.value)}
@@ -504,14 +580,21 @@ export default function PlanDetailPage() {
                     />
                   </td>
                 ))}
-                <td></td>
+                <td className="relative">
+                  <div
+                    className="absolute bottom-0 left-0 right-0 h-2 cursor-row-resize hover:bg-blue-200 bg-transparent group flex items-center justify-center"
+                    onMouseDown={(e) => handleResizeStart('effect', e)}
+                  >
+                    <div className="w-8 h-1 bg-gray-300 rounded group-hover:bg-blue-400" />
+                  </div>
+                </td>
               </tr>
 
               {/* 특이사항 */}
-              <tr className="border-b">
-                <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700">특이사항</td>
+              <tr className="border-b relative" style={{ height: rowHeights.special_notes }}>
+                <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700 align-middle">특이사항</td>
                 {scenes.map((scene, index) => (
-                  <td key={index} className="p-3 border-r last:border-r-0">
+                  <td key={index} className="p-2 border-r last:border-r-0 align-middle">
                     <Input
                       value={scene.special_notes}
                       onChange={(e) => updateScene(index, 'special_notes', e.target.value)}
@@ -520,41 +603,64 @@ export default function PlanDetailPage() {
                     />
                   </td>
                 ))}
-                <td></td>
+                <td className="relative">
+                  <div
+                    className="absolute bottom-0 left-0 right-0 h-2 cursor-row-resize hover:bg-blue-200 bg-transparent group flex items-center justify-center"
+                    onMouseDown={(e) => handleResizeStart('special_notes', e)}
+                  >
+                    <div className="w-8 h-1 bg-gray-300 rounded group-hover:bg-blue-400" />
+                  </div>
+                </td>
               </tr>
 
               {/* 대본 (나레이션) */}
-              <tr className="border-b">
-                <td className="p-3 bg-orange-50 border-r font-medium text-sm text-gray-700">
+              <tr className="border-b relative" style={{ height: rowHeights.script }}>
+                <td className="p-3 bg-orange-50 border-r font-medium text-sm text-gray-700 align-top">
                   대본<br/><span className="text-xs text-gray-400">(나레이션)</span>
                 </td>
                 {scenes.map((scene, index) => (
-                  <td key={index} className="p-3 border-r last:border-r-0">
+                  <td key={index} className="p-2 border-r last:border-r-0 align-top">
                     <Textarea
                       value={scene.script}
                       onChange={(e) => updateScene(index, 'script', e.target.value)}
                       placeholder="대본/나레이션..."
-                      className="text-sm min-h-[100px]"
+                      className="text-sm resize-none"
+                      style={{ height: rowHeights.script - 16 }}
                     />
                   </td>
                 ))}
-                <td></td>
+                <td className="relative">
+                  <div
+                    className="absolute bottom-0 left-0 right-0 h-2 cursor-row-resize hover:bg-blue-200 bg-transparent group flex items-center justify-center"
+                    onMouseDown={(e) => handleResizeStart('script', e)}
+                  >
+                    <div className="w-8 h-1 bg-gray-300 rounded group-hover:bg-blue-400" />
+                  </div>
+                </td>
               </tr>
 
               {/* 소스 정보 */}
-              <tr>
-                <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700">소스</td>
+              <tr className="relative" style={{ height: rowHeights.source_info }}>
+                <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700 align-top">소스</td>
                 {scenes.map((scene, index) => (
-                  <td key={index} className="p-3 border-r last:border-r-0">
+                  <td key={index} className="p-2 border-r last:border-r-0 align-top">
                     <Textarea
                       value={scene.source_info}
                       onChange={(e) => updateScene(index, 'source_info', e.target.value)}
                       placeholder="소스 정보..."
-                      className="text-sm min-h-[60px]"
+                      className="text-sm resize-none"
+                      style={{ height: rowHeights.source_info - 16 }}
                     />
                   </td>
                 ))}
-                <td></td>
+                <td className="relative">
+                  <div
+                    className="absolute bottom-0 left-0 right-0 h-2 cursor-row-resize hover:bg-blue-200 bg-transparent group flex items-center justify-center"
+                    onMouseDown={(e) => handleResizeStart('source_info', e)}
+                  >
+                    <div className="w-8 h-1 bg-gray-300 rounded group-hover:bg-blue-400" />
+                  </div>
+                </td>
               </tr>
             </tbody>
           </table>
