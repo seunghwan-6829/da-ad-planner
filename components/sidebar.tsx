@@ -24,11 +24,14 @@ import { Button } from '@/components/ui/button'
 
 import { Image as ImageIcon } from 'lucide-react'
 
-const navigation = [
+const navigationTop = [
   { name: '대시보드', href: '/', icon: LayoutDashboard },
-  { name: '광고 기획서', href: '/plans', icon: FileText },
+  { name: 'AI 광고 기획서', href: '/plans', icon: FileText },
   { name: '광고주 관리', href: '/advertisers', icon: Users },
   { name: 'BP소재', href: '/templates', icon: FileCode },
+]
+
+const navigationBottom = [
   { name: '이미지 베리에이션', href: '/image-variation', icon: ImageIcon },
   { name: '영상 베리에이션', href: '/ai-variation', icon: Video },
   { name: '기획안 제작', href: '/project-plans', icon: Clapperboard },
@@ -57,7 +60,31 @@ export function Sidebar() {
       </div>
       
       <nav className="flex-1 space-y-1 p-4 overflow-y-auto">
-        {navigation.map((item) => {
+        {navigationTop.map((item) => {
+          const isActive = pathname === item.href || 
+            (item.href !== '/' && pathname.startsWith(item.href))
+          return (
+            <Link
+              key={item.name}
+              href={item.href}
+              className={cn(
+                'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                isActive
+                  ? 'bg-primary text-white'
+                  : 'text-gray-700 hover:bg-gray-100'
+              )}
+            >
+              <item.icon className="h-5 w-5" />
+              {item.name}
+              {isActive && <ChevronRight className="ml-auto h-4 w-4" />}
+            </Link>
+          )
+        })}
+
+        {/* BP소재 아래 구분선 */}
+        <div className="my-3 border-t" />
+
+        {navigationBottom.map((item) => {
           const isActive = pathname === item.href || 
             (item.href !== '/' && pathname.startsWith(item.href))
           return (
