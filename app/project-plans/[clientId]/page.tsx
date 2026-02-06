@@ -1,17 +1,15 @@
 'use client'
 
 import { useEffect } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 
 // 이 페이지는 메인 페이지로 리다이렉트합니다
 export default function ClientPlansPage() {
-  const params = useParams()
   const router = useRouter()
-  const clientId = params.clientId as string
 
   useEffect(() => {
-    router.replace(`/project-plans?client=${clientId}`)
-  }, [clientId, router])
+    router.replace('/project-plans')
+  }, [router])
 
   return null
 }

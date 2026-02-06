@@ -1,8 +1,8 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Save, Loader2, Plus, X, Upload, Image as ImageIcon, Trash2 } from 'lucide-react'
+import { ArrowLeft, Save, Loader2, Plus, X, Upload, Image as ImageIcon, Trash2, ChevronUp, ChevronDown, GripVertical } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -56,6 +56,12 @@ export default function PlanDetailPage() {
   // 씬 데이터
   const [scenes, setScenes] = useState<SceneData[]>([])
   
+  // 저장 상태 추적
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
+  const [showExitModal, setShowExitModal] = useState(false)
+  const [pendingNavigation, setPendingNavigation] = useState<string | null>(null)
+  const initialLoadRef = useRef(true)
+  
   const fileInputRefs = useRef<{ [key: number]: HTMLInputElement | null }>({})
 
   useEffect(() => {
@@ -106,9 +112,16 @@ export default function PlanDetailPage() {
           source_info: s.source_info || ''
         })))
       } else {
-        // 기본 1개 씬 추가
-        setScenes([createEmptyScene(1)])
+        // 기본 5개 씬 추가
+        setScenes([
+          createEmptyScene(1),
+          createEmptyScene(2),
+          createEmptyScene(3),
+          createEmptyScene(4),
+          createEmptyScene(5)
+        ])
       }
+      initialLoadRef.current = false
     } catch (error) {
       console.error('데이터 로드 실패:', error)
     } finally {
@@ -129,6 +142,35 @@ export default function PlanDetailPage() {
     }
   }
 
+  // 변경 감지
+  useEffect(() => {
+    if (!initialLoadRef.current) {
+      setHasUnsavedChanges(true)
+    }
+  }, [title, scenes, reference, ctaText, cardPreview])
+
+  // 페이지 이탈 감지 (브라우저)
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (hasUnsavedChanges) {
+        e.preventDefault()
+        e.returnValue = ''
+      }
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [hasUnsavedChanges])
+
+  // 뒤로가기 처리
+  const handleGoBack = useCallback(() => {
+    if (hasUnsavedChanges) {
+      setShowExitModal(true)
+      setPendingNavigation('/project-plans')
+    } else {
+      router.push('/project-plans')
+    }
+  }, [hasUnsavedChanges, router])
+
   function addScene() {
     const newSceneNumber = scenes.length + 1
     setScenes([...scenes, createEmptyScene(newSceneNumber)])
@@ -140,6 +182,26 @@ export default function PlanDetailPage() {
       ...s,
       scene_number: i + 1
     }))
+    setScenes(newScenes)
+  }
+
+  // 씬 위로 이동
+  function moveSceneUp(index: number) {
+    if (index === 0) return
+    const newScenes = [...scenes]
+    const temp = newScenes[index - 1]
+    newScenes[index - 1] = { ...newScenes[index], scene_number: index }
+    newScenes[index] = { ...temp, scene_number: index + 1 }
+    setScenes(newScenes)
+  }
+
+  // 씬 아래로 이동
+  function moveSceneDown(index: number) {
+    if (index === scenes.length - 1) return
+    const newScenes = [...scenes]
+    const temp = newScenes[index + 1]
+    newScenes[index + 1] = { ...newScenes[index], scene_number: index + 2 }
+    newScenes[index] = { ...temp, scene_number: index + 1 }
     setScenes(newScenes)
   }
 
@@ -213,6 +275,7 @@ export default function PlanDetailPage() {
       
       await updateSceneCount(planId)
       
+      setHasUnsavedChanges(false)
       alert('저장되었습니다!')
     } catch (error) {
       console.error('저장 실패:', error)
@@ -243,18 +306,23 @@ export default function PlanDetailPage() {
       {/* 상단 헤더 */}
       <div className="flex items-center justify-between p-4 border-b">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="sm" onClick={() => router.push(`/project-plans?client=${clientId}`)}>
+          <Button variant="ghost" size="sm" onClick={handleGoBack}>
             <ArrowLeft className="h-4 w-4 mr-1" />
             돌아가기
           </Button>
           {client && (
-            <span className="text-orange-500 font-medium">{client.name}</span>
+            <span style={{ color: client.color || '#F97316' }} className="font-medium">{client.name}</span>
           )}
         </div>
-        <Button onClick={handleSave} disabled={saving} className="bg-orange-500 hover:bg-orange-600">
-          {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
-          저장하기
-        </Button>
+        <div className="flex items-center gap-2">
+          {hasUnsavedChanges && (
+            <span className="text-sm text-orange-500">저장되지 않은 변경사항이 있습니다</span>
+          )}
+          <Button onClick={handleSave} disabled={saving} className="bg-orange-500 hover:bg-orange-600">
+            {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
+            저장하기
+          </Button>
+        </div>
       </div>
 
       {/* 기획안 제목 & 메타 정보 */}
@@ -309,7 +377,25 @@ export default function PlanDetailPage() {
                 <th className="w-24 p-3 text-left text-sm font-medium text-gray-500 border-r"></th>
                 {scenes.map((scene, index) => (
                   <th key={index} className="min-w-[200px] p-3 text-center text-sm font-medium border-r last:border-r-0 relative group">
-                    <span className="text-gray-700">#{scene.scene_number}</span>
+                    <div className="flex items-center justify-center gap-1">
+                      {/* 왼쪽 이동 버튼 */}
+                      <button
+                        className={`p-1 rounded transition-colors ${index === 0 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-gray-200'}`}
+                        onClick={() => moveSceneUp(index)}
+                        disabled={index === 0}
+                      >
+                        <ChevronUp className="h-4 w-4 text-gray-500 rotate-[-90deg]" />
+                      </button>
+                      <span className="text-gray-700 font-semibold">#{scene.scene_number}</span>
+                      {/* 오른쪽 이동 버튼 */}
+                      <button
+                        className={`p-1 rounded transition-colors ${index === scenes.length - 1 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-gray-200'}`}
+                        onClick={() => moveSceneDown(index)}
+                        disabled={index === scenes.length - 1}
+                      >
+                        <ChevronDown className="h-4 w-4 text-gray-500 rotate-[-90deg]" />
+                      </button>
+                    </div>
                     {scenes.length > 1 && (
                       <button
                         className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 rounded"
@@ -474,6 +560,39 @@ export default function PlanDetailPage() {
           </table>
         </div>
       </div>
+
+      {/* 저장 확인 모달 */}
+      {showExitModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 w-full max-w-sm shadow-xl">
+            <h3 className="text-lg font-bold mb-3">저장 확인</h3>
+            <p className="text-gray-600 mb-6">저장을 하지 않고 나가시겠습니까?</p>
+            <div className="flex gap-3">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => {
+                  setShowExitModal(false)
+                  if (pendingNavigation) {
+                    router.push(pendingNavigation)
+                  }
+                }}
+              >
+                예
+              </Button>
+              <Button
+                className="flex-1"
+                onClick={() => {
+                  setShowExitModal(false)
+                  setPendingNavigation(null)
+                }}
+              >
+                아니오
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
