@@ -1,9 +1,8 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { Upload, Send, Loader2, Image as ImageIcon, Sparkles, RefreshCw, Copy, Check, X, History, Trash2, MessageCircle, FolderOpen } from 'lucide-react'
+import { Upload, Send, Loader2, Image as ImageIcon, Sparkles, RefreshCw, Copy, Check, X, History, Trash2, MessageCircle, FolderOpen, ChevronRight, ChevronDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { getBPMaterialsPaginated } from '@/lib/api/bp-materials'
 import { BPMaterial } from '@/lib/supabase'
@@ -11,6 +10,7 @@ import { BPMaterial } from '@/lib/supabase'
 interface Message {
   role: 'user' | 'assistant'
   content: string
+  options?: string[] // AI가 제시한 선택지
 }
 
 interface Variation {
@@ -25,15 +25,26 @@ interface HistoryItem {
   imagePreview: string
   title: string
   variations: Variation[]
+  messages: Message[]
+  analysis: string
 }
 
 const STORAGE_KEY = 'image-variation-history'
 const CATEGORIES = ['전체', '뷰티', '건강', '식품', '패션', '가전', '금융', '교육', '여행', '자동차', '대행', '기타']
 
+// 추천 프롬프트
+const SAVED_PROMPTS = [
+  { label: '타겟 변경', prompt: '타겟층을 다르게 바꾸고 싶어요' },
+  { label: '톤 변경', prompt: '광고 톤앤매너를 바꾸고 싶어요' },
+  { label: '소구점 강조', prompt: '다른 소구점을 강조하고 싶어요' },
+  { label: '스타일 변경', prompt: '카피 스타일을 바꾸고 싶어요' },
+]
+
 export default function ImageVariationPage() {
   const [image, setImage] = useState<string | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
   const [analysis, setAnalysis] = useState<string | null>(null)
+  const [analysisStream, setAnalysisStream] = useState('')
   const [messages, setMessages] = useState<Message[]>([])
   const [inputMessage, setInputMessage] = useState('')
   const [chatLoading, setChatLoading] = useState(false)
@@ -42,8 +53,9 @@ export default function ImageVariationPage() {
   const [variations, setVariations] = useState<Variation[]>([])
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null)
   const [history, setHistory] = useState<HistoryItem[]>([])
-  const [showAnalysis, setShowAnalysis] = useState(false)
   const [imageZoom, setImageZoom] = useState(false)
+  const [selectedOptions, setSelectedOptions] = useState<Set<string>>(new Set())
+  const [showMultiSelect, setShowMultiSelect] = useState(false)
   
   const [showBPModal, setShowBPModal] = useState(false)
   const [bpMaterials, setBpMaterials] = useState<BPMaterial[]>([])
@@ -52,23 +64,29 @@ export default function ImageVariationPage() {
   
   const chatEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY)
     if (saved) {
       try {
         const parsed = JSON.parse(saved)
-        setHistory(parsed.map((h: HistoryItem) => ({
-          ...h,
-          timestamp: new Date(h.timestamp)
-        })))
+        setHistory(parsed.map((h: HistoryItem) => ({ ...h, timestamp: new Date(h.timestamp) })))
       } catch { /* ignore */ }
     }
   }, [])
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  }, [messages, analysisStream])
+
+  // Textarea 높이 자동 조절
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto'
+      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + 'px'
+    }
+  }, [inputMessage])
 
   function saveHistory(newHistory: HistoryItem[]) {
     setHistory(newHistory)
@@ -85,20 +103,14 @@ export default function ImageVariationPage() {
 
   async function openBPModal() {
     setShowBPModal(true)
-    if (bpMaterials.length === 0) {
-      await loadBPMaterials('전체')
-    }
+    if (bpMaterials.length === 0) await loadBPMaterials('전체')
   }
 
   function selectBPMaterial(bp: BPMaterial) {
     if (bp.image_url) {
       setImage(bp.image_url)
       setShowBPModal(false)
-      setAnalysis(null)
-      setMessages([])
-      setVariations([])
-      setReadyToGenerate(false)
-      setShowAnalysis(false)
+      resetState()
       analyzeImage(bp.image_url)
     }
   }
@@ -106,36 +118,70 @@ export default function ImageVariationPage() {
   async function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
-
     const reader = new FileReader()
     reader.onload = async (event) => {
       const base64 = event.target?.result as string
       setImage(base64)
-      setAnalysis(null)
-      setMessages([])
-      setVariations([])
-      setReadyToGenerate(false)
-      setShowAnalysis(false)
+      resetState()
       await analyzeImage(base64)
     }
     reader.readAsDataURL(file)
   }
 
+  function resetState() {
+    setAnalysis(null)
+    setAnalysisStream('')
+    setMessages([])
+    setVariations([])
+    setReadyToGenerate(false)
+    setSelectedOptions(new Set())
+  }
+
+  // 실시간 스트리밍 분석
   async function analyzeImage(imageData: string) {
     setAnalyzing(true)
+    setAnalysisStream('')
+    
     try {
       const res = await fetch('/api/ai/image-analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ image: imageData }),
       })
-      if (!res.ok) throw new Error('분석 실패')
-      const data = await res.json()
-      setAnalysis(data.analysis)
-      setMessages([{
-        role: 'assistant',
-        content: `분석 완료! 🎨 이 소재를 어떻게 바꾸고 싶으신가요?\n\n💡 예시:\n• 타겟 변경 (20대 여성 → 30대 남성)\n• 톤 변경 (진지 → 유머)\n• 강조점 변경 (가격 → 품질)`
-      }])
+
+      const reader = res.body?.getReader()
+      if (!reader) throw new Error('스트림 불가')
+
+      const decoder = new TextDecoder()
+      let fullText = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        const chunk = decoder.decode(value, { stream: true })
+        const lines = chunk.split('\n')
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6))
+              if (data.text) {
+                fullText += data.text
+                setAnalysisStream(fullText)
+              }
+              if (data.done) {
+                setAnalysis(fullText)
+                // 첫 대화 - 제품/소구점 질문
+                setMessages([{
+                  role: 'assistant',
+                  content: `분석이 완료되었습니다! 🎨\n\n베리에이션을 시작하기 전에 몇 가지 여쭤볼게요.\n\n**어떤 제품/서비스를 판매하시나요?**\n간단하게 제품명과 특징을 알려주세요.`,
+                }])
+              }
+            } catch { /* ignore */ }
+          }
+        }
+      }
     } catch (error) {
       console.error('분석 실패:', error)
       alert('이미지 분석에 실패했습니다.')
@@ -144,13 +190,31 @@ export default function ImageVariationPage() {
     }
   }
 
-  async function sendMessage() {
-    if (!inputMessage.trim() || !analysis) return
-    const userMsg = inputMessage.trim()
+  // AI 응답에서 선택지 파싱
+  function parseOptions(text: string): string[] {
+    const options: string[] = []
+    // A. B. C. D. 형식 또는 1. 2. 3. 형식
+    const matches = text.match(/(?:^|\n)\s*(?:[A-Z]\.|\d\.)\s*([^\n]+)/g)
+    if (matches) {
+      matches.forEach(m => {
+        const cleaned = m.replace(/^\s*(?:[A-Z]\.|\d\.)\s*/, '').trim()
+        if (cleaned.length > 2 && cleaned.length < 100) {
+          options.push(cleaned)
+        }
+      })
+    }
+    return options
+  }
+
+  async function sendMessage(customMessage?: string) {
+    const msg = customMessage || inputMessage.trim()
+    if (!msg || !analysis) return
+    
     setInputMessage('')
-    const newMessages: Message[] = [...messages, { role: 'user', content: userMsg }]
+    const newMessages: Message[] = [...messages, { role: 'user', content: msg }]
     setMessages(newMessages)
     setChatLoading(true)
+    
     try {
       const res = await fetch('/api/ai/image-chat', {
         method: 'POST',
@@ -158,18 +222,58 @@ export default function ImageVariationPage() {
         body: JSON.stringify({
           imageAnalysis: analysis,
           messages: newMessages,
-          userMessage: userMsg,
+          userMessage: msg,
         }),
       })
       if (!res.ok) throw new Error('대화 실패')
       const data = await res.json()
-      setMessages([...newMessages, { role: 'assistant', content: data.reply }])
+      
+      // 선택지 파싱
+      const options = parseOptions(data.reply)
+      const hasMultipleChoice = data.reply.includes('다중') || data.reply.includes('여러 개') || options.length > 3
+      
+      setMessages([...newMessages, { 
+        role: 'assistant', 
+        content: data.reply,
+        options: options.length >= 2 ? options : undefined
+      }])
+      
+      if (hasMultipleChoice && options.length >= 2) {
+        setShowMultiSelect(true)
+      } else {
+        setShowMultiSelect(false)
+      }
+      
       if (data.readyToGenerate) setReadyToGenerate(true)
     } catch (error) {
       console.error('대화 실패:', error)
       alert('응답 생성에 실패했습니다.')
     } finally {
       setChatLoading(false)
+    }
+  }
+
+  // 선택지 클릭
+  function handleOptionClick(option: string) {
+    if (showMultiSelect) {
+      setSelectedOptions(prev => {
+        const next = new Set(prev)
+        if (next.has(option)) next.delete(option)
+        else next.add(option)
+        return next
+      })
+    } else {
+      sendMessage(option)
+    }
+  }
+
+  // 다중 선택 확인
+  function confirmMultiSelect() {
+    if (selectedOptions.size > 0) {
+      const selected = Array.from(selectedOptions).join(', ')
+      sendMessage(selected)
+      setSelectedOptions(new Set())
+      setShowMultiSelect(false)
     }
   }
 
@@ -191,17 +295,22 @@ export default function ImageVariationPage() {
       const data = await res.json()
       const parsed = parseVariations(data.reply)
       setVariations(parsed)
+      
+      // 히스토리 저장 (대화 포함)
       const historyItem: HistoryItem = {
         id: Date.now().toString(),
         timestamp: new Date(),
         imagePreview: image,
         title: messages.find(m => m.role === 'user')?.content.slice(0, 30) || '베리에이션',
-        variations: parsed
+        variations: parsed,
+        messages: messages,
+        analysis: analysis
       }
       saveHistory([historyItem, ...history].slice(0, 20))
+      
       setMessages(prev => [...prev, {
         role: 'assistant',
-        content: `✨ ${parsed.length}개의 베리에이션 완료!\n아래에서 결과를 확인하세요.`
+        content: `✨ ${parsed.length}개의 베리에이션 완료!\n오른쪽에서 결과를 확인하세요.`
       }])
     } catch (error) {
       console.error('생성 실패:', error)
@@ -230,17 +339,21 @@ export default function ImageVariationPage() {
   }
 
   function copyVariation(v: Variation, index: number) {
-    const text = `${v.mainCopy}\n${v.subCopy}`
-    navigator.clipboard.writeText(text)
+    navigator.clipboard.writeText(`${v.mainCopy}\n${v.subCopy}`)
     setCopiedIndex(index)
     setTimeout(() => setCopiedIndex(null), 2000)
   }
 
+  // 히스토리 불러오기 (채팅 재개 가능)
   function loadHistory(item: HistoryItem) {
     setVariations(item.variations)
     setImage(item.imagePreview)
-    setAnalysis(null)
-    setMessages([{ role: 'assistant', content: `📂 이전 작업을 불러왔습니다.\n"${item.title}"` }])
+    setAnalysis(item.analysis)
+    setAnalysisStream(item.analysis)
+    setMessages(item.messages || [{ role: 'assistant', content: `📂 이전 작업을 불러왔습니다.\n"${item.title}"` }])
+    if (item.variations.length > 0) {
+      setReadyToGenerate(false) // 이미 생성됨
+    }
   }
 
   function deleteHistory(id: string) {
@@ -249,17 +362,21 @@ export default function ImageVariationPage() {
 
   function reset() {
     setImage(null)
-    setAnalysis(null)
-    setMessages([])
-    setVariations([])
-    setReadyToGenerate(false)
+    resetState()
+  }
+
+  // 키보드 이벤트
+  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      sendMessage()
+    }
   }
 
   return (
     <div className="fixed inset-0 left-64 top-16 bottom-0 right-0 flex gap-4 p-4 overflow-hidden bg-gray-50">
       {/* 왼쪽: 이미지 + 분석 */}
       <div className="w-72 flex flex-col gap-3 flex-shrink-0">
-        {/* 이미지 업로드 */}
         <Card>
           <CardHeader className="py-2 px-4">
             <CardTitle className="text-sm flex items-center gap-2">
@@ -273,81 +390,47 @@ export default function ImageVariationPage() {
                 <img 
                   src={image} 
                   alt="업로드된 이미지" 
-                  className="w-full max-h-48 object-contain rounded-lg border bg-gray-50 cursor-pointer hover:opacity-90 transition-opacity"
+                  className="w-full max-h-48 object-contain rounded-lg border bg-gray-50 cursor-pointer hover:opacity-90"
                   onClick={() => setImageZoom(true)}
                 />
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  className="absolute top-2 right-2 h-6 w-6 p-0"
-                  onClick={reset}
-                >
+                <Button variant="destructive" size="sm" className="absolute top-2 right-2 h-6 w-6 p-0" onClick={reset}>
                   <X className="h-3 w-3" />
                 </Button>
               </div>
             ) : (
               <div className="space-y-2">
                 <div 
-                  className="border-2 border-dashed rounded-lg p-6 text-center cursor-pointer hover:bg-gray-50 transition-colors"
+                  className="border-2 border-dashed rounded-lg p-6 text-center cursor-pointer hover:bg-gray-50"
                   onClick={() => fileInputRef.current?.click()}
                 >
                   <Upload className="h-8 w-8 mx-auto text-gray-400 mb-2" />
                   <p className="text-xs text-gray-500">클릭하여 업로드</p>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full"
-                  onClick={openBPModal}
-                >
+                <Button variant="outline" size="sm" className="w-full" onClick={openBPModal}>
                   <FolderOpen className="h-4 w-4 mr-2" />
                   BP소재에서 가져오기
                 </Button>
               </div>
             )}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={handleImageUpload}
-            />
+            <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
           </CardContent>
         </Card>
 
-        {/* 분석 로딩 */}
-        {analyzing && (
-          <Card className="flex-1">
-            <CardContent className="py-8 text-center">
-              <Loader2 className="h-6 w-6 animate-spin mx-auto text-primary mb-2" />
-              <p className="text-sm text-gray-600">분석 중...</p>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* 분석 결과 */}
-        {analysis && (
+        {/* 분석 결과 - 실시간 스트리밍 */}
+        {(analyzing || analysisStream) && (
           <Card className="flex-1 flex flex-col overflow-hidden">
             <CardHeader className="py-2 px-4 flex-shrink-0">
-              <CardTitle className="text-sm flex items-center justify-between">
-                <span>분석 결과</span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 text-xs"
-                  onClick={() => setShowAnalysis(!showAnalysis)}
-                >
-                  {showAnalysis ? '접기' : '펼치기'}
-                </Button>
+              <CardTitle className="text-sm flex items-center gap-2">
+                {analyzing && <Loader2 className="h-3 w-3 animate-spin" />}
+                분석 결과
               </CardTitle>
             </CardHeader>
-            {showAnalysis && (
-              <CardContent className="p-3 pt-0 flex-1 overflow-y-auto">
-                <div className="text-xs text-gray-600 whitespace-pre-wrap leading-relaxed">
-                  {analysis}
-                </div>
-              </CardContent>
-            )}
+            <CardContent className="p-3 pt-0 flex-1 overflow-y-auto">
+              <div className="text-xs text-gray-600 whitespace-pre-wrap leading-relaxed">
+                {analysisStream}
+                {analyzing && <span className="animate-pulse">▊</span>}
+              </div>
+            </CardContent>
           </Card>
         )}
       </div>
@@ -355,6 +438,23 @@ export default function ImageVariationPage() {
       {/* 가운데: 채팅 */}
       <div className="flex-1 flex flex-col min-w-0">
         <Card className="flex-1 flex flex-col overflow-hidden bg-gradient-to-b from-slate-50 to-white">
+          {/* Saved Prompts 영역 */}
+          {analysis && messages.length <= 2 && (
+            <div className="px-4 py-2 border-b bg-white/50 flex items-center gap-2 flex-wrap">
+              <span className="text-xs text-gray-500">추천:</span>
+              {SAVED_PROMPTS.map((p, i) => (
+                <button
+                  key={i}
+                  onClick={() => sendMessage(p.prompt)}
+                  className="px-3 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded-full transition-colors flex items-center gap-1"
+                >
+                  {p.label}
+                  <ChevronRight className="h-3 w-3" />
+                </button>
+              ))}
+            </div>
+          )}
+          
           <CardHeader className="py-3 px-4 border-b bg-white/80 backdrop-blur flex-shrink-0">
             <CardTitle className="text-base flex items-center gap-2">
               <div className="p-1.5 bg-gradient-to-br from-purple-500 to-pink-500 rounded-lg">
@@ -364,7 +464,6 @@ export default function ImageVariationPage() {
             </CardTitle>
           </CardHeader>
           
-          {/* 채팅 메시지 */}
           <div className="flex-1 overflow-y-auto p-4 space-y-3">
             {messages.length === 0 && !analyzing && !image && (
               <div className="text-center text-gray-400 py-16">
@@ -377,19 +476,51 @@ export default function ImageVariationPage() {
             )}
             
             {messages.map((msg, i) => (
-              <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                {msg.role === 'assistant' && (
-                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center mr-2 flex-shrink-0">
-                    <Sparkles className="h-4 w-4 text-white" />
+              <div key={i}>
+                <div className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  {msg.role === 'assistant' && (
+                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center mr-2 flex-shrink-0">
+                      <Sparkles className="h-4 w-4 text-white" />
+                    </div>
+                  )}
+                  <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 shadow-sm ${
+                    msg.role === 'user'
+                      ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-br-md'
+                      : 'bg-white text-gray-800 border rounded-bl-md'
+                  }`}>
+                    <p className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</p>
+                  </div>
+                </div>
+                
+                {/* 선택지 버튼 */}
+                {msg.role === 'assistant' && msg.options && msg.options.length > 0 && i === messages.length - 1 && (
+                  <div className="ml-10 mt-2 space-y-1.5">
+                    {msg.options.map((opt, oi) => (
+                      <button
+                        key={oi}
+                        onClick={() => handleOptionClick(opt)}
+                        className={`w-full text-left px-4 py-2.5 rounded-lg border text-sm transition-all ${
+                          selectedOptions.has(opt)
+                            ? 'bg-purple-100 border-purple-400 text-purple-700'
+                            : 'bg-white hover:bg-gray-50 border-gray-200 text-gray-700'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span>{opt}</span>
+                          <ChevronRight className="h-4 w-4 text-gray-400" />
+                        </div>
+                      </button>
+                    ))}
+                    {showMultiSelect && selectedOptions.size > 0 && (
+                      <Button 
+                        onClick={confirmMultiSelect}
+                        className="w-full mt-2 bg-purple-600 hover:bg-purple-700"
+                      >
+                        선택 확인 ({selectedOptions.size}개)
+                      </Button>
+                    )}
                   </div>
                 )}
-                <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 shadow-sm ${
-                  msg.role === 'user'
-                    ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-br-md'
-                    : 'bg-white text-gray-800 border rounded-bl-md'
-                }`}>
-                  <p className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</p>
-                </div>
               </div>
             ))}
             
@@ -410,7 +541,7 @@ export default function ImageVariationPage() {
             <div ref={chatEndRef} />
           </div>
 
-          {/* 입력 영역 */}
+          {/* 입력 영역 - 멀티라인 지원 */}
           <div className="p-3 border-t bg-white space-y-2 flex-shrink-0">
             {readyToGenerate && variations.length === 0 && (
               <Button
@@ -425,19 +556,22 @@ export default function ImageVariationPage() {
                 )}
               </Button>
             )}
-            <div className="flex gap-2">
-              <Input
+            <div className="flex gap-2 items-end">
+              <textarea
+                ref={textareaRef}
                 value={inputMessage}
                 onChange={(e) => setInputMessage(e.target.value)}
-                placeholder="원하는 방향을 입력하세요..."
+                onKeyDown={handleKeyDown}
+                placeholder="원하는 방향을 입력하세요... (Shift+Enter: 줄바꿈)"
                 disabled={!analysis || chatLoading || generating}
-                onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
-                className="rounded-full px-4"
+                rows={1}
+                className="flex-1 px-4 py-2 border rounded-2xl resize-none text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ maxHeight: '120px' }}
               />
               <Button
-                onClick={sendMessage}
+                onClick={() => sendMessage()}
                 disabled={!inputMessage.trim() || chatLoading || !analysis}
-                className="rounded-full px-4"
+                className="rounded-full px-4 h-10"
               >
                 <Send className="h-4 w-4" />
               </Button>
@@ -448,16 +582,13 @@ export default function ImageVariationPage() {
 
       {/* 오른쪽: 히스토리 + 결과 */}
       <div className="w-80 flex flex-col gap-3 flex-shrink-0">
-        {/* 히스토리 */}
         <Card className="flex-shrink-0" style={{ height: '180px' }}>
           <CardHeader className="py-2 px-4 border-b">
             <CardTitle className="text-sm flex items-center gap-2">
               <History className="h-4 w-4 text-orange-500" />
               히스토리
               {history.length > 0 && (
-                <span className="text-xs bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded-full">
-                  {history.length}
-                </span>
+                <span className="text-xs bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded-full">{history.length}</span>
               )}
             </CardTitle>
           </CardHeader>
@@ -494,7 +625,6 @@ export default function ImageVariationPage() {
           </CardContent>
         </Card>
 
-        {/* 결과 */}
         <Card className="flex-1 flex flex-col overflow-hidden">
           <CardHeader className="py-2 px-4 border-b flex-shrink-0">
             <CardTitle className="text-sm flex items-center justify-between">
@@ -503,9 +633,7 @@ export default function ImageVariationPage() {
                 결과
               </span>
               {variations.length > 0 && (
-                <span className="text-xs bg-green-100 text-green-600 px-1.5 py-0.5 rounded-full">
-                  {variations.length}개
-                </span>
+                <span className="text-xs bg-green-100 text-green-600 px-1.5 py-0.5 rounded-full">{variations.length}개</span>
               )}
             </CardTitle>
           </CardHeader>
@@ -527,7 +655,7 @@ export default function ImageVariationPage() {
                         variant="ghost"
                         size="sm"
                         onClick={() => copyVariation(v, i)}
-                        className="h-6 px-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                        className="h-6 px-2 opacity-0 group-hover:opacity-100"
                       >
                         {copiedIndex === i ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}
                       </Button>
@@ -557,11 +685,10 @@ export default function ImageVariationPage() {
         </div>
       )}
 
-      {/* BP 소재 선택 모달 - 크기 키움 */}
+      {/* BP 소재 선택 모달 */}
       {showBPModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6" onClick={() => setShowBPModal(false)}>
           <div className="bg-white rounded-xl w-[90vw] max-w-6xl h-[85vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
-            {/* 헤더 */}
             <div className="p-4 border-b flex items-center justify-between flex-shrink-0">
               <h2 className="text-xl font-bold flex items-center gap-2">
                 <FolderOpen className="h-6 w-6 text-primary" />
@@ -571,25 +698,19 @@ export default function ImageVariationPage() {
                 <X className="h-5 w-5" />
               </Button>
             </div>
-            
-            {/* 카테고리 필터 */}
             <div className="p-4 border-b flex flex-wrap gap-2 flex-shrink-0">
               {CATEGORIES.map(cat => (
                 <button
                   key={cat}
                   onClick={() => loadBPMaterials(cat)}
                   className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all ${
-                    bpCategory === cat
-                      ? 'bg-primary text-white shadow-md'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    bpCategory === cat ? 'bg-primary text-white shadow-md' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                   }`}
                 >
                   {cat}
                 </button>
               ))}
             </div>
-            
-            {/* 소재 목록 */}
             <div className="flex-1 overflow-y-auto p-4">
               {bpLoading ? (
                 <div className="flex items-center justify-center py-20">
@@ -608,14 +729,10 @@ export default function ImageVariationPage() {
                       className="cursor-pointer rounded-lg border overflow-hidden hover:shadow-xl hover:border-primary hover:scale-[1.02] transition-all"
                       onClick={() => selectBPMaterial(bp)}
                     >
-                      {bp.image_url && (
-                        <img src={bp.image_url} alt={bp.name} className="w-full aspect-square object-cover" />
-                      )}
+                      {bp.image_url && <img src={bp.image_url} alt={bp.name} className="w-full aspect-square object-cover" />}
                       <div className="p-2">
                         <p className="text-xs font-medium truncate">{bp.name}</p>
-                        {bp.category && (
-                          <span className="text-[10px] text-gray-400">{bp.category}</span>
-                        )}
+                        {bp.category && <span className="text-[10px] text-gray-400">{bp.category}</span>}
                       </div>
                     </div>
                   ))}
