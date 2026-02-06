@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { Sparkles, Upload, Copy, Check, Plus, Minus, Loader2, FileText, History, Trash2, MessageCircle, Send, ChevronRight } from 'lucide-react'
+import { Sparkles, Upload, Copy, Check, Plus, Minus, Loader2, FileText, History, Trash2, MessageCircle, Send, ChevronRight, Maximize2, RotateCcw, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -68,6 +68,12 @@ export default function VideoVariationPage() {
   // 스트리밍 관련
   const [streamingTexts, setStreamingTexts] = useState<string[]>(['', '', ''])
   const [completedBatches, setCompletedBatches] = useState<Set<number>>(new Set())
+  
+  // 재생성 관련
+  const [canRegenerate, setCanRegenerate] = useState(false)
+  
+  // 히스토리 확대 모달
+  const [showHistoryModal, setShowHistoryModal] = useState(false)
   
   const chatEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -377,11 +383,61 @@ export default function VideoVariationPage() {
       
       setMessages(prev => [...prev, {
         role: 'assistant',
-        content: `✨ ${allVariations.length}개의 베리에이션이 완료되었습니다!\n오른쪽에서 결과를 확인하세요.`
+        content: `✨ ${allVariations.length}개의 베리에이션이 완료되었습니다!\n\n오른쪽에서 결과를 확인해주세요.\n\n**수정이 필요하신가요?**\n고치고 싶은 부분이나 다른 방향이 있으시면 말씀해주세요. 피드백을 반영해서 재생성해드릴게요! 🔄`
       }])
+      setCanRegenerate(true)
     } catch (error) {
       console.error('베리에이션 실패:', error)
       alert('베리에이션 생성에 실패했습니다.')
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  // 재생성 함수
+  async function regenerateVariations() {
+    if (!originalScript) return
+    setGenerating(true)
+    setVariations([])
+    setStreamingTexts(['', '', ''])
+    setCompletedBatches(new Set())
+    setCanRegenerate(false)
+
+    try {
+      const batchResults = await Promise.all([
+        fetchBatchStream(0),
+        fetchBatchStream(1),
+        fetchBatchStream(2)
+      ])
+
+      const allVariations: VariationItem[] = []
+      batchResults.forEach((text, batchIndex) => {
+        const parsed = parseVariationsFromText(text, batchIndex)
+        allVariations.push(...parsed)
+      })
+
+      setVariations(allVariations)
+      
+      if (allVariations.length > 0) {
+        const historyItem: HistoryItem = {
+          id: Date.now().toString(),
+          timestamp: new Date(),
+          productName: productName.trim() || '제품명 없음',
+          originalScript: originalScript.slice(0, 100),
+          variations: allVariations,
+          messages
+        }
+        saveHistory([historyItem, ...history].slice(0, 20))
+      }
+      
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: `🔄 피드백을 반영하여 ${allVariations.length}개를 재생성했습니다!\n\n추가 수정이 필요하시면 말씀해주세요.`
+      }])
+      setCanRegenerate(true)
+    } catch (error) {
+      console.error('재생성 실패:', error)
+      alert('재생성에 실패했습니다.')
     } finally {
       setGenerating(false)
     }
@@ -627,6 +683,22 @@ export default function VideoVariationPage() {
                 )}
               </Button>
             )}
+            
+            {/* 재생성 버튼 */}
+            {variations.length > 0 && canRegenerate && (
+              <Button
+                className="w-full bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 shadow-lg"
+                onClick={regenerateVariations}
+                disabled={generating}
+              >
+                {generating ? (
+                  <><Loader2 className="h-4 w-4 animate-spin mr-2" />재생성 중...</>
+                ) : (
+                  <><RotateCcw className="h-4 w-4 mr-2" />피드백 반영하여 재생성</>
+                )}
+              </Button>
+            )}
+            
             <div className="flex gap-2 items-end">
               <textarea
                 ref={textareaRef}
@@ -651,9 +723,16 @@ export default function VideoVariationPage() {
       <div className="w-80 flex flex-col gap-3 flex-shrink-0">
         <Card className="flex-shrink-0" style={{ height: '160px' }}>
           <CardHeader className="py-2 px-4 border-b">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <History className="h-4 w-4 text-orange-500" />히스토리
-              {history.length > 0 && <span className="text-xs bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded-full">{history.length}</span>}
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2">
+                <History className="h-4 w-4 text-orange-500" />히스토리
+                {history.length > 0 && <span className="text-xs bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded-full">{history.length}</span>}
+              </span>
+              {history.length > 0 && (
+                <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => setShowHistoryModal(true)}>
+                  <Maximize2 className="h-3 w-3 text-gray-400" />
+                </Button>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent className="p-2 overflow-y-auto" style={{ height: 'calc(160px - 44px)' }}>
@@ -747,6 +826,76 @@ export default function VideoVariationPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* 히스토리 확대 모달 */}
+      {showHistoryModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6" onClick={() => setShowHistoryModal(false)}>
+          <div className="bg-white rounded-xl w-[80vw] max-w-4xl h-[80vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="p-4 border-b flex items-center justify-between flex-shrink-0">
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                <History className="h-6 w-6 text-orange-500" />
+                히스토리
+                <span className="text-sm font-normal text-gray-500">({history.length}개)</span>
+              </h2>
+              <Button variant="ghost" size="sm" onClick={() => setShowHistoryModal(false)}>
+                <X className="h-5 w-5" />
+              </Button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              {history.length === 0 ? (
+                <div className="text-center text-gray-400 py-20">
+                  <History className="h-16 w-16 mx-auto mb-4 opacity-50" />
+                  <p className="text-lg">히스토리가 없습니다</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  {history.map(item => (
+                    <div
+                      key={item.id}
+                      className="border rounded-xl overflow-hidden hover:shadow-lg cursor-pointer transition-all group"
+                      onClick={() => { loadHistory(item); setShowHistoryModal(false) }}
+                    >
+                      <div className="bg-gradient-to-br from-purple-100 to-indigo-100 p-4">
+                        <FileText className="h-8 w-8 text-purple-500" />
+                      </div>
+                      <div className="p-3">
+                        <p className="font-medium text-sm truncate">{item.productName}</p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          {new Date(item.timestamp).toLocaleDateString()} · {item.variations.length}개 베리에이션
+                        </p>
+                        <p className="text-[10px] text-gray-400 mt-1 truncate">{item.originalScript}</p>
+                        <div className="flex gap-1 mt-2 flex-wrap">
+                          {item.variations.slice(0, 2).map((v, vi) => (
+                            <span key={vi} className="text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full truncate max-w-[120px]">
+                              {v.script.slice(0, 20)}...
+                            </span>
+                          ))}
+                          {item.variations.length > 2 && (
+                            <span className="text-[10px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
+                              +{item.variations.length - 2}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="px-3 pb-3">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="w-full text-red-500 hover:text-red-600 hover:bg-red-50"
+                          onClick={(e) => { e.stopPropagation(); deleteHistory(item.id) }}
+                        >
+                          <Trash2 className="h-3 w-3 mr-1" />
+                          삭제
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
