@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Plus, Folder, Search, Settings, Loader2, ChevronRight, Trash2, Edit2, Check, X, FileText, Calendar, Film, Palette } from 'lucide-react'
+import { Plus, Folder, Search, Settings, Loader2, ChevronRight, Trash2, Edit2, Check, X, FileText, Calendar, Film, Palette, GripVertical, RotateCcw, CheckCircle2, ArrowUp, ArrowDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent } from '@/components/ui/card'
@@ -14,9 +14,14 @@ import {
   createClient, 
   updateClient, 
   deleteClient,
+  updateClientOrder,
   getProjectPlans,
+  getDeletedProjectPlans,
   createProjectPlan,
   deleteProjectPlan,
+  restoreProjectPlan,
+  permanentDeleteProjectPlan,
+  updateProjectPlan,
   Client,
   ProjectPlan
 } from '@/lib/api/clients'
@@ -25,12 +30,6 @@ const CLIENT_COLORS = [
   '#EF4444', '#F97316', '#F59E0B', '#84CC16', '#22C55E', 
   '#14B8A6', '#06B6D4', '#3B82F6', '#6366F1', '#8B5CF6', '#EC4899'
 ]
-
-const STATUS_CONFIG = {
-  draft: { label: '초안', color: 'bg-gray-100 text-gray-600' },
-  in_progress: { label: '진행중', color: 'bg-orange-100 text-orange-600' },
-  completed: { label: '완료됨', color: 'bg-green-100 text-green-600' }
-}
 
 export default function ProjectPlansPage() {
   const router = useRouter()
@@ -46,13 +45,18 @@ export default function ProjectPlansPage() {
   const [plans, setPlans] = useState<ProjectPlan[]>([])
   const [plansLoading, setPlansLoading] = useState(false)
   
+  // 휴지통 모드
+  const [showTrash, setShowTrash] = useState(false)
+  const [deletedPlans, setDeletedPlans] = useState<ProjectPlan[]>([])
+  
   // 새 클라이언트 추가
   const [showAddForm, setShowAddForm] = useState(false)
   const [newClientName, setNewClientName] = useState('')
   const [newClientColor, setNewClientColor] = useState(CLIENT_COLORS[0])
   const [adding, setAdding] = useState(false)
   
-  // 클라이언트 편집
+  // 클라이언트 편집 모드
+  const [editMode, setEditMode] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
   const [editingColor, setEditingColor] = useState('')
@@ -101,11 +105,26 @@ export default function ProjectPlansPage() {
   async function handleSelectClient(client: Client) {
     setSelectedClient(client)
     setPlansLoading(true)
+    setShowTrash(false)
     try {
       const plansData = await getProjectPlans(client.id)
       setPlans(plansData)
     } catch (error) {
       console.error('기획안 로드 실패:', error)
+    } finally {
+      setPlansLoading(false)
+    }
+  }
+
+  async function loadDeletedPlans() {
+    if (!selectedClient) return
+    setPlansLoading(true)
+    try {
+      const deleted = await getDeletedProjectPlans(selectedClient.id)
+      setDeletedPlans(deleted)
+      setShowTrash(true)
+    } catch (error) {
+      console.error('휴지통 로드 실패:', error)
     } finally {
       setPlansLoading(false)
     }
@@ -118,8 +137,9 @@ export default function ProjectPlansPage() {
     try {
       await createClient({
         name: newClientName.trim(),
-        color: newClientColor
-      })
+        color: newClientColor,
+        sort_order: clients.length
+      } as any)
       setNewClientName('')
       setShowAddForm(false)
       loadClients()
@@ -167,6 +187,28 @@ export default function ProjectPlansPage() {
     }
   }
 
+  // 클라이언트 순서 변경
+  async function moveClient(index: number, direction: 'up' | 'down') {
+    const newClients = [...clients]
+    const targetIndex = direction === 'up' ? index - 1 : index + 1
+    
+    if (targetIndex < 0 || targetIndex >= clients.length) return
+    
+    // 위치 교환
+    [newClients[index], newClients[targetIndex]] = [newClients[targetIndex], newClients[index]]
+    
+    // sort_order 업데이트
+    const updates = newClients.map((c, i) => ({ id: c.id, sort_order: i }))
+    
+    setClients(newClients)
+    try {
+      await updateClientOrder(updates)
+    } catch (error) {
+      console.error('순서 변경 실패:', error)
+      loadClients() // 실패 시 원복
+    }
+  }
+
   async function handleAddPlan() {
     if (!newPlanTitle.trim() || !selectedClient) return
     
@@ -176,8 +218,9 @@ export default function ProjectPlansPage() {
         client_id: selectedClient.id,
         title: newPlanTitle.trim(),
         status: 'draft',
-        scene_count: 0
-      })
+        scene_count: 0,
+        is_completed: false
+      } as any)
       setNewPlanTitle('')
       setShowAddPlanModal(false)
       router.push(`/project-plans/${selectedClient.id}/${newPlan.id}`)
@@ -191,13 +234,59 @@ export default function ProjectPlansPage() {
 
   async function handleDeletePlan(id: string, e: React.MouseEvent) {
     e.stopPropagation()
-    if (!confirm('이 기획안을 삭제하시겠습니까?')) return
+    if (!confirm('이 기획안을 휴지통으로 이동하시겠습니까?')) return
     
     try {
       await deleteProjectPlan(id)
       setPlans(plans.filter(p => p.id !== id))
     } catch (error) {
       console.error('기획안 삭제 실패:', error)
+    }
+  }
+
+  async function handleRestorePlan(id: string, e: React.MouseEvent) {
+    e.stopPropagation()
+    try {
+      await restoreProjectPlan(id)
+      setDeletedPlans(deletedPlans.filter(p => p.id !== id))
+      // 복원된 기획안을 다시 로드
+      if (selectedClient) {
+        const plansData = await getProjectPlans(selectedClient.id)
+        setPlans(plansData)
+      }
+    } catch (error) {
+      console.error('복원 실패:', error)
+    }
+  }
+
+  async function handlePermanentDelete(id: string, e: React.MouseEvent) {
+    e.stopPropagation()
+    if (!confirm('이 기획안을 영구적으로 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.')) return
+    
+    try {
+      await permanentDeleteProjectPlan(id)
+      setDeletedPlans(deletedPlans.filter(p => p.id !== id))
+    } catch (error) {
+      console.error('영구 삭제 실패:', error)
+    }
+  }
+
+  // 완료 토글
+  async function toggleComplete(plan: ProjectPlan, e: React.MouseEvent) {
+    e.stopPropagation()
+    try {
+      const newStatus = !(plan as any).is_completed
+      await updateProjectPlan(plan.id, { 
+        is_completed: newStatus,
+        status: newStatus ? 'completed' : 'in_progress'
+      } as any)
+      setPlans(plans.map(p => 
+        p.id === plan.id 
+          ? { ...p, is_completed: newStatus, status: newStatus ? 'completed' : 'in_progress' } as ProjectPlan
+          : p
+      ))
+    } catch (error) {
+      console.error('상태 변경 실패:', error)
     }
   }
 
@@ -223,11 +312,21 @@ export default function ProjectPlansPage() {
               <Folder className="h-5 w-5 text-primary" />
               프로젝트 관리
             </h2>
-            {isAdmin && (
-              <Button size="sm" variant="ghost" onClick={() => router.push('/admin?tab=clients')}>
-                <Settings className="h-4 w-4" />
-              </Button>
-            )}
+            <div className="flex items-center gap-1">
+              {isAdmin && (
+                <>
+                  <Button 
+                    size="sm" 
+                    variant={editMode ? "default" : "ghost"} 
+                    onClick={() => setEditMode(!editMode)}
+                    className="h-8"
+                  >
+                    <Edit2 className="h-4 w-4" />
+                    {editMode && <span className="ml-1 text-xs">편집중</span>}
+                  </Button>
+                </>
+              )}
+            </div>
           </div>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
@@ -253,7 +352,7 @@ export default function ProjectPlansPage() {
               </p>
             </div>
           ) : (
-            filteredClients.map(client => (
+            filteredClients.map((client, index) => (
               <div
                 key={client.id}
                 className="group relative"
@@ -288,24 +387,48 @@ export default function ProjectPlansPage() {
                   </div>
                 ) : (
                   <div
-                    className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-all ${
+                    className={`flex items-center gap-2 p-3 rounded-lg cursor-pointer transition-all ${
                       selectedClient?.id === client.id 
                         ? 'bg-primary text-white shadow-md' 
                         : 'hover:bg-white hover:shadow-sm'
                     }`}
-                    onClick={() => handleSelectClient(client)}
+                    onClick={() => !editMode && handleSelectClient(client)}
                   >
+                    {/* 편집 모드에서 순서 변경 버튼 */}
+                    {editMode && isAdmin && (
+                      <div className="flex flex-col gap-0.5">
+                        <button
+                          className={`p-0.5 rounded hover:bg-gray-200 ${index === 0 ? 'opacity-30' : ''}`}
+                          onClick={(e) => { e.stopPropagation(); moveClient(index, 'up') }}
+                          disabled={index === 0}
+                        >
+                          <ArrowUp className="h-3 w-3 text-gray-500" />
+                        </button>
+                        <button
+                          className={`p-0.5 rounded hover:bg-gray-200 ${index === clients.length - 1 ? 'opacity-30' : ''}`}
+                          onClick={(e) => { e.stopPropagation(); moveClient(index, 'down') }}
+                          disabled={index === clients.length - 1}
+                        >
+                          <ArrowDown className="h-3 w-3 text-gray-500" />
+                        </button>
+                      </div>
+                    )}
+                    
                     <div 
                       className="w-3 h-3 rounded-full flex-shrink-0"
                       style={{ backgroundColor: selectedClient?.id === client.id ? 'white' : (client.color || '#3B82F6') }}
                     />
                     <span className="text-sm font-medium flex-1 truncate">{client.name}</span>
-                    <ChevronRight className={`h-4 w-4 transition-opacity ${
-                      selectedClient?.id === client.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                    }`} />
                     
-                    {isAdmin && selectedClient?.id !== client.id && (
-                      <div className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 flex gap-1">
+                    {!editMode && (
+                      <ChevronRight className={`h-4 w-4 transition-opacity ${
+                        selectedClient?.id === client.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                      }`} />
+                    )}
+                    
+                    {/* 편집 모드에서 수정/삭제 버튼 */}
+                    {editMode && isAdmin && (
+                      <div className="flex gap-1">
                         <Button
                           size="sm"
                           variant="ghost"
@@ -392,10 +515,22 @@ export default function ProjectPlansPage() {
                   <h2 className="text-2xl font-bold">{selectedClient.name}</h2>
                   <span className="text-sm text-gray-500">기획안 {plans.length}개</span>
                 </div>
-                <Button onClick={() => setShowAddPlanModal(true)}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  새 기획안
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button 
+                    variant={showTrash ? "default" : "outline"} 
+                    size="sm"
+                    onClick={() => showTrash ? handleSelectClient(selectedClient) : loadDeletedPlans()}
+                  >
+                    <Trash2 className="h-4 w-4 mr-1" />
+                    휴지통 {showTrash && deletedPlans.length > 0 && `(${deletedPlans.length})`}
+                  </Button>
+                  {!showTrash && (
+                    <Button onClick={() => setShowAddPlanModal(true)}>
+                      <Plus className="h-4 w-4 mr-2" />
+                      새 기획안
+                    </Button>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -405,6 +540,52 @@ export default function ProjectPlansPage() {
                 <div className="flex items-center justify-center h-full">
                   <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
                 </div>
+              ) : showTrash ? (
+                // 휴지통
+                deletedPlans.length === 0 ? (
+                  <div className="flex items-center justify-center h-full">
+                    <div className="text-center">
+                      <Trash2 className="h-16 w-16 mx-auto text-gray-300 mb-4" />
+                      <p className="text-gray-500">휴지통이 비어있습니다.</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                    {deletedPlans.map(plan => (
+                      <Card key={plan.id} className="opacity-60 hover:opacity-100 transition-opacity">
+                        <CardContent className="p-4">
+                          <div className="flex items-start justify-between mb-3">
+                            <Badge className="bg-red-100 text-red-600">삭제됨</Badge>
+                            <div className="flex gap-1">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 w-7 p-0"
+                                onClick={(e) => handleRestorePlan(plan.id, e)}
+                                title="복원"
+                              >
+                                <RotateCcw className="h-4 w-4 text-blue-500" />
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 w-7 p-0"
+                                onClick={(e) => handlePermanentDelete(plan.id, e)}
+                                title="영구 삭제"
+                              >
+                                <X className="h-4 w-4 text-red-500" />
+                              </Button>
+                            </div>
+                          </div>
+                          <h3 className="font-semibold text-lg mb-2 line-clamp-2">{plan.title}</h3>
+                          <p className="text-xs text-gray-400">
+                            삭제일: {plan.deleted_at ? new Date(plan.deleted_at).toLocaleDateString() : ''}
+                          </p>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                )
               ) : plans.length === 0 ? (
                 <div className="flex items-center justify-center h-full">
                   <div className="text-center">
@@ -419,19 +600,46 @@ export default function ProjectPlansPage() {
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                   {plans.map(plan => {
-                    const status = STATUS_CONFIG[plan.status]
+                    const isCompleted = (plan as any).is_completed
                     return (
                       <Card 
                         key={plan.id}
-                        className="cursor-pointer hover:shadow-lg transition-shadow group"
+                        className="cursor-pointer hover:shadow-lg transition-shadow group relative"
                         onClick={() => router.push(`/project-plans/${selectedClient.id}/${plan.id}`)}
                       >
                         <CardContent className="p-4">
+                          {/* 카드 미리보기 - 우상단 */}
+                          {(plan as any).card_preview && (
+                            <div className="absolute top-2 right-2 max-w-[120px]">
+                              <span className="text-xs text-gray-400 truncate block" title={(plan as any).card_preview}>
+                                {(plan as any).card_preview}
+                              </span>
+                            </div>
+                          )}
+                          
                           <div className="flex items-start justify-between mb-3">
-                            <Badge className={status.color}>
-                              {plan.status === 'completed' && <Check className="h-3 w-3 mr-1" />}
-                              {status.label}
-                            </Badge>
+                            {/* 완료 체크 버튼 */}
+                            <button
+                              className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium transition-colors ${
+                                isCompleted 
+                                  ? 'bg-green-100 text-green-700' 
+                                  : 'bg-amber-100 text-amber-700'
+                              }`}
+                              onClick={(e) => toggleComplete(plan, e)}
+                            >
+                              {isCompleted ? (
+                                <>
+                                  <CheckCircle2 className="h-3.5 w-3.5" />
+                                  완료됨
+                                </>
+                              ) : (
+                                <>
+                                  <Film className="h-3.5 w-3.5" />
+                                  제작 완료
+                                </>
+                              )}
+                            </button>
+                            
                             <Button
                               size="sm"
                               variant="ghost"
@@ -442,7 +650,7 @@ export default function ProjectPlansPage() {
                             </Button>
                           </div>
                           
-                          <h3 className="font-semibold text-lg mb-2 line-clamp-2">{plan.title}</h3>
+                          <h3 className="font-semibold text-lg mb-2 line-clamp-2 pr-8">{plan.title}</h3>
                           
                           <div className="flex items-center gap-4 text-sm text-gray-500">
                             <span className="flex items-center gap-1">

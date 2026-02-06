@@ -4,7 +4,6 @@ import { usePathname } from 'next/navigation'
 import { AuthProvider } from '@/lib/auth-context'
 import { AuthGuard } from '@/components/auth-guard'
 import { Sidebar } from '@/components/sidebar'
-import { PlanWriterFloat } from '@/components/plan-writer-float'
 
 export function LayoutWrapper({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
@@ -23,7 +22,6 @@ export function LayoutWrapper({ children }: { children: React.ReactNode }) {
             <main className="flex-1 overflow-auto bg-gray-50 p-8">
               {children}
             </main>
-            <PlanWriterFloat />
           </div>
         </AuthGuard>
       )}

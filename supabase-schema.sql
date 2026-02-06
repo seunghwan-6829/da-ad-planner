@@ -183,8 +183,11 @@ CREATE TABLE IF NOT EXISTS clients (
   name TEXT NOT NULL,
   description TEXT,
   color TEXT DEFAULT '#3B82F6',
+  sort_order INTEGER DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS sort_order INTEGER DEFAULT 0;
 
 ALTER TABLE clients ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Allow all operations on clients" ON clients;
@@ -225,6 +228,8 @@ ALTER TABLE project_plans ADD COLUMN IF NOT EXISTS row_heights JSONB;
 ALTER TABLE project_plans ADD COLUMN IF NOT EXISTS reference TEXT;
 ALTER TABLE project_plans ADD COLUMN IF NOT EXISTS cta_text TEXT;
 ALTER TABLE project_plans ADD COLUMN IF NOT EXISTS card_preview TEXT;
+ALTER TABLE project_plans ADD COLUMN IF NOT EXISTS is_completed BOOLEAN DEFAULT FALSE;
+ALTER TABLE project_plans ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 
 ALTER TABLE project_plans ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Allow all operations on project_plans" ON project_plans;

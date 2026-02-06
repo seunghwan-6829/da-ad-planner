@@ -5,6 +5,7 @@ export interface Client {
   name: string
   description: string | null
   color: string
+  sort_order: number
   created_at: string
 }
 
@@ -34,6 +35,8 @@ export interface ProjectPlan {
   reference: string | null
   cta_text: string | null
   card_preview: string | null
+  is_completed: boolean
+  deleted_at: string | null
   created_at: string
   updated_at: string
 }
@@ -64,10 +67,21 @@ export async function getClients(): Promise<Client[]> {
   const { data, error } = await supabase
     .from('clients')
     .select('*')
+    .order('sort_order', { ascending: true })
     .order('created_at', { ascending: false })
   
   if (error) throw error
   return data || []
+}
+
+// 클라이언트 순서 업데이트
+export async function updateClientOrder(clients: { id: string; sort_order: number }[]): Promise<void> {
+  for (const client of clients) {
+    await supabase
+      .from('clients')
+      .update({ sort_order: client.sort_order })
+      .eq('id', client.id)
+  }
 }
 
 export async function getClientsForUser(userId: string): Promise<Client[]> {
@@ -196,7 +210,21 @@ export async function getProjectPlans(clientId: string): Promise<ProjectPlan[]> 
     .from('project_plans')
     .select('*')
     .eq('client_id', clientId)
+    .is('deleted_at', null)
     .order('created_at', { ascending: false })
+  
+  if (error) throw error
+  return data || []
+}
+
+// 휴지통 기획안 조회
+export async function getDeletedProjectPlans(clientId: string): Promise<ProjectPlan[]> {
+  const { data, error } = await supabase
+    .from('project_plans')
+    .select('*')
+    .eq('client_id', clientId)
+    .not('deleted_at', 'is', null)
+    .order('deleted_at', { ascending: false })
   
   if (error) throw error
   return data || []
@@ -236,7 +264,28 @@ export async function updateProjectPlan(id: string, plan: Partial<ProjectPlan>):
   return data
 }
 
+// 기획안 휴지통으로 이동 (소프트 삭제)
 export async function deleteProjectPlan(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('project_plans')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('id', id)
+  
+  if (error) throw error
+}
+
+// 기획안 복원
+export async function restoreProjectPlan(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('project_plans')
+    .update({ deleted_at: null })
+    .eq('id', id)
+  
+  if (error) throw error
+}
+
+// 기획안 영구 삭제
+export async function permanentDeleteProjectPlan(id: string): Promise<void> {
   const { error } = await supabase
     .from('project_plans')
     .delete()
