@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Save, Loader2, Plus, X, Upload, Image as ImageIcon, Trash2, ChevronUp, ChevronDown, GripVertical } from 'lucide-react'
+import { ArrowLeft, Save, Loader2, Plus, X, Upload, Image as ImageIcon, Trash2, ChevronUp, ChevronDown, GripVertical, FileUp, File } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -23,6 +23,12 @@ import {
   RowHeights
 } from '@/lib/api/clients'
 
+interface SceneFile {
+  name: string
+  url: string
+  size: number
+}
+
 interface SceneData {
   id?: string
   scene_number: number
@@ -33,6 +39,7 @@ interface SceneData {
   special_notes: string
   script: string
   source_info: string
+  files: SceneFile[]
 }
 
 export default function PlanDetailPage() {
@@ -60,12 +67,11 @@ export default function PlanDetailPage() {
   // 행 높이 관리 (기본값 설정)
   const DEFAULT_ROW_HEIGHTS: RowHeights = {
     video: 180,
-    timeline: 50,
-    sources: 80,
+    timeline: 80,
     effect: 50,
     special_notes: 50,
     script: 120,
-    source_info: 80
+    source_info: 100
   }
   const [rowHeights, setRowHeights] = useState<RowHeights>(DEFAULT_ROW_HEIGHTS)
   const [resizing, setResizing] = useState<string | null>(null)
@@ -129,7 +135,8 @@ export default function PlanDetailPage() {
           effect: s.effect || '',
           special_notes: s.special_notes || '',
           script: s.script || '',
-          source_info: s.source_info || ''
+          source_info: s.source_info || '',
+          files: (s as any).files || []
         })))
       } else {
         // 기본 5개 씬 추가
@@ -158,7 +165,8 @@ export default function PlanDetailPage() {
       effect: '',
       special_notes: '',
       script: '',
-      source_info: ''
+      source_info: '',
+      files: []
     }
   }
 
@@ -294,6 +302,59 @@ export default function PlanDetailPage() {
     reader.readAsDataURL(file)
   }
 
+  // 파일 업로드 핸들러 (최대 3개, 5MB)
+  const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB
+  const MAX_FILES = 3
+
+  function handleFileUpload(sceneIndex: number, e: React.ChangeEvent<HTMLInputElement>) {
+    const fileList = e.target.files
+    if (!fileList) return
+
+    const currentFiles = scenes[sceneIndex].files
+    const remainingSlots = MAX_FILES - currentFiles.length
+
+    if (remainingSlots <= 0) {
+      alert(`최대 ${MAX_FILES}개의 파일만 업로드 가능합니다.`)
+      return
+    }
+
+    const filesToAdd: SceneFile[] = []
+    
+    for (let i = 0; i < Math.min(fileList.length, remainingSlots); i++) {
+      const file = fileList[i]
+      
+      if (file.size > MAX_FILE_SIZE) {
+        alert(`${file.name}: 파일 크기가 5MB를 초과합니다.`)
+        continue
+      }
+
+      const reader = new FileReader()
+      reader.onload = () => {
+        const newFile: SceneFile = {
+          name: file.name,
+          url: reader.result as string,
+          size: file.size
+        }
+        
+        const newScenes = [...scenes]
+        newScenes[sceneIndex].files = [...newScenes[sceneIndex].files, newFile]
+        setScenes(newScenes)
+      }
+      reader.readAsDataURL(file)
+    }
+    
+    // input 초기화
+    e.target.value = ''
+  }
+
+  function removeFile(sceneIndex: number, fileIndex: number) {
+    const newScenes = [...scenes]
+    newScenes[sceneIndex].files.splice(fileIndex, 1)
+    setScenes(newScenes)
+  }
+
+  const sourceFileInputRefs = useRef<{ [key: number]: HTMLInputElement | null }>({})
+
   async function handleSave() {
     if (!plan) return
     
@@ -357,9 +418,9 @@ export default function PlanDetailPage() {
 
   return (
     <div className={`h-full flex flex-col bg-white ${resizing ? 'select-none' : ''}`} style={resizing ? { cursor: 'row-resize' } : {}}>
-      {/* 상단 헤더 */}
-      <div className="flex items-center justify-between p-4 border-b">
-        <div className="flex items-center gap-4">
+      {/* 통합 상단 헤더 */}
+      <div className="flex items-center justify-between px-4 py-3 border-b bg-white">
+        <div className="flex items-center gap-4 flex-1">
           <Button variant="ghost" size="sm" onClick={handleGoBack}>
             <ArrowLeft className="h-4 w-4 mr-1" />
             돌아가기
@@ -367,58 +428,42 @@ export default function PlanDetailPage() {
           {client && (
             <span style={{ color: client.color || '#F97316' }} className="font-medium">{client.name}</span>
           )}
+          <div className="h-6 w-px bg-gray-200" />
+          <Input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="기획안 제목"
+            className="text-lg font-bold border-0 bg-transparent px-2 w-64 focus-visible:ring-0"
+          />
         </div>
-        <div className="flex items-center gap-2">
-          {hasUnsavedChanges && (
-            <span className="text-sm text-orange-500">저장되지 않은 변경사항이 있습니다</span>
-          )}
-          <Button onClick={handleSave} disabled={saving} className="bg-orange-500 hover:bg-orange-600">
-            {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
-            저장하기
-          </Button>
-        </div>
-      </div>
-
-      {/* 기획안 제목 & 메타 정보 */}
-      <div className="p-6 border-b">
-        <div className="flex gap-6">
-          <div className="flex-1">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <Input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="기획안 제목을 입력하세요"
-              className="text-2xl font-bold border-0 border-b rounded-none px-0 focus-visible:ring-0"
+              value={reference}
+              onChange={(e) => setReference(e.target.value)}
+              placeholder="레퍼런스..."
+              className="w-32 h-8 text-sm"
+            />
+            <Input
+              value={ctaText}
+              onChange={(e) => setCtaText(e.target.value)}
+              placeholder="CTA 문장..."
+              className="w-32 h-8 text-sm"
+            />
+            <Input
+              value={cardPreview}
+              onChange={(e) => setCardPreview(e.target.value)}
+              placeholder="카드 미리보기..."
+              className="w-36 h-8 text-sm"
             />
           </div>
-          <div className="flex gap-4">
-            <div>
-              <label className="text-sm text-gray-500 mb-1 block">레퍼런스</label>
-              <Input
-                value={reference}
-                onChange={(e) => setReference(e.target.value)}
-                placeholder="레퍼런스 입력..."
-                className="w-48"
-              />
-            </div>
-            <div>
-              <label className="text-sm text-gray-500 mb-1 block">CTA 문장</label>
-              <Input
-                value={ctaText}
-                onChange={(e) => setCtaText(e.target.value)}
-                placeholder="CTA 문장 입력..."
-                className="w-48"
-              />
-            </div>
-            <div>
-              <label className="text-sm text-gray-500 mb-1 block">카드 미리보기</label>
-              <Input
-                value={cardPreview}
-                onChange={(e) => setCardPreview(e.target.value)}
-                placeholder="카드에 표시될 설명..."
-                className="w-48"
-              />
-            </div>
-          </div>
+          {hasUnsavedChanges && (
+            <span className="text-xs text-orange-500 whitespace-nowrap">변경사항 있음</span>
+          )}
+          <Button onClick={handleSave} disabled={saving} size="sm" className="bg-orange-500 hover:bg-orange-600">
+            {saving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Save className="h-4 w-4 mr-1" />}
+            저장
+          </Button>
         </div>
       </div>
 
@@ -477,7 +522,7 @@ export default function PlanDetailPage() {
             <tbody>
               {/* 영상 (이미지) */}
               <tr style={{ height: rowHeights.video }}>
-                <td className="p-3 bg-orange-50 border-r font-medium text-sm text-gray-700 align-top">영상</td>
+                <td className="p-3 bg-orange-50 border-r font-medium text-sm text-gray-700 text-center align-middle">영상</td>
                 {scenes.map((scene, index) => (
                   <td key={index} className="p-2 border-r last:border-r-0 align-top overflow-hidden">
                     <div 
@@ -518,16 +563,17 @@ export default function PlanDetailPage() {
                 </td>
               </tr>
 
-              {/* 타임라인 */}
+              {/* 타임라인 - Textarea로 변경 */}
               <tr style={{ height: rowHeights.timeline }}>
-                <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700 align-middle">타임라인</td>
+                <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700 text-center align-middle">타임라인</td>
                 {scenes.map((scene, index) => (
-                  <td key={index} className="p-2 border-r last:border-r-0 align-middle">
-                    <Input
+                  <td key={index} className="p-2 border-r last:border-r-0 align-top">
+                    <Textarea
                       value={scene.timeline}
                       onChange={(e) => updateScene(index, 'timeline', e.target.value)}
-                      placeholder="타임라인..."
-                      className="text-sm"
+                      placeholder="타임라인... (Shift+Enter로 줄바꿈)"
+                      className="text-sm resize-none"
+                      style={{ height: rowHeights.timeline - 16 }}
                     />
                   </td>
                 ))}
@@ -546,52 +592,9 @@ export default function PlanDetailPage() {
                 </td>
               </tr>
 
-              {/* 소스 */}
-              <tr style={{ height: rowHeights.sources }}>
-                <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700 align-top">소스</td>
-                {scenes.map((scene, index) => (
-                  <td key={index} className="p-2 border-r last:border-r-0 align-top overflow-auto" style={{ maxHeight: rowHeights.sources - 8 }}>
-                    <div className="space-y-1">
-                      {scene.sources.map((source, sIndex) => (
-                        <div key={sIndex} className="flex gap-1">
-                          <Input
-                            value={source}
-                            onChange={(e) => updateSource(index, sIndex, e.target.value)}
-                            placeholder="소스..."
-                            className="text-sm h-8"
-                          />
-                          {scene.sources.length > 1 && (
-                            <Button size="sm" variant="ghost" className="px-2 h-8" onClick={() => removeSource(index, sIndex)}>
-                              <X className="h-3 w-3" />
-                            </Button>
-                          )}
-                        </div>
-                      ))}
-                      <Button size="sm" variant="ghost" className="w-full text-xs h-7" onClick={() => addSource(index)}>
-                        <Plus className="h-3 w-3 mr-1" />
-                        추가
-                      </Button>
-                    </div>
-                  </td>
-                ))}
-                <td></td>
-              </tr>
-              {/* 소스 리사이즈 핸들 */}
-              <tr>
-                <td colSpan={scenes.length + 2} className="p-0 h-1 relative">
-                  <div
-                    className="absolute inset-x-0 -top-1 h-3 cursor-row-resize hover:bg-blue-100 z-10 flex items-center justify-center group"
-                    onMouseDown={(e) => handleResizeStart('sources', e)}
-                  >
-                    <div className="w-16 h-1 bg-gray-200 rounded opacity-0 group-hover:opacity-100 group-hover:bg-blue-400 transition-opacity" />
-                  </div>
-                  <div className="border-b border-gray-200" />
-                </td>
-              </tr>
-
               {/* 효과 */}
               <tr style={{ height: rowHeights.effect }}>
-                <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700 align-middle">효과</td>
+                <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700 text-center align-middle">효과</td>
                 {scenes.map((scene, index) => (
                   <td key={index} className="p-2 border-r last:border-r-0 align-middle">
                     <Input
@@ -619,7 +622,7 @@ export default function PlanDetailPage() {
 
               {/* 특이사항 */}
               <tr style={{ height: rowHeights.special_notes }}>
-                <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700 align-middle">특이사항</td>
+                <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700 text-center align-middle">특이사항</td>
                 {scenes.map((scene, index) => (
                   <td key={index} className="p-2 border-r last:border-r-0 align-middle">
                     <Input
@@ -647,7 +650,7 @@ export default function PlanDetailPage() {
 
               {/* 대본 (나레이션) */}
               <tr style={{ height: rowHeights.script }}>
-                <td className="p-3 bg-orange-50 border-r font-medium text-sm text-gray-700 align-top">
+                <td className="p-3 bg-orange-50 border-r font-medium text-sm text-gray-700 text-center align-middle">
                   대본<br/><span className="text-xs text-gray-400">(나레이션)</span>
                 </td>
                 {scenes.map((scene, index) => (
@@ -676,18 +679,46 @@ export default function PlanDetailPage() {
                 </td>
               </tr>
 
-              {/* 소스 정보 */}
+              {/* 소스 파일 업로드 */}
               <tr style={{ height: rowHeights.source_info }}>
-                <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700 align-top">소스</td>
+                <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700 text-center align-middle">
+                  소스<br/><span className="text-xs text-gray-400">(파일)</span>
+                </td>
                 {scenes.map((scene, index) => (
                   <td key={index} className="p-2 border-r last:border-r-0 align-top">
-                    <Textarea
-                      value={scene.source_info}
-                      onChange={(e) => updateScene(index, 'source_info', e.target.value)}
-                      placeholder="소스 정보..."
-                      className="text-sm resize-none"
-                      style={{ height: rowHeights.source_info - 16 }}
-                    />
+                    <div className="space-y-1" style={{ height: rowHeights.source_info - 16, overflow: 'auto' }}>
+                      {/* 업로드된 파일 목록 */}
+                      {scene.files.map((file, fIndex) => (
+                        <div key={fIndex} className="flex items-center gap-1 p-1 bg-gray-50 rounded text-xs group">
+                          <File className="h-3 w-3 text-gray-400 flex-shrink-0" />
+                          <span className="truncate flex-1" title={file.name}>{file.name}</span>
+                          <span className="text-gray-400 flex-shrink-0">{(file.size / 1024 / 1024).toFixed(1)}MB</span>
+                          <button 
+                            className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-red-100 rounded"
+                            onClick={() => removeFile(index, fIndex)}
+                          >
+                            <X className="h-3 w-3 text-red-500" />
+                          </button>
+                        </div>
+                      ))}
+                      {/* 파일 업로드 버튼 */}
+                      {scene.files.length < MAX_FILES && (
+                        <button
+                          className="w-full flex items-center justify-center gap-1 p-2 border border-dashed border-gray-300 rounded hover:border-blue-400 hover:bg-blue-50 transition-colors"
+                          onClick={() => sourceFileInputRefs.current[index]?.click()}
+                        >
+                          <FileUp className="h-4 w-4 text-gray-400" />
+                          <span className="text-xs text-gray-500">파일 업로드 ({scene.files.length}/{MAX_FILES})</span>
+                        </button>
+                      )}
+                      <input
+                        type="file"
+                        multiple
+                        className="hidden"
+                        ref={el => { sourceFileInputRefs.current[index] = el }}
+                        onChange={(e) => handleFileUpload(index, e)}
+                      />
+                    </div>
                   </td>
                 ))}
                 <td></td>

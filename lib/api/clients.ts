@@ -18,7 +18,6 @@ export interface ClientPermission {
 export interface RowHeights {
   video: number
   timeline: number
-  sources: number
   effect: number
   special_notes: number
   script: number
