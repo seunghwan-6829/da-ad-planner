@@ -38,12 +38,12 @@ const SAVED_PROMPTS = [
   { label: '스타일 변경', prompt: '문장 스타일을 바꿔주세요' },
 ]
 
-// 진행률 단계 정의
+// 진행률 단계 정의 (최소 3번 대화 필요)
 const PROGRESS_STEPS = [
   { threshold: 0, label: '시작', description: '대본을 입력해주세요' },
-  { threshold: 25, label: '톤 설정', description: '톤앤매너 설정' },
-  { threshold: 50, label: '타겟 설정', description: '타겟 고객층 설정' },
-  { threshold: 75, label: '방향 설정', description: '베리에이션 방향 결정' },
+  { threshold: 10, label: '1단계', description: 'AI 질문에 답변해주세요 (1/3)' },
+  { threshold: 33, label: '2단계', description: '한 번 더 답변해주세요 (2/3)' },
+  { threshold: 66, label: '3단계', description: '마지막 답변을 해주세요 (3/3)' },
   { threshold: 100, label: '준비 완료', description: '생성 준비가 완료되었습니다!' },
 ]
 
@@ -72,17 +72,17 @@ export default function VideoVariationPage() {
   const chatEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  // 진행률 계산 (사용자 답변 수 기준)
+  // 진행률 계산 (사용자 답변 수 기준 - 최소 3번 대화 필요)
   const progress = useMemo(() => {
     if (!originalScript || messages.length === 0) return 0
     const userMessages = messages.filter(m => m.role === 'user').length
-    if (readyToGenerate) return 100
+    // 최소 3번의 답변이 있어야 100%
     if (userMessages >= 3) return 100
-    if (userMessages === 2) return 75
-    if (userMessages === 1) return 50
-    if (messages.length > 0) return 25 // AI 첫 질문
+    if (userMessages === 2) return 66
+    if (userMessages === 1) return 33
+    if (messages.length > 0) return 10 // AI 첫 질문만 있음
     return 0
-  }, [messages, originalScript, readyToGenerate])
+  }, [messages, originalScript])
 
   // 현재 단계 찾기
   const currentStep = useMemo(() => {

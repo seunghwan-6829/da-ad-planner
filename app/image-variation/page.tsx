@@ -40,12 +40,12 @@ const SAVED_PROMPTS = [
   { label: '스타일 변경', prompt: '카피 스타일을 바꾸고 싶어요' },
 ]
 
-// 진행률 단계 정의
+// 진행률 단계 정의 (최소 3번 대화 필요)
 const PROGRESS_STEPS = [
   { threshold: 0, label: '시작', description: '이미지를 업로드해주세요' },
-  { threshold: 25, label: '제품 정보', description: '제품/서비스 정보 입력' },
-  { threshold: 50, label: '타겟 설정', description: '타겟 고객층 설정' },
-  { threshold: 75, label: '방향 설정', description: '베리에이션 방향 결정' },
+  { threshold: 10, label: '1단계', description: 'AI 질문에 답변해주세요 (1/3)' },
+  { threshold: 33, label: '2단계', description: '한 번 더 답변해주세요 (2/3)' },
+  { threshold: 66, label: '3단계', description: '마지막 답변을 해주세요 (3/3)' },
   { threshold: 100, label: '준비 완료', description: '생성 준비가 완료되었습니다!' },
 ]
 
@@ -71,21 +71,25 @@ export default function ImageVariationPage() {
   const [bpCategory, setBpCategory] = useState('전체')
   const [bpLoading, setBpLoading] = useState(false)
   
+  // 스트리밍 관련
+  const [streamingTexts, setStreamingTexts] = useState<string[]>(['', '', ''])
+  const [completedBatches, setCompletedBatches] = useState<Set<number>>(new Set())
+  
   const chatEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  // 진행률 계산 (사용자 답변 수 기준)
+  // 진행률 계산 (사용자 답변 수 기준 - 최소 3번 대화 필요)
   const progress = useMemo(() => {
     if (!analysis) return 0
     const userMessages = messages.filter(m => m.role === 'user').length
-    if (readyToGenerate) return 100
+    // 최소 3번의 답변이 있어야 100%
     if (userMessages >= 3) return 100
-    if (userMessages === 2) return 75
-    if (userMessages === 1) return 50
-    if (messages.length > 0) return 25 // AI 첫 질문
+    if (userMessages === 2) return 66
+    if (userMessages === 1) return 33
+    if (messages.length > 0) return 10 // AI 첫 질문만 있음
     return 0
-  }, [messages, analysis, readyToGenerate])
+  }, [messages, analysis])
 
   // 현재 단계 찾기
   const currentStep = useMemo(() => {
@@ -163,6 +167,8 @@ export default function ImageVariationPage() {
     setVariations([])
     setReadyToGenerate(false)
     setSelectedOptions(new Set())
+    setStreamingTexts(['', '', ''])
+    setCompletedBatches(new Set())
   }
 
   // 실시간 스트리밍 분석
@@ -305,40 +311,98 @@ export default function ImageVariationPage() {
     }
   }
 
+  // 스트리밍 API 호출 (배치별)
+  async function fetchBatchStream(batchIndex: number): Promise<string> {
+    const res = await fetch('/api/ai/image-chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        imageAnalysis: analysis,
+        messages,
+        userMessage: '',
+        generateFinal: true,
+        batchIndex
+      }),
+    })
+
+    if (!res.ok) throw new Error('API 오류')
+
+    const reader = res.body?.getReader()
+    if (!reader) throw new Error('스트림 불가')
+
+    const decoder = new TextDecoder()
+    let fullText = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      const chunk = decoder.decode(value, { stream: true })
+      const lines = chunk.split('\n')
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6))
+            if (data.text) {
+              fullText += data.text
+              setStreamingTexts(prev => {
+                const next = [...prev]
+                next[batchIndex] = fullText
+                return next
+              })
+            }
+            if (data.done) {
+              setCompletedBatches(prev => new Set([...prev, batchIndex]))
+            }
+          } catch { /* ignore */ }
+        }
+      }
+    }
+    return fullText
+  }
+
   async function generateVariations() {
     if (!analysis || !image) return
     setGenerating(true)
+    setVariations([])
+    setStreamingTexts(['', '', ''])
+    setCompletedBatches(new Set())
+
     try {
-      const res = await fetch('/api/ai/image-chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          imageAnalysis: analysis,
-          messages: messages,
-          userMessage: '',
-          generateFinal: true,
-        }),
+      // 3개 배치 병렬 호출 (각 2개씩 = 총 6개)
+      const batchResults = await Promise.all([
+        fetchBatchStream(0),
+        fetchBatchStream(1),
+        fetchBatchStream(2)
+      ])
+
+      // 결과 파싱 및 병합
+      const allVariations: Variation[] = []
+      batchResults.forEach((text) => {
+        const parsed = parseVariations(text)
+        allVariations.push(...parsed)
       })
-      if (!res.ok) throw new Error('생성 실패')
-      const data = await res.json()
-      const parsed = parseVariations(data.reply)
-      setVariations(parsed)
+
+      setVariations(allVariations)
       
       // 히스토리 저장 (대화 포함)
-      const historyItem: HistoryItem = {
-        id: Date.now().toString(),
-        timestamp: new Date(),
-        imagePreview: image,
-        title: messages.find(m => m.role === 'user')?.content.slice(0, 30) || '베리에이션',
-        variations: parsed,
-        messages: messages,
-        analysis: analysis
+      if (allVariations.length > 0) {
+        const historyItem: HistoryItem = {
+          id: Date.now().toString(),
+          timestamp: new Date(),
+          imagePreview: image,
+          title: messages.find(m => m.role === 'user')?.content.slice(0, 30) || '베리에이션',
+          variations: allVariations,
+          messages: messages,
+          analysis: analysis
+        }
+        saveHistory([historyItem, ...history].slice(0, 20))
       }
-      saveHistory([historyItem, ...history].slice(0, 20))
       
       setMessages(prev => [...prev, {
         role: 'assistant',
-        content: `✨ ${parsed.length}개의 베리에이션 완료!\n오른쪽에서 결과를 확인하세요.`
+        content: `✨ ${allVariations.length}개의 베리에이션 완료!\n오른쪽에서 결과를 확인하세요.`
       }])
     } catch (error) {
       console.error('생성 실패:', error)
@@ -697,7 +761,53 @@ export default function ImageVariationPage() {
           </CardHeader>
           
           <CardContent className="flex-1 overflow-y-auto p-3">
-            {variations.length === 0 ? (
+            {generating ? (
+              // 실시간 스트리밍 표시
+              <div className="space-y-2">
+                {[0, 1, 2].map(batchIndex => {
+                  const text = streamingTexts[batchIndex]
+                  const isComplete = completedBatches.has(batchIndex)
+                  const parsed = text ? parseVariations(text) : []
+                  
+                  return parsed.length > 0 ? (
+                    parsed.map((v, i) => (
+                      <div 
+                        key={`${batchIndex}-${i}`}
+                        className={`bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg p-3 border ${
+                          isComplete ? 'border-purple-100' : 'border-purple-300 animate-pulse'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-[10px] font-bold text-purple-600 bg-purple-100 px-1.5 py-0.5 rounded">#{batchIndex * 2 + i + 1}</span>
+                          {!isComplete && <Loader2 className="h-3 w-3 animate-spin text-purple-500" />}
+                        </div>
+                        <p className="font-bold text-gray-800 text-sm mb-0.5">
+                          {v.mainCopy}
+                          {!isComplete && !v.mainCopy && <span className="animate-pulse">▊</span>}
+                        </p>
+                        <p className="text-gray-600 text-xs">{v.subCopy}</p>
+                        {v.changePoint && (
+                          <p className="text-[10px] text-purple-600 border-t border-purple-100 pt-1.5 mt-2">💡 {v.changePoint}</p>
+                        )}
+                      </div>
+                    ))
+                  ) : text ? (
+                    <div key={batchIndex} className="bg-purple-50 rounded-lg p-3 border border-purple-200 animate-pulse">
+                      <div className="flex items-center gap-2">
+                        <Loader2 className="h-3 w-3 animate-spin text-purple-500" />
+                        <span className="text-xs text-purple-600">배치 {batchIndex + 1} 생성 중...</span>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-2 whitespace-pre-wrap line-clamp-3">{text.slice(-100)}</p>
+                    </div>
+                  ) : (
+                    <div key={batchIndex} className="bg-gray-100 rounded-lg p-3 border border-gray-200 flex items-center gap-2">
+                      <Loader2 className="h-3 w-3 animate-spin text-gray-400" />
+                      <span className="text-xs text-gray-500">배치 {batchIndex + 1} 대기 중...</span>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : variations.length === 0 ? (
               <div className="text-center text-gray-400 py-12">
                 <RefreshCw className="h-10 w-10 mx-auto mb-3 opacity-50" />
                 <p className="text-xs">대화 후 생성하면</p>

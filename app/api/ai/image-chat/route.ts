@@ -19,12 +19,14 @@ export async function POST(request: NextRequest) {
     imageAnalysis, 
     messages, 
     userMessage,
-    generateFinal 
+    generateFinal,
+    batchIndex
   } = body as { 
     imageAnalysis: string
     messages: Message[]
     userMessage: string
     generateFinal?: boolean
+    batchIndex?: number
   }
 
   // 시스템 프롬프트
@@ -65,12 +67,25 @@ D. 직접적이고 강렬한 톤"
 응답은 친절하게 해주세요. 이모지를 적절히 사용해도 좋습니다.
 선택지 형식을 반드시 지켜주세요 (클릭 버튼으로 변환됩니다).`
 
-  // 최종 생성 요청인 경우
+  // 최종 생성 요청인 경우 (스트리밍 + 배치)
   if (generateFinal) {
-    const finalPrompt = `지금까지의 대화를 바탕으로, 광고 카피 베리에이션을 6개 생성해주세요.
+    const batch = batchIndex ?? 0
+    const startNum = batch * 2 + 1
+    const variationStyles = [
+      ['친근하고 유머러스한 톤으로', '진지하고 신뢰감 있는 톤으로'],
+      ['질문형 문장으로 호기심 유발', '명령형/감탄형으로 강렬하게'],
+      ['소구점을 직접적으로 강조', '감성적 스토리텔링으로']
+    ]
+    const styles = variationStyles[batch] || variationStyles[0]
 
-[대화 히스토리]
-${messages.map(m => `${m.role === 'user' ? '사용자' : 'AI'}: ${m.content}`).join('\n')}
+    const finalPrompt = `지금까지의 대화를 바탕으로, 광고 카피 베리에이션을 2개 생성해주세요.
+
+[대화에서 정한 방향]
+${messages.filter(m => m.role === 'user').map(m => `- ${m.content}`).join('\n')}
+
+[이번 베리에이션 스타일]
+- 베리에이션 ${startNum}: ${styles[0]}
+- 베리에이션 ${startNum + 1}: ${styles[1]}
 
 [생성 규칙]
 1. 원본 광고의 핵심 메시지는 유지
@@ -79,54 +94,99 @@ ${messages.map(m => `${m.role === 'user' ? '사용자' : 'AI'}: ${m.content}`).j
 4. 광고 심의에 걸리지 않는 표현 사용
 
 [출력 형식]
-각 베리에이션은 다음 형식으로:
 ---
-[베리에이션 N]
+[베리에이션 ${startNum}]
 메인 카피: (15자 이내 강렬한 헤드라인)
 서브 카피: (메인을 보완하는 설명)
-변경 포인트: (원본 대비 무엇을 변경했는지 간단 설명)
+변경 포인트: ${styles[0]} - 구체적으로 어떻게 바꿨는지
+
+---
+[베리에이션 ${startNum + 1}]
+메인 카피: (15자 이내 강렬한 헤드라인)
+서브 카피: (메인을 보완하는 설명)
+변경 포인트: ${styles[1]} - 구체적으로 어떻게 바꿨는지
+
 ---
 
-총 6개를 생성해주세요.`
+딱 2개만 생성해주세요.`
 
-    try {
-      const res = await fetch(ANTHROPIC_BASE, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
-          model: MODEL,
-          max_tokens: 4096,
-          system: systemPrompt,
-          messages: [
-            ...messages.map(m => ({
-              role: m.role,
-              content: m.content
-            })),
-            { role: 'user', content: finalPrompt }
-          ],
-        }),
-      })
+    // 스트리밍 응답
+    const encoder = new TextEncoder()
+    const stream = new ReadableStream({
+      async start(controller) {
+        try {
+          const res = await fetch(ANTHROPIC_BASE, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': apiKey,
+              'anthropic-version': '2023-06-01',
+            },
+            body: JSON.stringify({
+              model: MODEL,
+              max_tokens: 2000,
+              stream: true,
+              system: systemPrompt,
+              messages: [
+                ...messages.map(m => ({ role: m.role, content: m.content })),
+                { role: 'user', content: finalPrompt }
+              ],
+            }),
+          })
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        return NextResponse.json({ error: err.error?.message ?? 'API 오류' }, { status: 500 })
+          if (!res.ok) {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: 'API 오류' })}\n\n`))
+            controller.close()
+            return
+          }
+
+          const reader = res.body?.getReader()
+          if (!reader) {
+            controller.close()
+            return
+          }
+
+          const decoder = new TextDecoder()
+          let buffer = ''
+
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+
+            buffer += decoder.decode(value, { stream: true })
+            const lines = buffer.split('\n')
+            buffer = lines.pop() || ''
+
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                const jsonStr = line.slice(6)
+                if (jsonStr === '[DONE]') continue
+                try {
+                  const parsed = JSON.parse(jsonStr)
+                  if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
+                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text: parsed.delta.text, batch })}\n\n`))
+                  }
+                } catch { /* ignore */ }
+              }
+            }
+          }
+
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true, batch })}\n\n`))
+          controller.close()
+        } catch (error) {
+          console.error('Stream error:', error)
+          controller.close()
+        }
       }
+    })
 
-      const data = await res.json()
-      const reply = data.content?.[0]?.text || ''
-      
-      return NextResponse.json({ 
-        reply, 
-        isComplete: true 
-      })
-    } catch (error) {
-      console.error('Chat error:', error)
-      return NextResponse.json({ error: '생성 실패' }, { status: 500 })
-    }
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      },
+    })
   }
 
   // 일반 대화
