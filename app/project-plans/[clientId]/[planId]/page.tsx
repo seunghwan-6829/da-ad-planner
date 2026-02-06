@@ -469,7 +469,7 @@ export default function PlanDetailPage() {
             </thead>
             <tbody>
               {/* 영상 (이미지) */}
-              <tr className="border-b relative" style={{ height: rowHeights.video }}>
+              <tr style={{ height: rowHeights.video }}>
                 <td className="p-3 bg-orange-50 border-r font-medium text-sm text-gray-700 align-top">영상</td>
                 {scenes.map((scene, index) => (
                   <td key={index} className="p-2 border-r last:border-r-0 align-top overflow-hidden">
@@ -496,18 +496,23 @@ export default function PlanDetailPage() {
                     />
                   </td>
                 ))}
-                <td className="relative">
+                <td></td>
+              </tr>
+              {/* 영상 리사이즈 핸들 */}
+              <tr>
+                <td colSpan={scenes.length + 2} className="p-0 h-1 relative">
                   <div
-                    className="absolute bottom-0 left-0 right-0 h-2 cursor-row-resize hover:bg-blue-200 bg-transparent group flex items-center justify-center"
+                    className="absolute inset-x-0 -top-1 h-3 cursor-row-resize hover:bg-blue-100 z-10 flex items-center justify-center group"
                     onMouseDown={(e) => handleResizeStart('video', e)}
                   >
-                    <div className="w-8 h-1 bg-gray-300 rounded group-hover:bg-blue-400" />
+                    <div className="w-16 h-1 bg-gray-200 rounded opacity-0 group-hover:opacity-100 group-hover:bg-blue-400 transition-opacity" />
                   </div>
+                  <div className="border-b border-gray-200" />
                 </td>
               </tr>
 
               {/* 타임라인 */}
-              <tr className="border-b relative" style={{ height: rowHeights.timeline }}>
+              <tr style={{ height: rowHeights.timeline }}>
                 <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700 align-middle">타임라인</td>
                 {scenes.map((scene, index) => (
                   <td key={index} className="p-2 border-r last:border-r-0 align-middle">
@@ -519,18 +524,23 @@ export default function PlanDetailPage() {
                     />
                   </td>
                 ))}
-                <td className="relative">
+                <td></td>
+              </tr>
+              {/* 타임라인 리사이즈 핸들 */}
+              <tr>
+                <td colSpan={scenes.length + 2} className="p-0 h-1 relative">
                   <div
-                    className="absolute bottom-0 left-0 right-0 h-2 cursor-row-resize hover:bg-blue-200 bg-transparent group flex items-center justify-center"
+                    className="absolute inset-x-0 -top-1 h-3 cursor-row-resize hover:bg-blue-100 z-10 flex items-center justify-center group"
                     onMouseDown={(e) => handleResizeStart('timeline', e)}
                   >
-                    <div className="w-8 h-1 bg-gray-300 rounded group-hover:bg-blue-400" />
+                    <div className="w-16 h-1 bg-gray-200 rounded opacity-0 group-hover:opacity-100 group-hover:bg-blue-400 transition-opacity" />
                   </div>
+                  <div className="border-b border-gray-200" />
                 </td>
               </tr>
 
               {/* 소스 */}
-              <tr className="border-b relative" style={{ height: rowHeights.sources }}>
+              <tr style={{ height: rowHeights.sources }}>
                 <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700 align-top">소스</td>
                 {scenes.map((scene, index) => (
                   <td key={index} className="p-2 border-r last:border-r-0 align-top overflow-auto" style={{ maxHeight: rowHeights.sources - 8 }}>
@@ -557,18 +567,23 @@ export default function PlanDetailPage() {
                     </div>
                   </td>
                 ))}
-                <td className="relative">
+                <td></td>
+              </tr>
+              {/* 소스 리사이즈 핸들 */}
+              <tr>
+                <td colSpan={scenes.length + 2} className="p-0 h-1 relative">
                   <div
-                    className="absolute bottom-0 left-0 right-0 h-2 cursor-row-resize hover:bg-blue-200 bg-transparent group flex items-center justify-center"
+                    className="absolute inset-x-0 -top-1 h-3 cursor-row-resize hover:bg-blue-100 z-10 flex items-center justify-center group"
                     onMouseDown={(e) => handleResizeStart('sources', e)}
                   >
-                    <div className="w-8 h-1 bg-gray-300 rounded group-hover:bg-blue-400" />
+                    <div className="w-16 h-1 bg-gray-200 rounded opacity-0 group-hover:opacity-100 group-hover:bg-blue-400 transition-opacity" />
                   </div>
+                  <div className="border-b border-gray-200" />
                 </td>
               </tr>
 
               {/* 효과 */}
-              <tr className="border-b relative" style={{ height: rowHeights.effect }}>
+              <tr style={{ height: rowHeights.effect }}>
                 <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700 align-middle">효과</td>
                 {scenes.map((scene, index) => (
                   <td key={index} className="p-2 border-r last:border-r-0 align-middle">
@@ -580,18 +595,23 @@ export default function PlanDetailPage() {
                     />
                   </td>
                 ))}
-                <td className="relative">
+                <td></td>
+              </tr>
+              {/* 효과 리사이즈 핸들 */}
+              <tr>
+                <td colSpan={scenes.length + 2} className="p-0 h-1 relative">
                   <div
-                    className="absolute bottom-0 left-0 right-0 h-2 cursor-row-resize hover:bg-blue-200 bg-transparent group flex items-center justify-center"
+                    className="absolute inset-x-0 -top-1 h-3 cursor-row-resize hover:bg-blue-100 z-10 flex items-center justify-center group"
                     onMouseDown={(e) => handleResizeStart('effect', e)}
                   >
-                    <div className="w-8 h-1 bg-gray-300 rounded group-hover:bg-blue-400" />
+                    <div className="w-16 h-1 bg-gray-200 rounded opacity-0 group-hover:opacity-100 group-hover:bg-blue-400 transition-opacity" />
                   </div>
+                  <div className="border-b border-gray-200" />
                 </td>
               </tr>
 
               {/* 특이사항 */}
-              <tr className="border-b relative" style={{ height: rowHeights.special_notes }}>
+              <tr style={{ height: rowHeights.special_notes }}>
                 <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700 align-middle">특이사항</td>
                 {scenes.map((scene, index) => (
                   <td key={index} className="p-2 border-r last:border-r-0 align-middle">
@@ -603,18 +623,23 @@ export default function PlanDetailPage() {
                     />
                   </td>
                 ))}
-                <td className="relative">
+                <td></td>
+              </tr>
+              {/* 특이사항 리사이즈 핸들 */}
+              <tr>
+                <td colSpan={scenes.length + 2} className="p-0 h-1 relative">
                   <div
-                    className="absolute bottom-0 left-0 right-0 h-2 cursor-row-resize hover:bg-blue-200 bg-transparent group flex items-center justify-center"
+                    className="absolute inset-x-0 -top-1 h-3 cursor-row-resize hover:bg-blue-100 z-10 flex items-center justify-center group"
                     onMouseDown={(e) => handleResizeStart('special_notes', e)}
                   >
-                    <div className="w-8 h-1 bg-gray-300 rounded group-hover:bg-blue-400" />
+                    <div className="w-16 h-1 bg-gray-200 rounded opacity-0 group-hover:opacity-100 group-hover:bg-blue-400 transition-opacity" />
                   </div>
+                  <div className="border-b border-gray-200" />
                 </td>
               </tr>
 
               {/* 대본 (나레이션) */}
-              <tr className="border-b relative" style={{ height: rowHeights.script }}>
+              <tr style={{ height: rowHeights.script }}>
                 <td className="p-3 bg-orange-50 border-r font-medium text-sm text-gray-700 align-top">
                   대본<br/><span className="text-xs text-gray-400">(나레이션)</span>
                 </td>
@@ -629,18 +654,23 @@ export default function PlanDetailPage() {
                     />
                   </td>
                 ))}
-                <td className="relative">
+                <td></td>
+              </tr>
+              {/* 대본 리사이즈 핸들 */}
+              <tr>
+                <td colSpan={scenes.length + 2} className="p-0 h-1 relative">
                   <div
-                    className="absolute bottom-0 left-0 right-0 h-2 cursor-row-resize hover:bg-blue-200 bg-transparent group flex items-center justify-center"
+                    className="absolute inset-x-0 -top-1 h-3 cursor-row-resize hover:bg-blue-100 z-10 flex items-center justify-center group"
                     onMouseDown={(e) => handleResizeStart('script', e)}
                   >
-                    <div className="w-8 h-1 bg-gray-300 rounded group-hover:bg-blue-400" />
+                    <div className="w-16 h-1 bg-gray-200 rounded opacity-0 group-hover:opacity-100 group-hover:bg-blue-400 transition-opacity" />
                   </div>
+                  <div className="border-b border-gray-200" />
                 </td>
               </tr>
 
               {/* 소스 정보 */}
-              <tr className="relative" style={{ height: rowHeights.source_info }}>
+              <tr style={{ height: rowHeights.source_info }}>
                 <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700 align-top">소스</td>
                 {scenes.map((scene, index) => (
                   <td key={index} className="p-2 border-r last:border-r-0 align-top">
@@ -653,14 +683,7 @@ export default function PlanDetailPage() {
                     />
                   </td>
                 ))}
-                <td className="relative">
-                  <div
-                    className="absolute bottom-0 left-0 right-0 h-2 cursor-row-resize hover:bg-blue-200 bg-transparent group flex items-center justify-center"
-                    onMouseDown={(e) => handleResizeStart('source_info', e)}
-                  >
-                    <div className="w-8 h-1 bg-gray-300 rounded group-hover:bg-blue-400" />
-                  </div>
-                </td>
+                <td></td>
               </tr>
             </tbody>
           </table>
