@@ -369,14 +369,24 @@ export default function PlanDetailPage() {
     setSaving(true)
     try {
       // 기획안 정보 업데이트 (행 높이, reference, cta_text, card_preview 포함)
-      await updateProjectPlan(planId, {
-        title,
-        scene_count: scenes.length,
-        row_heights: rowHeights,
-        reference: reference || null,
-        cta_text: ctaText || null,
-        card_preview: cardPreview || null
-      } as any)
+      try {
+        await updateProjectPlan(planId, {
+          title,
+          scene_count: scenes.length,
+          row_heights: rowHeights,
+          reference: reference || null,
+          cta_text: ctaText || null,
+          card_preview: cardPreview || null
+        } as any)
+      } catch (planError: any) {
+        console.error('기획안 정보 업데이트 실패:', planError)
+        // 새 컬럼이 없을 수 있으므로 기본 필드만 저장 시도
+        await updateProjectPlan(planId, {
+          title,
+          scene_count: scenes.length,
+          row_heights: rowHeights
+        } as any)
+      }
       
       // 기존 씬 삭제 후 새로 생성 (간단한 구현)
       const existingScenes = await getPlanScenes(planId)
@@ -386,7 +396,7 @@ export default function PlanDetailPage() {
       
       // 새 씬 생성 (files 포함)
       for (const scene of scenes) {
-        await createPlanScene({
+        const sceneData: any = {
           plan_id: planId,
           scene_number: scene.scene_number,
           image_url: scene.image_url || null,
@@ -395,18 +405,25 @@ export default function PlanDetailPage() {
           effect: scene.effect || null,
           special_notes: scene.special_notes || null,
           script: scene.script || null,
-          source_info: scene.source_info || null,
-          files: scene.files && scene.files.length > 0 ? scene.files.filter(f => f && f.name && f.url) : null
-        } as any)
+          source_info: scene.source_info || null
+        }
+        
+        // files가 있으면 추가
+        const validFiles = scene.files?.filter(f => f && f.name && f.url) || []
+        if (validFiles.length > 0) {
+          sceneData.files = validFiles
+        }
+        
+        await createPlanScene(sceneData)
       }
       
       await updateSceneCount(planId)
       
       setHasUnsavedChanges(false)
       alert('저장되었습니다!')
-    } catch (error) {
+    } catch (error: any) {
       console.error('저장 실패:', error)
-      alert('저장에 실패했습니다.')
+      alert(`저장에 실패했습니다: ${error?.message || '알 수 없는 오류'}`)
     } finally {
       setSaving(false)
     }
