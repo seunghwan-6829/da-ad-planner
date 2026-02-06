@@ -21,11 +21,14 @@ import { cn } from '@/lib/utils'
 import { useAuth } from '@/lib/auth-context'
 import { Button } from '@/components/ui/button'
 
+import { Image as ImageIcon } from 'lucide-react'
+
 const navigation = [
   { name: '대시보드', href: '/', icon: LayoutDashboard },
   { name: '광고 기획서', href: '/plans', icon: FileText },
   { name: '광고주 관리', href: '/advertisers', icon: Users },
   { name: 'BP소재', href: '/templates', icon: FileCode },
+  { name: '이미지 베리에이션', href: '/image-variation', icon: ImageIcon },
   { name: 'AI 학습', href: '/ai-test', icon: BookOpen },
   { name: 'AI 베리에이션', href: '/ai-variation', icon: Video },
 ]
