@@ -31,8 +31,17 @@ export interface ProjectPlan {
   status: 'draft' | 'in_progress' | 'completed'
   scene_count: number
   row_heights: RowHeights | null
+  reference: string | null
+  cta_text: string | null
+  card_preview: string | null
   created_at: string
   updated_at: string
+}
+
+export interface SceneFile {
+  name: string
+  url: string
+  size: number
 }
 
 export interface PlanScene {
@@ -46,6 +55,7 @@ export interface PlanScene {
   special_notes: string | null
   script: string | null
   source_info: string | null
+  files: SceneFile[] | null
   created_at: string
 }
 

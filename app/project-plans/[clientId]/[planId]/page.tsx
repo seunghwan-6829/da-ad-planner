@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Save, Loader2, Plus, X, Upload, Image as ImageIcon, Trash2, ChevronUp, ChevronDown, GripVertical, FileUp, File } from 'lucide-react'
+import { ArrowLeft, Save, Loader2, Plus, X, Upload, Image as ImageIcon, Trash2, ChevronUp, ChevronDown, GripVertical, FileUp, File, Download } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -71,7 +71,7 @@ export default function PlanDetailPage() {
     effect: 50,
     special_notes: 50,
     script: 120,
-    source_info: 100
+    source_info: 140
   }
   const [rowHeights, setRowHeights] = useState<RowHeights>(DEFAULT_ROW_HEIGHTS)
   const [resizing, setResizing] = useState<string | null>(null)
@@ -123,6 +123,10 @@ export default function PlanDetailPage() {
         if (planData.row_heights) {
           setRowHeights({ ...DEFAULT_ROW_HEIGHTS, ...planData.row_heights })
         }
+        // reference, cta_text, card_preview 로드
+        setReference((planData as any).reference || '')
+        setCtaText((planData as any).cta_text || '')
+        setCardPreview((planData as any).card_preview || '')
       }
       
       if (scenesData.length > 0) {
@@ -344,6 +348,18 @@ export default function PlanDetailPage() {
     setScenes(newScenes)
   }
 
+  // 파일 다운로드
+  function downloadFile(file: SceneFile) {
+    if (!file.url || !file.name) return
+    
+    const link = document.createElement('a')
+    link.href = file.url
+    link.download = file.name
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
   // 각 씬의 각 슬롯에 대한 ref
   const sourceFileInputRefs = useRef<{ [key: string]: HTMLInputElement | null }>({})
 
@@ -352,11 +368,14 @@ export default function PlanDetailPage() {
     
     setSaving(true)
     try {
-      // 기획안 정보 업데이트 (행 높이 포함)
+      // 기획안 정보 업데이트 (행 높이, reference, cta_text, card_preview 포함)
       await updateProjectPlan(planId, {
         title,
         scene_count: scenes.length,
-        row_heights: rowHeights
+        row_heights: rowHeights,
+        reference: reference || null,
+        cta_text: ctaText || null,
+        card_preview: cardPreview || null
       } as any)
       
       // 기존 씬 삭제 후 새로 생성 (간단한 구현)
@@ -365,7 +384,7 @@ export default function PlanDetailPage() {
         await deletePlanScene(scene.id)
       }
       
-      // 새 씬 생성
+      // 새 씬 생성 (files 포함)
       for (const scene of scenes) {
         await createPlanScene({
           plan_id: planId,
@@ -376,8 +395,9 @@ export default function PlanDetailPage() {
           effect: scene.effect || null,
           special_notes: scene.special_notes || null,
           script: scene.script || null,
-          source_info: scene.source_info || null
-        })
+          source_info: scene.source_info || null,
+          files: scene.files && scene.files.length > 0 ? scene.files.filter(f => f && f.name && f.url) : null
+        } as any)
       }
       
       await updateSceneCount(planId)
@@ -434,19 +454,19 @@ export default function PlanDetailPage() {
               value={reference}
               onChange={(e) => setReference(e.target.value)}
               placeholder="레퍼런스..."
-              className="w-32 h-8 text-sm"
+              className="w-36 h-8 text-sm"
             />
             <Input
               value={ctaText}
               onChange={(e) => setCtaText(e.target.value)}
               placeholder="CTA 문장..."
-              className="w-32 h-8 text-sm"
+              className="w-44 h-8 text-sm"
             />
             <Input
               value={cardPreview}
               onChange={(e) => setCardPreview(e.target.value)}
               placeholder="카드 미리보기..."
-              className="w-36 h-8 text-sm"
+              className="w-40 h-8 text-sm"
             />
           </div>
           {hasUnsavedChanges && (
@@ -693,8 +713,16 @@ export default function PlanDetailPage() {
                                 <span className="truncate flex-1" title={file.name}>{file.name}</span>
                                 <span className="text-gray-400 flex-shrink-0">{(file.size / 1024 / 1024).toFixed(1)}MB</span>
                                 <button 
+                                  className="p-0.5 hover:bg-blue-100 rounded"
+                                  onClick={() => downloadFile(file)}
+                                  title="다운로드"
+                                >
+                                  <Download className="h-3 w-3 text-blue-500" />
+                                </button>
+                                <button 
                                   className="p-0.5 hover:bg-red-100 rounded"
                                   onClick={() => removeFile(sceneIndex, slotIndex)}
+                                  title="삭제"
                                 >
                                   <X className="h-3 w-3 text-red-500" />
                                 </button>

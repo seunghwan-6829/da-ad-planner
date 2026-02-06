@@ -222,6 +222,9 @@ ALTER TABLE project_plans ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'draft';
 ALTER TABLE project_plans ADD COLUMN IF NOT EXISTS scene_count INTEGER DEFAULT 0;
 ALTER TABLE project_plans ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 ALTER TABLE project_plans ADD COLUMN IF NOT EXISTS row_heights JSONB;
+ALTER TABLE project_plans ADD COLUMN IF NOT EXISTS reference TEXT;
+ALTER TABLE project_plans ADD COLUMN IF NOT EXISTS cta_text TEXT;
+ALTER TABLE project_plans ADD COLUMN IF NOT EXISTS card_preview TEXT;
 
 ALTER TABLE project_plans ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Allow all operations on project_plans" ON project_plans;
@@ -241,8 +244,11 @@ CREATE TABLE IF NOT EXISTS plan_scenes (
   special_notes TEXT,
   script TEXT,
   source_info TEXT,
+  files JSONB,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE plan_scenes ADD COLUMN IF NOT EXISTS files JSONB;
 
 ALTER TABLE plan_scenes ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Allow all operations on plan_scenes" ON plan_scenes;
