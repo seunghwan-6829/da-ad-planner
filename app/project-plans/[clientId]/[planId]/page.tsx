@@ -302,46 +302,37 @@ export default function PlanDetailPage() {
     reader.readAsDataURL(file)
   }
 
-  // 파일 업로드 핸들러 (최대 3개, 5MB)
+  // 파일 업로드 핸들러 (슬롯별 업로드, 5MB)
   const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB
   const MAX_FILES = 3
 
-  function handleFileUpload(sceneIndex: number, e: React.ChangeEvent<HTMLInputElement>) {
-    const fileList = e.target.files
-    if (!fileList) return
+  function handleFileUploadSlot(sceneIndex: number, slotIndex: number, e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
 
-    const currentFiles = scenes[sceneIndex].files
-    const remainingSlots = MAX_FILES - currentFiles.length
-
-    if (remainingSlots <= 0) {
-      alert(`최대 ${MAX_FILES}개의 파일만 업로드 가능합니다.`)
+    if (file.size > MAX_FILE_SIZE) {
+      alert(`${file.name}: 파일 크기가 5MB를 초과합니다.`)
+      e.target.value = ''
       return
     }
 
-    const filesToAdd: SceneFile[] = []
-    
-    for (let i = 0; i < Math.min(fileList.length, remainingSlots); i++) {
-      const file = fileList[i]
+    const reader = new FileReader()
+    reader.onload = () => {
+      const newFile: SceneFile = {
+        name: file.name,
+        url: reader.result as string,
+        size: file.size
+      }
       
-      if (file.size > MAX_FILE_SIZE) {
-        alert(`${file.name}: 파일 크기가 5MB를 초과합니다.`)
-        continue
+      const newScenes = [...scenes]
+      // 슬롯 배열이 부족하면 확장
+      while (newScenes[sceneIndex].files.length <= slotIndex) {
+        newScenes[sceneIndex].files.push({ name: '', url: '', size: 0 })
       }
-
-      const reader = new FileReader()
-      reader.onload = () => {
-        const newFile: SceneFile = {
-          name: file.name,
-          url: reader.result as string,
-          size: file.size
-        }
-        
-        const newScenes = [...scenes]
-        newScenes[sceneIndex].files = [...newScenes[sceneIndex].files, newFile]
-        setScenes(newScenes)
-      }
-      reader.readAsDataURL(file)
+      newScenes[sceneIndex].files[slotIndex] = newFile
+      setScenes(newScenes)
     }
+    reader.readAsDataURL(file)
     
     // input 초기화
     e.target.value = ''
@@ -349,11 +340,12 @@ export default function PlanDetailPage() {
 
   function removeFile(sceneIndex: number, fileIndex: number) {
     const newScenes = [...scenes]
-    newScenes[sceneIndex].files.splice(fileIndex, 1)
+    newScenes[sceneIndex].files[fileIndex] = { name: '', url: '', size: 0 }
     setScenes(newScenes)
   }
 
-  const sourceFileInputRefs = useRef<{ [key: number]: HTMLInputElement | null }>({})
+  // 각 씬의 각 슬롯에 대한 ref
+  const sourceFileInputRefs = useRef<{ [key: string]: HTMLInputElement | null }>({})
 
   async function handleSave() {
     if (!plan) return
@@ -679,45 +671,52 @@ export default function PlanDetailPage() {
                 </td>
               </tr>
 
-              {/* 소스 파일 업로드 */}
+              {/* 소스 파일 업로드 - 3개 슬롯 */}
               <tr style={{ height: rowHeights.source_info }}>
                 <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700 text-center align-middle">
                   소스<br/><span className="text-xs text-gray-400">(파일)</span>
                 </td>
-                {scenes.map((scene, index) => (
-                  <td key={index} className="p-2 border-r last:border-r-0 align-top">
+                {scenes.map((scene, sceneIndex) => (
+                  <td key={sceneIndex} className="p-2 border-r last:border-r-0 align-top">
                     <div className="space-y-1" style={{ height: rowHeights.source_info - 16, overflow: 'auto' }}>
-                      {/* 업로드된 파일 목록 */}
-                      {scene.files.map((file, fIndex) => (
-                        <div key={fIndex} className="flex items-center gap-1 p-1 bg-gray-50 rounded text-xs group">
-                          <File className="h-3 w-3 text-gray-400 flex-shrink-0" />
-                          <span className="truncate flex-1" title={file.name}>{file.name}</span>
-                          <span className="text-gray-400 flex-shrink-0">{(file.size / 1024 / 1024).toFixed(1)}MB</span>
-                          <button 
-                            className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-red-100 rounded"
-                            onClick={() => removeFile(index, fIndex)}
-                          >
-                            <X className="h-3 w-3 text-red-500" />
-                          </button>
-                        </div>
-                      ))}
-                      {/* 파일 업로드 버튼 */}
-                      {scene.files.length < MAX_FILES && (
-                        <button
-                          className="w-full flex items-center justify-center gap-1 p-2 border border-dashed border-gray-300 rounded hover:border-blue-400 hover:bg-blue-50 transition-colors"
-                          onClick={() => sourceFileInputRefs.current[index]?.click()}
-                        >
-                          <FileUp className="h-4 w-4 text-gray-400" />
-                          <span className="text-xs text-gray-500">파일 업로드 ({scene.files.length}/{MAX_FILES})</span>
-                        </button>
-                      )}
-                      <input
-                        type="file"
-                        multiple
-                        className="hidden"
-                        ref={el => { sourceFileInputRefs.current[index] = el }}
-                        onChange={(e) => handleFileUpload(index, e)}
-                      />
+                      {/* 3개의 파일 슬롯 */}
+                      {[0, 1, 2].map((slotIndex) => {
+                        const file = scene.files[slotIndex]
+                        const hasFile = file && file.name && file.url
+                        const refKey = `${sceneIndex}-${slotIndex}`
+                        
+                        return (
+                          <div key={slotIndex}>
+                            {hasFile ? (
+                              <div className="flex items-center gap-1 p-1.5 bg-gray-50 rounded text-xs group border">
+                                <File className="h-3 w-3 text-blue-500 flex-shrink-0" />
+                                <span className="truncate flex-1" title={file.name}>{file.name}</span>
+                                <span className="text-gray-400 flex-shrink-0">{(file.size / 1024 / 1024).toFixed(1)}MB</span>
+                                <button 
+                                  className="p-0.5 hover:bg-red-100 rounded"
+                                  onClick={() => removeFile(sceneIndex, slotIndex)}
+                                >
+                                  <X className="h-3 w-3 text-red-500" />
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                className="w-full flex items-center justify-center gap-1 p-1.5 border border-dashed border-gray-300 rounded hover:border-blue-400 hover:bg-blue-50 transition-colors"
+                                onClick={() => sourceFileInputRefs.current[refKey]?.click()}
+                              >
+                                <FileUp className="h-3 w-3 text-gray-400" />
+                                <span className="text-xs text-gray-500">소스 {slotIndex + 1}</span>
+                              </button>
+                            )}
+                            <input
+                              type="file"
+                              className="hidden"
+                              ref={el => { sourceFileInputRefs.current[refKey] = el }}
+                              onChange={(e) => handleFileUploadSlot(sceneIndex, slotIndex, e)}
+                            />
+                          </div>
+                        )
+                      })}
                     </div>
                   </td>
                 ))}
