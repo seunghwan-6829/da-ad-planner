@@ -241,6 +241,11 @@ export default function VideoVariationPage() {
       
       setShowMultiSelect(hasMultipleChoice && options.length >= 2)
       if (data.readyToGenerate) setReadyToGenerate(true)
+      
+      // 베리에이션이 이미 생성된 상태에서 피드백을 보낸 경우 재생성 활성화
+      if (variations.length > 0) {
+        setCanRegenerate(true)
+      }
     } catch (error) {
       console.error('대화 실패:', error)
       alert('응답 생성에 실패했습니다.')
@@ -383,9 +388,10 @@ export default function VideoVariationPage() {
       
       setMessages(prev => [...prev, {
         role: 'assistant',
-        content: `✨ ${allVariations.length}개의 베리에이션이 완료되었습니다!\n\n오른쪽에서 결과를 확인해주세요.\n\n**수정이 필요하신가요?**\n고치고 싶은 부분이나 다른 방향이 있으시면 말씀해주세요. 피드백을 반영해서 재생성해드릴게요! 🔄`
+        content: `✨ ${allVariations.length}개의 베리에이션이 완료되었습니다!\n\n오른쪽에서 결과를 확인해주세요.\n\n**수정이 필요하신가요?**\n고치고 싶은 부분이나 다른 방향이 있으시면 아래 채팅으로 말씀해주세요. 피드백을 확인한 후 재생성 버튼이 활성화됩니다! 💬`
       }])
-      setCanRegenerate(true)
+      // 피드백 입력 전이므로 재생성 비활성화
+      setCanRegenerate(false)
     } catch (error) {
       console.error('베리에이션 실패:', error)
       alert('베리에이션 생성에 실패했습니다.')
@@ -636,6 +642,20 @@ export default function VideoVariationPage() {
                 </div>
               </div>
             )}
+            
+            {/* 재생성 버튼 - 채팅 영역 내부 */}
+            {variations.length > 0 && canRegenerate && !generating && (
+              <div className="flex justify-center py-2">
+                <Button
+                  className="bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 shadow-lg px-6"
+                  onClick={regenerateVariations}
+                >
+                  <RotateCcw className="h-4 w-4 mr-2" />
+                  피드백 반영하여 재생성
+                </Button>
+              </div>
+            )}
+            
             <div ref={chatEndRef} />
           </div>
 
@@ -680,21 +700,6 @@ export default function VideoVariationPage() {
                   <><Sparkles className="h-4 w-4 mr-2" />대화를 더 진행해주세요 ({progress}%)</>
                 ) : (
                   <><Sparkles className="h-4 w-4 mr-2" />베리에이션 6개 생성</>
-                )}
-              </Button>
-            )}
-            
-            {/* 재생성 버튼 */}
-            {variations.length > 0 && canRegenerate && (
-              <Button
-                className="w-full bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 shadow-lg"
-                onClick={regenerateVariations}
-                disabled={generating}
-              >
-                {generating ? (
-                  <><Loader2 className="h-4 w-4 animate-spin mr-2" />재생성 중...</>
-                ) : (
-                  <><RotateCcw className="h-4 w-4 mr-2" />피드백 반영하여 재생성</>
                 )}
               </Button>
             )}
