@@ -11,9 +11,12 @@ import { useAuth } from '@/lib/auth-context'
 import { 
   getClients, 
   getClientsForUser, 
+  getDeletedClients,
   createClient, 
   updateClient, 
   deleteClient,
+  restoreClient,
+  permanentDeleteClient,
   updateClientOrder,
   getProjectPlans,
   getDeletedProjectPlans,
@@ -60,6 +63,10 @@ export default function ProjectPlansPage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
   const [editingColor, setEditingColor] = useState('')
+  
+  // 프로젝트(클라이언트) 휴지통
+  const [showClientTrash, setShowClientTrash] = useState(false)
+  const [deletedClients, setDeletedClients] = useState<Client[]>([])
   
   // 새 기획안 추가
   const [showAddPlanModal, setShowAddPlanModal] = useState(false)
@@ -173,7 +180,7 @@ export default function ProjectPlansPage() {
   }
 
   async function handleDeleteClient(id: string) {
-    if (!confirm('이 클라이언트와 관련된 모든 기획안이 삭제됩니다. 계속하시겠습니까?')) return
+    if (!confirm('이 프로젝트를 휴지통으로 이동하시겠습니까?')) return
     
     try {
       await deleteClient(id)
@@ -184,6 +191,40 @@ export default function ProjectPlansPage() {
       loadClients()
     } catch (error) {
       console.error('클라이언트 삭제 실패:', error)
+    }
+  }
+
+  // 프로젝트 휴지통 로드
+  async function loadDeletedClients() {
+    try {
+      const deleted = await getDeletedClients()
+      setDeletedClients(deleted)
+      setShowClientTrash(true)
+    } catch (error) {
+      console.error('휴지통 로드 실패:', error)
+    }
+  }
+
+  // 프로젝트 복원
+  async function handleRestoreClient(id: string) {
+    try {
+      await restoreClient(id)
+      setDeletedClients(deletedClients.filter(c => c.id !== id))
+      loadClients()
+    } catch (error) {
+      console.error('복원 실패:', error)
+    }
+  }
+
+  // 프로젝트 영구 삭제
+  async function handlePermanentDeleteClient(id: string) {
+    if (!confirm('이 프로젝트와 모든 기획안을 영구적으로 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.')) return
+    
+    try {
+      await permanentDeleteClient(id)
+      setDeletedClients(deletedClients.filter(c => c.id !== id))
+    } catch (error) {
+      console.error('영구 삭제 실패:', error)
     }
   }
 
@@ -340,7 +381,51 @@ export default function ProjectPlansPage() {
         </div>
 
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
-          {loading ? (
+          {/* 휴지통 보기 모드 */}
+          {showClientTrash ? (
+            <>
+              <div className="flex items-center justify-between p-2 mb-2">
+                <span className="text-sm font-medium text-gray-600">프로젝트 휴지통</span>
+                <Button size="sm" variant="ghost" onClick={() => setShowClientTrash(false)}>
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+              {deletedClients.length === 0 ? (
+                <div className="text-center py-8">
+                  <Trash2 className="h-12 w-12 mx-auto text-gray-300 mb-2" />
+                  <p className="text-sm text-gray-400">휴지통이 비어있습니다</p>
+                </div>
+              ) : (
+                deletedClients.map(client => (
+                  <div key={client.id} className="flex items-center gap-2 p-3 rounded-lg bg-gray-100 opacity-60 hover:opacity-100">
+                    <div 
+                      className="w-3 h-3 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: client.color || '#3B82F6' }}
+                    />
+                    <span className="text-sm flex-1 truncate">{client.name}</span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 w-6 p-0"
+                      onClick={() => handleRestoreClient(client.id)}
+                      title="복원"
+                    >
+                      <RotateCcw className="h-3 w-3 text-blue-500" />
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 w-6 p-0"
+                      onClick={() => handlePermanentDeleteClient(client.id)}
+                      title="영구 삭제"
+                    >
+                      <X className="h-3 w-3 text-red-500" />
+                    </Button>
+                  </div>
+                ))
+              )}
+            </>
+          ) : loading ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
             </div>
@@ -460,8 +545,23 @@ export default function ProjectPlansPage() {
           )}
         </div>
 
+        {/* 휴지통 버튼 */}
+        {isAdmin && !showClientTrash && (
+          <div className="px-3 py-2 border-t">
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="w-full justify-start text-gray-500"
+              onClick={loadDeletedClients}
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              프로젝트 휴지통
+            </Button>
+          </div>
+        )}
+
         {/* 관리자만 클라이언트 추가 가능 */}
-        {isAdmin && (
+        {isAdmin && !showClientTrash && (
           <div className="p-3 border-t bg-white">
             {showAddForm ? (
               <div className="space-y-2">

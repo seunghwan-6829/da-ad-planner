@@ -6,6 +6,7 @@ export interface Client {
   description: string | null
   color: string
   sort_order: number
+  deleted_at: string | null
   created_at: string
 }
 
@@ -67,8 +68,21 @@ export async function getClients(): Promise<Client[]> {
   const { data, error } = await supabase
     .from('clients')
     .select('*')
+    .is('deleted_at', null)
     .order('sort_order', { ascending: true })
     .order('created_at', { ascending: false })
+  
+  if (error) throw error
+  return data || []
+}
+
+// 휴지통의 클라이언트 조회
+export async function getDeletedClients(): Promise<Client[]> {
+  const { data, error } = await supabase
+    .from('clients')
+    .select('*')
+    .not('deleted_at', 'is', null)
+    .order('deleted_at', { ascending: false })
   
   if (error) throw error
   return data || []
@@ -141,7 +155,28 @@ export async function updateClient(id: string, client: Partial<Client>): Promise
   return data
 }
 
+// 클라이언트 휴지통으로 이동 (소프트 삭제)
 export async function deleteClient(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('clients')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('id', id)
+  
+  if (error) throw error
+}
+
+// 클라이언트 복원
+export async function restoreClient(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('clients')
+    .update({ deleted_at: null })
+    .eq('id', id)
+  
+  if (error) throw error
+}
+
+// 클라이언트 영구 삭제
+export async function permanentDeleteClient(id: string): Promise<void> {
   const { error } = await supabase
     .from('clients')
     .delete()
