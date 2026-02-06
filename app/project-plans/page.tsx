@@ -623,7 +623,7 @@ export default function ProjectPlansPage() {
                               className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium transition-colors ${
                                 isCompleted 
                                   ? 'bg-green-100 text-green-700' 
-                                  : 'bg-amber-100 text-amber-700'
+                                  : 'bg-gray-100 text-gray-600'
                               }`}
                               onClick={(e) => toggleComplete(plan, e)}
                             >
@@ -635,7 +635,7 @@ export default function ProjectPlansPage() {
                               ) : (
                                 <>
                                   <Film className="h-3.5 w-3.5" />
-                                  제작 완료
+                                  제작 중..
                                 </>
                               )}
                             </button>
