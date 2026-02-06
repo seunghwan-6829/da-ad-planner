@@ -243,7 +243,7 @@ export default function PlanDetailPage() {
       {/* 상단 헤더 */}
       <div className="flex items-center justify-between p-4 border-b">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="sm" onClick={() => router.push(`/project-plans/${clientId}`)}>
+          <Button variant="ghost" size="sm" onClick={() => router.push(`/project-plans?client=${clientId}`)}>
             <ArrowLeft className="h-4 w-4 mr-1" />
             돌아가기
           </Button>

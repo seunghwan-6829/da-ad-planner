@@ -1,34 +1,20 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { Plus, Folder, Search, ArrowLeft, Loader2, FileText, Trash2, Calendar, Film, Check, Grid, List } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Card, CardContent } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { useAuth } from '@/lib/auth-context'
-import { 
-  getClient,
-  getProjectPlans,
-  createProjectPlan,
-  deleteProjectPlan,
-  checkClientPermission,
-  Client,
-  ProjectPlan
-} from '@/lib/api/clients'
 
-const STATUS_CONFIG = {
-  draft: { label: '초안', color: 'bg-gray-100 text-gray-600' },
-  in_progress: { label: '진행중', color: 'bg-orange-100 text-orange-600' },
-  completed: { label: '완료됨', color: 'bg-green-100 text-green-600' }
-}
-
+// 이 페이지는 메인 페이지로 리다이렉트합니다
 export default function ClientPlansPage() {
   const params = useParams()
   const router = useRouter()
   const clientId = params.clientId as string
-  const { user, isAdmin } = useAuth()
+
+  useEffect(() => {
+    router.replace(`/project-plans?client=${clientId}`)
+  }, [clientId, router])
+
+  return null
+}
   
   const [client, setClient] = useState<Client | null>(null)
   const [plans, setPlans] = useState<ProjectPlan[]>([])

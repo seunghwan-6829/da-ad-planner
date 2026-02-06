@@ -1,8 +1,8 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
-import { Plus, Folder, Search, Settings, Loader2, ChevronRight, Trash2, Edit2, Check, X, FileText, Calendar, Film } from 'lucide-react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { Plus, Folder, Search, Settings, Loader2, ChevronRight, Trash2, Edit2, Check, X, FileText, Calendar, Film, Palette } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent } from '@/components/ui/card'
@@ -34,6 +34,7 @@ const STATUS_CONFIG = {
 
 export default function ProjectPlansPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { user, profile, isAdmin } = useAuth()
   
   const [clients, setClients] = useState<Client[]>([])
@@ -54,11 +55,23 @@ export default function ProjectPlansPage() {
   // 클라이언트 편집
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
+  const [editingColor, setEditingColor] = useState('')
   
   // 새 기획안 추가
   const [showAddPlanModal, setShowAddPlanModal] = useState(false)
   const [newPlanTitle, setNewPlanTitle] = useState('')
   const [addingPlan, setAddingPlan] = useState(false)
+
+  // URL 파라미터로 클라이언트 선택
+  useEffect(() => {
+    const clientId = searchParams.get('client')
+    if (clientId && clients.length > 0 && !selectedClient) {
+      const client = clients.find(c => c.id === clientId)
+      if (client) {
+        handleSelectClient(client)
+      }
+    }
+  }, [searchParams, clients])
 
   useEffect(() => {
     loadClients()
@@ -122,15 +135,21 @@ export default function ProjectPlansPage() {
     if (!editingName.trim()) return
     
     try {
-      await updateClient(id, { name: editingName.trim() })
+      await updateClient(id, { name: editingName.trim(), color: editingColor })
       setEditingId(null)
       loadClients()
       if (selectedClient?.id === id) {
-        setSelectedClient({ ...selectedClient, name: editingName.trim() })
+        setSelectedClient({ ...selectedClient, name: editingName.trim(), color: editingColor })
       }
     } catch (error) {
       console.error('클라이언트 수정 실패:', error)
     }
+  }
+
+  function startEditing(client: Client) {
+    setEditingId(client.id)
+    setEditingName(client.name)
+    setEditingColor(client.color || CLIENT_COLORS[0])
   }
 
   async function handleDeleteClient(id: string) {
@@ -240,19 +259,32 @@ export default function ProjectPlansPage() {
                 className="group relative"
               >
                 {editingId === client.id ? (
-                  <div className="flex items-center gap-1 p-2 bg-white rounded-lg border">
+                  <div className="p-2 bg-white rounded-lg border space-y-2">
                     <Input
                       value={editingName}
                       onChange={(e) => setEditingName(e.target.value)}
                       className="h-8 text-sm"
                       autoFocus
                     />
-                    <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={() => handleUpdateClient(client.id)}>
-                      <Check className="h-4 w-4 text-green-500" />
-                    </Button>
-                    <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={() => setEditingId(null)}>
-                      <X className="h-4 w-4 text-gray-400" />
-                    </Button>
+                    <div className="flex gap-1 flex-wrap">
+                      {CLIENT_COLORS.map(color => (
+                        <button
+                          key={color}
+                          className={`w-5 h-5 rounded-full transition-transform ${editingColor === color ? 'ring-2 ring-offset-1 ring-gray-400 scale-110' : ''}`}
+                          style={{ backgroundColor: color }}
+                          onClick={() => setEditingColor(color)}
+                        />
+                      ))}
+                    </div>
+                    <div className="flex gap-1">
+                      <Button size="sm" className="flex-1 h-7" onClick={() => handleUpdateClient(client.id)}>
+                        <Check className="h-3 w-3 mr-1" />
+                        저장
+                      </Button>
+                      <Button size="sm" variant="outline" className="h-7" onClick={() => setEditingId(null)}>
+                        취소
+                      </Button>
+                    </div>
                   </div>
                 ) : (
                   <div
@@ -280,8 +312,7 @@ export default function ProjectPlansPage() {
                           className="h-6 w-6 p-0"
                           onClick={(e) => {
                             e.stopPropagation()
-                            setEditingId(client.id)
-                            setEditingName(client.name)
+                            startEditing(client)
                           }}
                         >
                           <Edit2 className="h-3 w-3 text-gray-400" />
