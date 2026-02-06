@@ -81,8 +81,12 @@ export function Sidebar() {
           )
         })}
 
-        {/* BP소재 아래 구분선 */}
-        <div className="my-3 border-t" />
+        {/* BP소재 아래 구분선 + 제작 도구 제목 */}
+        <div className="my-3 border-t pt-3">
+          <p className="px-3 mb-2 text-xs font-medium text-gray-400 uppercase">
+            제작 도구
+          </p>
+        </div>
 
         {navigationBottom.map((item) => {
           const isActive = pathname === item.href || 
