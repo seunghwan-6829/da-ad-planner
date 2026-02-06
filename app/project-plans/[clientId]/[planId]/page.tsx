@@ -1,0 +1,479 @@
+'use client'
+
+import { useState, useEffect, useRef } from 'react'
+import { useParams, useRouter } from 'next/navigation'
+import { ArrowLeft, Save, Loader2, Plus, X, Upload, Image as ImageIcon, Trash2 } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import { useAuth } from '@/lib/auth-context'
+import { 
+  getClient,
+  getProjectPlan,
+  updateProjectPlan,
+  getPlanScenes,
+  createPlanScene,
+  updatePlanScene,
+  deletePlanScene,
+  updateSceneCount,
+  checkClientPermission,
+  Client,
+  ProjectPlan,
+  PlanScene
+} from '@/lib/api/clients'
+
+interface SceneData {
+  id?: string
+  scene_number: number
+  image_url: string
+  timeline: string
+  sources: string[]
+  effect: string
+  special_notes: string
+  script: string
+  source_info: string
+}
+
+export default function PlanDetailPage() {
+  const params = useParams()
+  const router = useRouter()
+  const clientId = params.clientId as string
+  const planId = params.planId as string
+  const { user, isAdmin } = useAuth()
+  
+  const [client, setClient] = useState<Client | null>(null)
+  const [plan, setPlan] = useState<ProjectPlan | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [hasPermission, setHasPermission] = useState(false)
+  
+  // 기획안 데이터
+  const [title, setTitle] = useState('')
+  const [reference, setReference] = useState('')
+  const [ctaText, setCtaText] = useState('')
+  const [cardPreview, setCardPreview] = useState('')
+  
+  // 씬 데이터
+  const [scenes, setScenes] = useState<SceneData[]>([])
+  
+  const fileInputRefs = useRef<{ [key: number]: HTMLInputElement | null }>({})
+
+  useEffect(() => {
+    checkPermissionAndLoad()
+  }, [clientId, planId, user, isAdmin])
+
+  async function checkPermissionAndLoad() {
+    if (!user) {
+      setLoading(false)
+      return
+    }
+    
+    try {
+      if (isAdmin) {
+        setHasPermission(true)
+      } else {
+        const permitted = await checkClientPermission(user.id, clientId)
+        setHasPermission(permitted)
+        if (!permitted) {
+          setLoading(false)
+          return
+        }
+      }
+      
+      const [clientData, planData, scenesData] = await Promise.all([
+        getClient(clientId),
+        getProjectPlan(planId),
+        getPlanScenes(planId)
+      ])
+      
+      setClient(clientData)
+      setPlan(planData)
+      
+      if (planData) {
+        setTitle(planData.title)
+      }
+      
+      if (scenesData.length > 0) {
+        setScenes(scenesData.map(s => ({
+          id: s.id,
+          scene_number: s.scene_number,
+          image_url: s.image_url || '',
+          timeline: s.timeline || '',
+          sources: s.sources || [''],
+          effect: s.effect || '',
+          special_notes: s.special_notes || '',
+          script: s.script || '',
+          source_info: s.source_info || ''
+        })))
+      } else {
+        // 기본 1개 씬 추가
+        setScenes([createEmptyScene(1)])
+      }
+    } catch (error) {
+      console.error('데이터 로드 실패:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function createEmptyScene(sceneNumber: number): SceneData {
+    return {
+      scene_number: sceneNumber,
+      image_url: '',
+      timeline: '',
+      sources: [''],
+      effect: '',
+      special_notes: '',
+      script: '',
+      source_info: ''
+    }
+  }
+
+  function addScene() {
+    const newSceneNumber = scenes.length + 1
+    setScenes([...scenes, createEmptyScene(newSceneNumber)])
+  }
+
+  function removeScene(index: number) {
+    if (scenes.length <= 1) return
+    const newScenes = scenes.filter((_, i) => i !== index).map((s, i) => ({
+      ...s,
+      scene_number: i + 1
+    }))
+    setScenes(newScenes)
+  }
+
+  function updateScene(index: number, field: keyof SceneData, value: string | string[]) {
+    const newScenes = [...scenes]
+    newScenes[index] = { ...newScenes[index], [field]: value }
+    setScenes(newScenes)
+  }
+
+  function addSource(sceneIndex: number) {
+    const newScenes = [...scenes]
+    newScenes[sceneIndex].sources.push('')
+    setScenes(newScenes)
+  }
+
+  function removeSource(sceneIndex: number, sourceIndex: number) {
+    const newScenes = [...scenes]
+    if (newScenes[sceneIndex].sources.length <= 1) return
+    newScenes[sceneIndex].sources.splice(sourceIndex, 1)
+    setScenes(newScenes)
+  }
+
+  function updateSource(sceneIndex: number, sourceIndex: number, value: string) {
+    const newScenes = [...scenes]
+    newScenes[sceneIndex].sources[sourceIndex] = value
+    setScenes(newScenes)
+  }
+
+  function handleImageUpload(sceneIndex: number, e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    
+    const reader = new FileReader()
+    reader.onload = () => {
+      updateScene(sceneIndex, 'image_url', reader.result as string)
+    }
+    reader.readAsDataURL(file)
+  }
+
+  async function handleSave() {
+    if (!plan) return
+    
+    setSaving(true)
+    try {
+      // 기획안 정보 업데이트
+      await updateProjectPlan(planId, {
+        title,
+        scene_count: scenes.length
+      })
+      
+      // 기존 씬 삭제 후 새로 생성 (간단한 구현)
+      const existingScenes = await getPlanScenes(planId)
+      for (const scene of existingScenes) {
+        await deletePlanScene(scene.id)
+      }
+      
+      // 새 씬 생성
+      for (const scene of scenes) {
+        await createPlanScene({
+          plan_id: planId,
+          scene_number: scene.scene_number,
+          image_url: scene.image_url || null,
+          timeline: scene.timeline || null,
+          sources: scene.sources.filter(s => s.trim()),
+          effect: scene.effect || null,
+          special_notes: scene.special_notes || null,
+          script: scene.script || null,
+          source_info: scene.source_info || null
+        })
+      }
+      
+      await updateSceneCount(planId)
+      
+      alert('저장되었습니다!')
+    } catch (error) {
+      console.error('저장 실패:', error)
+      alert('저장에 실패했습니다.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+      </div>
+    )
+  }
+
+  if (!user || !hasPermission) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <p className="text-gray-500">접근 권한이 없습니다.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="h-full flex flex-col bg-white">
+      {/* 상단 헤더 */}
+      <div className="flex items-center justify-between p-4 border-b">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="sm" onClick={() => router.push(`/project-plans/${clientId}`)}>
+            <ArrowLeft className="h-4 w-4 mr-1" />
+            돌아가기
+          </Button>
+          {client && (
+            <span className="text-orange-500 font-medium">{client.name}</span>
+          )}
+        </div>
+        <Button onClick={handleSave} disabled={saving} className="bg-orange-500 hover:bg-orange-600">
+          {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
+          저장하기
+        </Button>
+      </div>
+
+      {/* 기획안 제목 & 메타 정보 */}
+      <div className="p-6 border-b">
+        <div className="flex gap-6">
+          <div className="flex-1">
+            <Input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="기획안 제목을 입력하세요"
+              className="text-2xl font-bold border-0 border-b rounded-none px-0 focus-visible:ring-0"
+            />
+          </div>
+          <div className="flex gap-4">
+            <div>
+              <label className="text-sm text-gray-500 mb-1 block">레퍼런스</label>
+              <Input
+                value={reference}
+                onChange={(e) => setReference(e.target.value)}
+                placeholder="레퍼런스 입력..."
+                className="w-48"
+              />
+            </div>
+            <div>
+              <label className="text-sm text-gray-500 mb-1 block">CTA 문장</label>
+              <Input
+                value={ctaText}
+                onChange={(e) => setCtaText(e.target.value)}
+                placeholder="CTA 문장 입력..."
+                className="w-48"
+              />
+            </div>
+            <div>
+              <label className="text-sm text-gray-500 mb-1 block">카드 미리보기</label>
+              <Input
+                value={cardPreview}
+                onChange={(e) => setCardPreview(e.target.value)}
+                placeholder="카드에 표시될 설명..."
+                className="w-48"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 씬 테이블 */}
+      <div className="flex-1 overflow-auto p-6">
+        <div className="border rounded-lg overflow-hidden">
+          <table className="w-full">
+            <thead>
+              <tr className="bg-gray-50 border-b">
+                <th className="w-24 p-3 text-left text-sm font-medium text-gray-500 border-r"></th>
+                {scenes.map((scene, index) => (
+                  <th key={index} className="min-w-[200px] p-3 text-center text-sm font-medium border-r last:border-r-0 relative group">
+                    <span className="text-gray-700">#{scene.scene_number}</span>
+                    {scenes.length > 1 && (
+                      <button
+                        className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 rounded"
+                        onClick={() => removeScene(index)}
+                      >
+                        <X className="h-3 w-3 text-red-500" />
+                      </button>
+                    )}
+                  </th>
+                ))}
+                <th className="w-12 p-3">
+                  <Button size="sm" variant="ghost" onClick={addScene} className="w-full">
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {/* 영상 (이미지) */}
+              <tr className="border-b">
+                <td className="p-3 bg-orange-50 border-r font-medium text-sm text-gray-700">영상</td>
+                {scenes.map((scene, index) => (
+                  <td key={index} className="p-3 border-r last:border-r-0">
+                    <div 
+                      className="aspect-video bg-gray-100 rounded-lg flex items-center justify-center cursor-pointer hover:bg-gray-200 transition-colors overflow-hidden"
+                      onClick={() => fileInputRefs.current[index]?.click()}
+                    >
+                      {scene.image_url ? (
+                        <img src={scene.image_url} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="text-center">
+                          <ImageIcon className="h-8 w-8 text-gray-400 mx-auto mb-1" />
+                          <span className="text-xs text-gray-400">이미지 업로드</span>
+                        </div>
+                      )}
+                    </div>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      ref={el => { fileInputRefs.current[index] = el }}
+                      onChange={(e) => handleImageUpload(index, e)}
+                    />
+                  </td>
+                ))}
+                <td></td>
+              </tr>
+
+              {/* 타임라인 */}
+              <tr className="border-b">
+                <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700">타임라인</td>
+                {scenes.map((scene, index) => (
+                  <td key={index} className="p-3 border-r last:border-r-0">
+                    <Input
+                      value={scene.timeline}
+                      onChange={(e) => updateScene(index, 'timeline', e.target.value)}
+                      placeholder="타임라인..."
+                      className="text-sm"
+                    />
+                  </td>
+                ))}
+                <td></td>
+              </tr>
+
+              {/* 소스 */}
+              <tr className="border-b">
+                <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700">소스</td>
+                {scenes.map((scene, index) => (
+                  <td key={index} className="p-3 border-r last:border-r-0">
+                    <div className="space-y-2">
+                      {scene.sources.map((source, sIndex) => (
+                        <div key={sIndex} className="flex gap-1">
+                          <Input
+                            value={source}
+                            onChange={(e) => updateSource(index, sIndex, e.target.value)}
+                            placeholder="소스..."
+                            className="text-sm"
+                          />
+                          {scene.sources.length > 1 && (
+                            <Button size="sm" variant="ghost" className="px-2" onClick={() => removeSource(index, sIndex)}>
+                              <X className="h-3 w-3" />
+                            </Button>
+                          )}
+                        </div>
+                      ))}
+                      <Button size="sm" variant="ghost" className="w-full text-xs" onClick={() => addSource(index)}>
+                        <Plus className="h-3 w-3 mr-1" />
+                        추가
+                      </Button>
+                    </div>
+                  </td>
+                ))}
+                <td></td>
+              </tr>
+
+              {/* 효과 */}
+              <tr className="border-b">
+                <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700">효과</td>
+                {scenes.map((scene, index) => (
+                  <td key={index} className="p-3 border-r last:border-r-0">
+                    <Input
+                      value={scene.effect}
+                      onChange={(e) => updateScene(index, 'effect', e.target.value)}
+                      placeholder="효과..."
+                      className="text-sm"
+                    />
+                  </td>
+                ))}
+                <td></td>
+              </tr>
+
+              {/* 특이사항 */}
+              <tr className="border-b">
+                <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700">특이사항</td>
+                {scenes.map((scene, index) => (
+                  <td key={index} className="p-3 border-r last:border-r-0">
+                    <Input
+                      value={scene.special_notes}
+                      onChange={(e) => updateScene(index, 'special_notes', e.target.value)}
+                      placeholder="특이사항..."
+                      className="text-sm"
+                    />
+                  </td>
+                ))}
+                <td></td>
+              </tr>
+
+              {/* 대본 (나레이션) */}
+              <tr className="border-b">
+                <td className="p-3 bg-orange-50 border-r font-medium text-sm text-gray-700">
+                  대본<br/><span className="text-xs text-gray-400">(나레이션)</span>
+                </td>
+                {scenes.map((scene, index) => (
+                  <td key={index} className="p-3 border-r last:border-r-0">
+                    <Textarea
+                      value={scene.script}
+                      onChange={(e) => updateScene(index, 'script', e.target.value)}
+                      placeholder="대본/나레이션..."
+                      className="text-sm min-h-[100px]"
+                    />
+                  </td>
+                ))}
+                <td></td>
+              </tr>
+
+              {/* 소스 정보 */}
+              <tr>
+                <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700">소스</td>
+                {scenes.map((scene, index) => (
+                  <td key={index} className="p-3 border-r last:border-r-0">
+                    <Textarea
+                      value={scene.source_info}
+                      onChange={(e) => updateScene(index, 'source_info', e.target.value)}
+                      placeholder="소스 정보..."
+                      className="text-sm min-h-[60px]"
+                    />
+                  </td>
+                ))}
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}

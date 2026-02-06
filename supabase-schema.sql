@@ -176,9 +176,85 @@ DROP POLICY IF EXISTS "Allow all operations on bp_materials" ON bp_materials;
 CREATE POLICY "Allow all operations on bp_materials" ON bp_materials FOR ALL USING (true) WITH CHECK (true);
 
 -- =============================================
+-- 클라이언트(프로젝트) 테이블
+-- =============================================
+CREATE TABLE IF NOT EXISTS clients (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  description TEXT,
+  color TEXT DEFAULT '#3B82F6',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE clients ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow all operations on clients" ON clients;
+CREATE POLICY "Allow all operations on clients" ON clients FOR ALL USING (true) WITH CHECK (true);
+
+-- =============================================
+-- 클라이언트 권한 테이블 (사용자별 클라이언트 접근 권한)
+-- =============================================
+CREATE TABLE IF NOT EXISTS client_permissions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  client_id UUID REFERENCES clients(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(user_id, client_id)
+);
+
+ALTER TABLE client_permissions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow all operations on client_permissions" ON client_permissions;
+CREATE POLICY "Allow all operations on client_permissions" ON client_permissions FOR ALL USING (true) WITH CHECK (true);
+
+-- =============================================
+-- 프로젝트 기획안 테이블
+-- =============================================
+CREATE TABLE IF NOT EXISTS project_plans (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id UUID REFERENCES clients(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  status TEXT DEFAULT 'draft' CHECK (status IN ('draft', 'in_progress', 'completed')),
+  scene_count INTEGER DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE project_plans ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'draft';
+ALTER TABLE project_plans ADD COLUMN IF NOT EXISTS scene_count INTEGER DEFAULT 0;
+ALTER TABLE project_plans ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+ALTER TABLE project_plans ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow all operations on project_plans" ON project_plans;
+CREATE POLICY "Allow all operations on project_plans" ON project_plans FOR ALL USING (true) WITH CHECK (true);
+
+-- =============================================
+-- 기획안 씬(장면) 테이블
+-- =============================================
+CREATE TABLE IF NOT EXISTS plan_scenes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  plan_id UUID REFERENCES project_plans(id) ON DELETE CASCADE,
+  scene_number INTEGER NOT NULL,
+  image_url TEXT,
+  timeline TEXT,
+  sources TEXT[],
+  effect TEXT,
+  special_notes TEXT,
+  script TEXT,
+  source_info TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE plan_scenes ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow all operations on plan_scenes" ON plan_scenes;
+CREATE POLICY "Allow all operations on plan_scenes" ON plan_scenes FOR ALL USING (true) WITH CHECK (true);
+
+-- =============================================
 -- 인덱스
 -- =============================================
 CREATE INDEX IF NOT EXISTS idx_ad_plans_advertiser_id ON ad_plans(advertiser_id);
 CREATE INDEX IF NOT EXISTS idx_ad_plans_created_at ON ad_plans(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_advertisers_created_at ON advertisers(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_templates_created_at ON templates(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_plans_client_id ON project_plans(client_id);
+CREATE INDEX IF NOT EXISTS idx_plan_scenes_plan_id ON plan_scenes(plan_id);
+CREATE INDEX IF NOT EXISTS idx_client_permissions_user_id ON client_permissions(user_id);
+CREATE INDEX IF NOT EXISTS idx_client_permissions_client_id ON client_permissions(client_id);

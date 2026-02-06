@@ -15,7 +15,8 @@ import {
   FileEdit,
   Shield,
   LogOut,
-  User
+  User,
+  Clapperboard
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/lib/auth-context'
@@ -30,6 +31,7 @@ const navigation = [
   { name: 'BP소재', href: '/templates', icon: FileCode },
   { name: '이미지 베리에이션', href: '/image-variation', icon: ImageIcon },
   { name: '영상 베리에이션', href: '/ai-variation', icon: Video },
+  { name: '기획안 제작', href: '/project-plans', icon: Clapperboard },
   { name: 'AI 학습', href: '/ai-test', icon: BookOpen },
 ]
 
