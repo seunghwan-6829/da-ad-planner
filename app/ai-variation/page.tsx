@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { Sparkles, Upload, Copy, Check, Plus, Minus, Loader2, FileText, History, Trash2, MessageCircle, Send, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -38,6 +38,15 @@ const SAVED_PROMPTS = [
   { label: '스타일 변경', prompt: '문장 스타일을 바꿔주세요' },
 ]
 
+// 진행률 단계 정의
+const PROGRESS_STEPS = [
+  { threshold: 0, label: '시작', description: '대본을 입력해주세요' },
+  { threshold: 25, label: '톤 설정', description: '톤앤매너 설정' },
+  { threshold: 50, label: '타겟 설정', description: '타겟 고객층 설정' },
+  { threshold: 75, label: '방향 설정', description: '베리에이션 방향 결정' },
+  { threshold: 100, label: '준비 완료', description: '생성 준비가 완료되었습니다!' },
+]
+
 export default function VideoVariationPage() {
   const [originalScript, setOriginalScript] = useState('')
   const [productName, setProductName] = useState('')
@@ -62,6 +71,25 @@ export default function VideoVariationPage() {
   
   const chatEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // 진행률 계산 (사용자 답변 수 기준)
+  const progress = useMemo(() => {
+    if (!originalScript || messages.length === 0) return 0
+    const userMessages = messages.filter(m => m.role === 'user').length
+    if (readyToGenerate) return 100
+    if (userMessages >= 3) return 100
+    if (userMessages === 2) return 75
+    if (userMessages === 1) return 50
+    if (messages.length > 0) return 25 // AI 첫 질문
+    return 0
+  }, [messages, originalScript, readyToGenerate])
+
+  // 현재 단계 찾기
+  const currentStep = useMemo(() => {
+    return PROGRESS_STEPS.reduce((prev, curr) => 
+      progress >= curr.threshold ? curr : prev
+    , PROGRESS_STEPS[0])
+  }, [progress])
 
   // 히스토리 로드
   useEffect(() => {
@@ -556,14 +584,44 @@ export default function VideoVariationPage() {
           </div>
 
           <div className="p-3 border-t bg-white space-y-2 flex-shrink-0">
-            {readyToGenerate && variations.length === 0 && (
+            {/* 진행률 표시 */}
+            {messages.length > 0 && variations.length === 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-gray-500">진행률</span>
+                  <span className={`font-medium ${progress === 100 ? 'text-green-600' : 'text-purple-600'}`}>
+                    {progress}% - {currentStep.label}
+                  </span>
+                </div>
+                <div className="relative h-2 bg-gray-100 rounded-full overflow-hidden">
+                  <div 
+                    className={`absolute left-0 top-0 h-full transition-all duration-500 ease-out rounded-full ${
+                      progress === 100 
+                        ? 'bg-gradient-to-r from-green-400 to-emerald-500' 
+                        : 'bg-gradient-to-r from-purple-400 to-pink-500'
+                    }`}
+                    style={{ width: `${progress}%` }}
+                  />
+                </div>
+                <p className="text-[10px] text-gray-400 text-center">{currentStep.description}</p>
+              </div>
+            )}
+            
+            {/* 생성 버튼 - 100%일 때만 활성화 */}
+            {messages.length > 0 && variations.length === 0 && (
               <Button
-                className="w-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 shadow-lg"
+                className={`w-full shadow-lg transition-all ${
+                  progress === 100
+                    ? 'bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600'
+                    : 'bg-gray-300 cursor-not-allowed'
+                }`}
                 onClick={generateVariations}
-                disabled={generating}
+                disabled={generating || progress < 100}
               >
                 {generating ? (
                   <><Loader2 className="h-4 w-4 animate-spin mr-2" />생성 중...</>
+                ) : progress < 100 ? (
+                  <><Sparkles className="h-4 w-4 mr-2" />대화를 더 진행해주세요 ({progress}%)</>
                 ) : (
                   <><Sparkles className="h-4 w-4 mr-2" />베리에이션 6개 생성</>
                 )}
