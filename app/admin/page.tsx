@@ -291,8 +291,7 @@ export default function AdminPage() {
                       className="flex items-center justify-between p-4 bg-white rounded-lg border"
                     >
                       <div>
-                        <p className="font-medium">{user.name || '(이름 없음)'}</p>
-                        <p className="text-sm text-muted-foreground">{user.email}</p>
+                        <p className="font-medium text-lg">{user.email}</p>
                         <p className="text-xs text-muted-foreground">
                           가입일: {new Date(user.created_at).toLocaleDateString('ko-KR')}
                         </p>
@@ -347,8 +346,7 @@ export default function AdminPage() {
                     >
                       <div className="flex items-center gap-4">
                         <div>
-                          <p className="font-medium">{user.name || '(이름 없음)'}</p>
-                          <p className="text-sm text-muted-foreground">{user.email}</p>
+                          <p className="font-medium text-lg">{user.email}</p>
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
@@ -490,8 +488,7 @@ export default function AdminPage() {
                             )}
                           </div>
                           <div>
-                            <p className="font-medium">{user.name || '(이름 없음)'}</p>
-                            <p className="text-sm text-muted-foreground">{user.email}</p>
+                            <p className="font-medium text-lg">{user.email}</p>
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
