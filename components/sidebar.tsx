@@ -29,8 +29,8 @@ const navigation = [
   { name: '광고주 관리', href: '/advertisers', icon: Users },
   { name: 'BP소재', href: '/templates', icon: FileCode },
   { name: '이미지 베리에이션', href: '/image-variation', icon: ImageIcon },
+  { name: '영상 베리에이션', href: '/ai-variation', icon: Video },
   { name: 'AI 학습', href: '/ai-test', icon: BookOpen },
-  { name: 'AI 베리에이션', href: '/ai-variation', icon: Video },
 ]
 
 const externalLinks = [
