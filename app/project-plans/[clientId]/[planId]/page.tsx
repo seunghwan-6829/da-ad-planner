@@ -625,12 +625,13 @@ export default function PlanDetailPage() {
               <tr style={{ height: rowHeights.effect }}>
                 <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700 text-center align-middle">효과</td>
                 {scenes.map((scene, index) => (
-                  <td key={index} className="p-2 border-r last:border-r-0 align-middle">
-                    <Input
+                  <td key={index} className="p-2 border-r last:border-r-0 align-top">
+                    <Textarea
                       value={scene.effect}
                       onChange={(e) => updateScene(index, 'effect', e.target.value)}
-                      placeholder="효과..."
-                      className="text-sm"
+                      placeholder="효과... (Shift+Enter로 줄바꿈)"
+                      className="text-sm resize-none"
+                      style={{ height: rowHeights.effect - 16 }}
                     />
                   </td>
                 ))}
@@ -653,12 +654,13 @@ export default function PlanDetailPage() {
               <tr style={{ height: rowHeights.special_notes }}>
                 <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700 text-center align-middle">특이사항</td>
                 {scenes.map((scene, index) => (
-                  <td key={index} className="p-2 border-r last:border-r-0 align-middle">
-                    <Input
+                  <td key={index} className="p-2 border-r last:border-r-0 align-top">
+                    <Textarea
                       value={scene.special_notes}
                       onChange={(e) => updateScene(index, 'special_notes', e.target.value)}
-                      placeholder="특이사항..."
-                      className="text-sm"
+                      placeholder="특이사항... (Shift+Enter로 줄바꿈)"
+                      className="text-sm resize-none"
+                      style={{ height: rowHeights.special_notes - 16 }}
                     />
                   </td>
                 ))}
