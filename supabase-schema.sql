@@ -221,6 +221,7 @@ CREATE TABLE IF NOT EXISTS project_plans (
 ALTER TABLE project_plans ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'draft';
 ALTER TABLE project_plans ADD COLUMN IF NOT EXISTS scene_count INTEGER DEFAULT 0;
 ALTER TABLE project_plans ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE project_plans ADD COLUMN IF NOT EXISTS row_heights JSONB;
 
 ALTER TABLE project_plans ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Allow all operations on project_plans" ON project_plans;

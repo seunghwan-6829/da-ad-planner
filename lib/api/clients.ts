@@ -15,12 +15,23 @@ export interface ClientPermission {
   created_at: string
 }
 
+export interface RowHeights {
+  video: number
+  timeline: number
+  sources: number
+  effect: number
+  special_notes: number
+  script: number
+  source_info: number
+}
+
 export interface ProjectPlan {
   id: string
   client_id: string
   title: string
   status: 'draft' | 'in_progress' | 'completed'
   scene_count: number
+  row_heights: RowHeights | null
   created_at: string
   updated_at: string
 }

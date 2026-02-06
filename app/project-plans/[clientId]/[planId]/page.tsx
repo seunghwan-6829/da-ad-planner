@@ -19,7 +19,8 @@ import {
   checkClientPermission,
   Client,
   ProjectPlan,
-  PlanScene
+  PlanScene,
+  RowHeights
 } from '@/lib/api/clients'
 
 interface SceneData {
@@ -57,7 +58,7 @@ export default function PlanDetailPage() {
   const [scenes, setScenes] = useState<SceneData[]>([])
   
   // 행 높이 관리 (기본값 설정)
-  const [rowHeights, setRowHeights] = useState({
+  const DEFAULT_ROW_HEIGHTS: RowHeights = {
     video: 180,
     timeline: 50,
     sources: 80,
@@ -65,7 +66,8 @@ export default function PlanDetailPage() {
     special_notes: 50,
     script: 120,
     source_info: 80
-  })
+  }
+  const [rowHeights, setRowHeights] = useState<RowHeights>(DEFAULT_ROW_HEIGHTS)
   const [resizing, setResizing] = useState<string | null>(null)
   const [startY, setStartY] = useState(0)
   const [startHeight, setStartHeight] = useState(0)
@@ -111,6 +113,10 @@ export default function PlanDetailPage() {
       
       if (planData) {
         setTitle(planData.title)
+        // 저장된 행 높이가 있으면 로드
+        if (planData.row_heights) {
+          setRowHeights({ ...DEFAULT_ROW_HEIGHTS, ...planData.row_heights })
+        }
       }
       
       if (scenesData.length > 0) {
@@ -161,7 +167,7 @@ export default function PlanDetailPage() {
     if (!initialLoadRef.current) {
       setHasUnsavedChanges(true)
     }
-  }, [title, scenes, reference, ctaText, cardPreview])
+  }, [title, scenes, reference, ctaText, cardPreview, rowHeights])
 
   // 페이지 이탈 감지 (브라우저)
   useEffect(() => {
@@ -293,11 +299,12 @@ export default function PlanDetailPage() {
     
     setSaving(true)
     try {
-      // 기획안 정보 업데이트
+      // 기획안 정보 업데이트 (행 높이 포함)
       await updateProjectPlan(planId, {
         title,
-        scene_count: scenes.length
-      })
+        scene_count: scenes.length,
+        row_heights: rowHeights
+      } as any)
       
       // 기존 씬 삭제 후 새로 생성 (간단한 구현)
       const existingScenes = await getPlanScenes(planId)
