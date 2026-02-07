@@ -530,11 +530,11 @@ export default function PlanDetailPage() {
       {/* 씬 테이블 */}
       <div className="flex-1 overflow-auto p-6">
         <div className="border rounded-lg overflow-x-auto">
-          <table className="table-fixed" style={{ minWidth: `${100 + scenes.length * 180 + 48}px` }}>
+          <table className="table-fixed" style={{ minWidth: `${100 + scenes.length * 360 + 48}px` }}>
             <colgroup>
               <col style={{ width: '100px' }} />
               {scenes.map((_, index) => (
-                <col key={index} style={{ width: '180px' }} />
+                <col key={index} style={{ width: '360px' }} />
               ))}
               <col style={{ width: '48px' }} />
             </colgroup>
@@ -542,7 +542,7 @@ export default function PlanDetailPage() {
               <tr className="bg-gray-50 border-b">
                 <th className="p-3 text-left text-sm font-medium text-gray-500 border-r" style={{ width: '100px' }}></th>
                 {scenes.map((scene, index) => (
-                  <th key={index} className="p-3 text-center text-sm font-medium border-r last:border-r-0 relative group" style={{ width: '180px' }}>
+                  <th key={index} className="p-3 text-center text-sm font-medium border-r last:border-r-0 relative group" style={{ width: '360px' }}>
                     <div className="flex items-center justify-center gap-1">
                       {/* 왼쪽 이동 버튼 */}
                       <button
@@ -631,7 +631,7 @@ export default function PlanDetailPage() {
                     <Textarea
                       value={scene.timeline}
                       onChange={(e) => updateScene(index, 'timeline', e.target.value)}
-                      placeholder="타임라인..."
+                      placeholder=""
                       className="text-sm resize-none"
                       style={{ height: rowHeights.timeline - 16 }}
                     />
@@ -660,7 +660,7 @@ export default function PlanDetailPage() {
                     <Textarea
                       value={scene.effect}
                       onChange={(e) => updateScene(index, 'effect', e.target.value)}
-                      placeholder="효과..."
+                      placeholder=""
                       className="text-sm resize-none"
                       style={{ height: rowHeights.effect - 16 }}
                     />
@@ -689,7 +689,7 @@ export default function PlanDetailPage() {
                     <Textarea
                       value={scene.special_notes}
                       onChange={(e) => updateScene(index, 'special_notes', e.target.value)}
-                      placeholder="특이사항..."
+                      placeholder=""
                       className="text-sm resize-none"
                       style={{ height: rowHeights.special_notes - 16 }}
                     />
@@ -720,7 +720,7 @@ export default function PlanDetailPage() {
                     <Textarea
                       value={scene.script}
                       onChange={(e) => updateScene(index, 'script', e.target.value)}
-                      placeholder="대본/나레이션..."
+                      placeholder=""
                       className="text-sm resize-none"
                       style={{ height: rowHeights.script - 16 }}
                     />
