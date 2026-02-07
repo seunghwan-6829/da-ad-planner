@@ -530,11 +530,11 @@ export default function PlanDetailPage() {
       {/* 씬 테이블 */}
       <div className="flex-1 overflow-auto p-6">
         <div className="border rounded-lg overflow-x-auto">
-          <table className="table-fixed" style={{ minWidth: `${100 + scenes.length * 250 + 48}px` }}>
+          <table className="table-fixed" style={{ minWidth: `${100 + scenes.length * 270 + 48}px` }}>
             <colgroup>
               <col style={{ width: '100px' }} />
               {scenes.map((_, index) => (
-                <col key={index} style={{ width: '250px' }} />
+                <col key={index} style={{ width: '270px' }} />
               ))}
               <col style={{ width: '48px' }} />
             </colgroup>
@@ -542,7 +542,7 @@ export default function PlanDetailPage() {
               <tr className="bg-gray-50 border-b">
                 <th className="p-3 text-left text-sm font-medium text-gray-500 border-r" style={{ width: '100px' }}></th>
                 {scenes.map((scene, index) => (
-                  <th key={index} className="p-3 text-center text-sm font-medium border-r last:border-r-0 relative group" style={{ width: '250px' }}>
+                  <th key={index} className="p-3 text-center text-sm font-medium border-r last:border-r-0 relative group" style={{ width: '270px' }}>
                     <div className="flex items-center justify-center gap-1">
                       {/* 왼쪽 이동 버튼 */}
                       <button
