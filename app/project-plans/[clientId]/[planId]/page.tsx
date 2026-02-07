@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Save, Loader2, Plus, X, Upload, Image as ImageIcon, Trash2, ChevronUp, ChevronDown, GripVertical, FileUp, File, Download } from 'lucide-react'
+import { ArrowLeft, Save, Loader2, Plus, X, Upload, Image as ImageIcon, Trash2, ChevronUp, ChevronDown, GripVertical, FileUp, File, Download, FileSpreadsheet } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -429,6 +429,33 @@ export default function PlanDetailPage() {
     }
   }
 
+  // Excel 내보내기
+  function exportToExcel() {
+    // CSV 형식으로 데이터 생성
+    const headers = ['구분', ...scenes.map(s => `#${s.scene_number}`)].join(',')
+    
+    const rows = [
+      ['타임라인', ...scenes.map(s => `"${(s.timeline || '').replace(/"/g, '""')}"`)].join(','),
+      ['효과', ...scenes.map(s => `"${(s.effect || '').replace(/"/g, '""')}"`)].join(','),
+      ['특이사항', ...scenes.map(s => `"${(s.special_notes || '').replace(/"/g, '""')}"`)].join(','),
+      ['대본', ...scenes.map(s => `"${(s.script || '').replace(/"/g, '""')}"`)].join(','),
+      ['소스정보', ...scenes.map(s => `"${(s.source_info || '').replace(/"/g, '""')}"`)].join(','),
+    ]
+    
+    const csvContent = [headers, ...rows].join('\n')
+    
+    // BOM 추가 (한글 깨짐 방지)
+    const BOM = '\uFEFF'
+    const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' })
+    
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(blob)
+    link.download = `${title || '기획안'}_${new Date().toLocaleDateString()}.csv`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -489,6 +516,10 @@ export default function PlanDetailPage() {
           {hasUnsavedChanges && (
             <span className="text-xs text-orange-500 whitespace-nowrap">변경사항 있음</span>
           )}
+          <Button onClick={exportToExcel} size="sm" variant="outline">
+            <FileSpreadsheet className="h-4 w-4 mr-1" />
+            내보내기
+          </Button>
           <Button onClick={handleSave} disabled={saving} size="sm" className="bg-orange-500 hover:bg-orange-600">
             {saving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Save className="h-4 w-4 mr-1" />}
             저장
@@ -498,20 +529,20 @@ export default function PlanDetailPage() {
 
       {/* 씬 테이블 */}
       <div className="flex-1 overflow-auto p-6">
-        <div className="border rounded-lg overflow-hidden">
-          <table className="w-full table-fixed">
+        <div className="border rounded-lg overflow-x-auto">
+          <table className="table-fixed" style={{ minWidth: `${100 + scenes.length * 180 + 48}px` }}>
             <colgroup>
-              <col className="w-24" />
+              <col style={{ width: '100px' }} />
               {scenes.map((_, index) => (
-                <col key={index} style={{ width: '200px', minWidth: '200px' }} />
+                <col key={index} style={{ width: '180px' }} />
               ))}
-              <col className="w-12" />
+              <col style={{ width: '48px' }} />
             </colgroup>
             <thead>
               <tr className="bg-gray-50 border-b">
-                <th className="w-24 p-3 text-left text-sm font-medium text-gray-500 border-r"></th>
+                <th className="p-3 text-left text-sm font-medium text-gray-500 border-r" style={{ width: '100px' }}></th>
                 {scenes.map((scene, index) => (
-                  <th key={index} className="w-[200px] p-3 text-center text-sm font-medium border-r last:border-r-0 relative group">
+                  <th key={index} className="p-3 text-center text-sm font-medium border-r last:border-r-0 relative group" style={{ width: '180px' }}>
                     <div className="flex items-center justify-center gap-1">
                       {/* 왼쪽 이동 버튼 */}
                       <button
@@ -541,7 +572,7 @@ export default function PlanDetailPage() {
                     )}
                   </th>
                 ))}
-                <th className="w-12 p-3">
+                <th className="p-3" style={{ width: '48px' }}>
                   <Button size="sm" variant="ghost" onClick={addScene} className="w-full">
                     <Plus className="h-4 w-4" />
                   </Button>
@@ -600,7 +631,7 @@ export default function PlanDetailPage() {
                     <Textarea
                       value={scene.timeline}
                       onChange={(e) => updateScene(index, 'timeline', e.target.value)}
-                      placeholder="타임라인... (Shift+Enter로 줄바꿈)"
+                      placeholder="타임라인..."
                       className="text-sm resize-none"
                       style={{ height: rowHeights.timeline - 16 }}
                     />
@@ -629,7 +660,7 @@ export default function PlanDetailPage() {
                     <Textarea
                       value={scene.effect}
                       onChange={(e) => updateScene(index, 'effect', e.target.value)}
-                      placeholder="효과... (Shift+Enter로 줄바꿈)"
+                      placeholder="효과..."
                       className="text-sm resize-none"
                       style={{ height: rowHeights.effect - 16 }}
                     />
@@ -658,7 +689,7 @@ export default function PlanDetailPage() {
                     <Textarea
                       value={scene.special_notes}
                       onChange={(e) => updateScene(index, 'special_notes', e.target.value)}
-                      placeholder="특이사항... (Shift+Enter로 줄바꿈)"
+                      placeholder="특이사항..."
                       className="text-sm resize-none"
                       style={{ height: rowHeights.special_notes - 16 }}
                     />
