@@ -82,7 +82,10 @@ export default function PlanDetailPage() {
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const [showExitModal, setShowExitModal] = useState(false)
   const [pendingNavigation, setPendingNavigation] = useState<string | null>(null)
+  const [autoSaving, setAutoSaving] = useState(false)
+  const [lastSaved, setLastSaved] = useState<Date | null>(null)
   const initialLoadRef = useRef(true)
+  const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null)
   
   const fileInputRefs = useRef<{ [key: number]: HTMLInputElement | null }>({})
 
@@ -180,6 +183,80 @@ export default function PlanDetailPage() {
       setHasUnsavedChanges(true)
     }
   }, [title, scenes, reference, ctaText, cardPreview, rowHeights])
+
+  // 자동 저장 (2초 debounce)
+  useEffect(() => {
+    if (!hasUnsavedChanges || initialLoadRef.current || !plan) return
+    
+    // 기존 타이머 취소
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current)
+    }
+    
+    // 2초 후 자동 저장
+    autoSaveTimerRef.current = setTimeout(async () => {
+      setAutoSaving(true)
+      try {
+        // 기획안 정보 업데이트
+        try {
+          await updateProjectPlan(planId, {
+            title,
+            scene_count: scenes.length,
+            row_heights: rowHeights,
+            reference: reference || null,
+            cta_text: ctaText || null,
+            card_preview: cardPreview || null
+          } as any)
+        } catch {
+          await updateProjectPlan(planId, {
+            title,
+            scene_count: scenes.length,
+            row_heights: rowHeights
+          } as any)
+        }
+        
+        // 기존 씬 삭제 후 새로 생성
+        const existingScenes = await getPlanScenes(planId)
+        for (const scene of existingScenes) {
+          await deletePlanScene(scene.id)
+        }
+        
+        // 새 씬 생성
+        for (const scene of scenes) {
+          const sceneData: any = {
+            plan_id: planId,
+            scene_number: scene.scene_number,
+            image_url: scene.image_url || null,
+            timeline: scene.timeline || null,
+            sources: scene.sources.filter(s => s.trim()),
+            effect: scene.effect || null,
+            special_notes: scene.special_notes || null,
+            script: scene.script || null,
+            source_info: scene.source_info || null
+          }
+          const validFiles = scene.files?.filter(f => f && f.name && f.url) || []
+          if (validFiles.length > 0) {
+            sceneData.files = validFiles
+          }
+          await createPlanScene(sceneData)
+        }
+        
+        await updateSceneCount(planId)
+        setHasUnsavedChanges(false)
+        setLastSaved(new Date())
+      } catch (error) {
+        console.error('자동 저장 실패:', error)
+      } finally {
+        setAutoSaving(false)
+      }
+    }, 2000)
+    
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current)
+      }
+    }
+  }, [hasUnsavedChanges, title, scenes, reference, ctaText, cardPreview, rowHeights, plan, planId])
 
   // 페이지 이탈 감지 (브라우저)
   useEffect(() => {
@@ -513,9 +590,16 @@ export default function PlanDetailPage() {
               className="w-40 h-8 text-sm"
             />
           </div>
-          {hasUnsavedChanges && (
+          {autoSaving ? (
+            <span className="text-xs text-blue-500 whitespace-nowrap flex items-center gap-1">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              저장 중...
+            </span>
+          ) : hasUnsavedChanges ? (
             <span className="text-xs text-orange-500 whitespace-nowrap">변경사항 있음</span>
-          )}
+          ) : lastSaved ? (
+            <span className="text-xs text-green-500 whitespace-nowrap">자동 저장됨</span>
+          ) : null}
           <Button onClick={exportToExcel} size="sm" variant="outline">
             <FileSpreadsheet className="h-4 w-4 mr-1" />
             내보내기
@@ -747,8 +831,8 @@ export default function PlanDetailPage() {
                   소스<br/><span className="text-xs text-gray-400">(파일)</span>
                 </td>
                 {scenes.map((scene, sceneIndex) => (
-                  <td key={sceneIndex} className="p-2 border-r last:border-r-0 align-top">
-                    <div className="space-y-1" style={{ height: rowHeights.source_info - 16, overflow: 'auto' }}>
+                  <td key={sceneIndex} className="p-2 border-r last:border-r-0 align-top overflow-hidden">
+                    <div className="space-y-1 overflow-hidden" style={{ height: rowHeights.source_info - 16 }}>
                       {/* 3개의 파일 슬롯 */}
                       {[0, 1, 2].map((slotIndex) => {
                         const file = scene.files[slotIndex]
@@ -756,21 +840,21 @@ export default function PlanDetailPage() {
                         const refKey = `${sceneIndex}-${slotIndex}`
                         
                         return (
-                          <div key={slotIndex}>
+                          <div key={slotIndex} className="min-w-0">
                             {hasFile ? (
-                              <div className="flex items-center gap-1 p-1.5 bg-gray-50 rounded text-xs group border">
+                              <div className="flex items-center gap-1 p-1.5 bg-gray-50 rounded text-xs group border min-w-0 overflow-hidden">
                                 <File className="h-3 w-3 text-blue-500 flex-shrink-0" />
-                                <span className="truncate flex-1" title={file.name}>{file.name}</span>
+                                <span className="truncate min-w-0 flex-1 max-w-[120px]" title={file.name}>{file.name}</span>
                                 <span className="text-gray-400 flex-shrink-0">{(file.size / 1024 / 1024).toFixed(1)}MB</span>
                                 <button 
-                                  className="p-0.5 hover:bg-blue-100 rounded"
+                                  className="p-0.5 hover:bg-blue-100 rounded flex-shrink-0"
                                   onClick={() => downloadFile(file)}
                                   title="다운로드"
                                 >
                                   <Download className="h-3 w-3 text-blue-500" />
                                 </button>
                                 <button 
-                                  className="p-0.5 hover:bg-red-100 rounded"
+                                  className="p-0.5 hover:bg-red-100 rounded flex-shrink-0"
                                   onClick={() => removeFile(sceneIndex, slotIndex)}
                                   title="삭제"
                                 >
