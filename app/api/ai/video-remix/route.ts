@@ -11,6 +11,17 @@ interface VideoFrame {
   timestampLabel: string
 }
 
+interface ParsedSections {
+  overview: string
+  sceneBreakdown: string
+  creativeOpportunities: string
+  remixConcept: string
+  remixScript: string
+  alternateScript: string
+  productionPlan: string
+  riskNotes: string
+}
+
 function extractBase64Image(dataUrl: string) {
   const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/)
   if (!match) return null
@@ -24,6 +35,19 @@ function extractBase64Image(dataUrl: string) {
 function extractSection(text: string, tag: string) {
   const match = text.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i'))
   return match?.[1]?.trim() || ''
+}
+
+function parseSections(text: string): ParsedSections {
+  return {
+    overview: extractSection(text, 'overview'),
+    sceneBreakdown: extractSection(text, 'scene_breakdown'),
+    creativeOpportunities: extractSection(text, 'creative_opportunities'),
+    remixConcept: extractSection(text, 'remix_concept'),
+    remixScript: extractSection(text, 'remix_script'),
+    alternateScript: extractSection(text, 'alternate_script'),
+    productionPlan: extractSection(text, 'production_plan'),
+    riskNotes: extractSection(text, 'risk_notes'),
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -78,13 +102,10 @@ export async function POST(request: NextRequest) {
     .map((frame, index) => `- 프레임 ${index + 1}: ${frame.timestampLabel}`)
     .join('\n')
 
-  const prompt = `당신은 퍼포먼스 광고 영상 분석가이자 리믹스 디렉터입니다.
+  const prompt = `당신은 퍼포먼스 광고 영상 분석가이자 리믹스 카피라이터입니다.
 
-업로드된 영상의 대표 프레임과 메타데이터를 바탕으로 다음을 한국어로 정리해 주세요.
-- 영상의 핵심 메시지와 퍼널 단계
-- 화면 전개, 후킹 포인트, 전환 흐름
-- 리믹스하면 좋아질 지점
-- 바로 제작 가능한 리믹스 콘셉트와 편집 가이드
+업로드된 영상의 대표 프레임과 메타데이터를 바탕으로 "분석"에서 끝내지 말고,
+바로 편집 가능한 리믹스 광고 대본까지 완성해 주세요.
 
 [영상 메타데이터]
 ${videoFacts || '없음'}
@@ -98,14 +119,23 @@ ${body.brandContext?.trim() || '사용자 입력 없음'}
 [제작 목표]
 ${body.creativeGoal?.trim() || '리믹스 가능한 광고 제작안까지 제안'}
 
+[중요 지시]
+- 응답은 반드시 한국어로 작성
+- 분석보다 "리믹스 결과물" 비중을 더 크게 둘 것
+- 리믹스 대본은 실제 편집자가 바로 써먹을 수 있게 구체적으로 작성
+- 장면별로 화면, 자막, 내레이션/보이스오버, 효과, CTA를 분리해서 작성
+- 원본을 단순 요약하지 말고 성과 개선 관점의 리믹스를 제안
+- 대본은 15~30초 분량으로 작성
+- 반드시 1안, 2안 두 개의 대본을 제공
+
 반드시 아래 태그 형식을 지켜서 답변하세요.
 
 <overview>
-영상의 전체 한줄 진단, 타깃 추정, 메시지 요약
+원본 영상의 한줄 진단, 타깃 추정, 메시지 요약
 </overview>
 
 <scene_breakdown>
-장면 흐름을 4-8개 bullet로 정리
+원본 장면 흐름을 4-8개 bullet로 정리
 </scene_breakdown>
 
 <creative_opportunities>
@@ -117,66 +147,143 @@ ${body.creativeGoal?.trim() || '리믹스 가능한 광고 제작안까지 제�
 </remix_concept>
 
 <remix_script>
-15~30초 분량의 리믹스 영상 구성안을 shot-by-shot 형식으로 작성
+[리믹스 대본 1안]
+- Hook:
+- Shot 1:
+  화면:
+  자막:
+  내레이션:
+  편집포인트:
+- Shot 2:
+...
+- 엔딩 CTA:
 </remix_script>
 
+<alternate_script>
+[리믹스 대본 2안]
+- Hook:
+- Shot 1:
+  화면:
+  자막:
+  내레이션:
+  편집포인트:
+- Shot 2:
+...
+- 엔딩 CTA:
+</alternate_script>
+
 <production_plan>
-편집, 자막, 후킹 문구, 사운드, CTA 제작 팁을 bullet로 정리
+편집, 자막 톤, 사운드, 전환, 썸네일 카피, A/B 테스트 포인트를 bullet로 정리
 </production_plan>
 
 <risk_notes>
-추정에 기반한 부분, 확인이 필요한 리스크, 추가로 받으면 좋은 자료를 bullet로 정리
+추정에 기반한 부분, 추가 확인이 필요한 리스크, 더 받으면 좋은 자료를 bullet로 정리
 </risk_notes>`
 
-  try {
-    const res = await fetch(ANTHROPIC_BASE, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 2600,
-        messages: [
-          {
-            role: 'user',
-            content: [
-              ...frames,
+  const encoder = new TextEncoder()
+  const stream = new ReadableStream({
+    async start(controller) {
+      try {
+        const res = await fetch(ANTHROPIC_BASE, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify({
+            model: MODEL,
+            max_tokens: 3200,
+            stream: true,
+            messages: [
               {
-                type: 'text',
-                text: prompt,
+                role: 'user',
+                content: [
+                  ...frames,
+                  {
+                    type: 'text',
+                    text: prompt,
+                  },
+                ],
               },
             ],
-          },
-        ],
-      }),
-    })
+          }),
+        })
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}))
-      return NextResponse.json({ error: err.error?.message ?? '영상 분석 요청에 실패했습니다.' }, { status: 500 })
-    }
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}))
+          controller.enqueue(
+            encoder.encode(
+              `data: ${JSON.stringify({ error: err.error?.message ?? '영상 분석 요청에 실패했습니다.' })}\n\n`
+            )
+          )
+          controller.close()
+          return
+        }
 
-    const data = await res.json()
-    const text = data.content?.[0]?.text || ''
+        const reader = res.body?.getReader()
+        if (!reader) {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: '스트림을 읽지 못했습니다.' })}\n\n`))
+          controller.close()
+          return
+        }
 
-    return NextResponse.json({
-      model: MODEL,
-      raw: text,
-      sections: {
-        overview: extractSection(text, 'overview'),
-        sceneBreakdown: extractSection(text, 'scene_breakdown'),
-        creativeOpportunities: extractSection(text, 'creative_opportunities'),
-        remixConcept: extractSection(text, 'remix_concept'),
-        remixScript: extractSection(text, 'remix_script'),
-        productionPlan: extractSection(text, 'production_plan'),
-        riskNotes: extractSection(text, 'risk_notes'),
-      },
-    })
-  } catch (error) {
-    console.error('Video remix error:', error)
-    return NextResponse.json({ error: '영상 분석 중 오류가 발생했습니다.' }, { status: 500 })
-  }
+        const decoder = new TextDecoder()
+        let buffer = ''
+        let fullText = ''
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop() || ''
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue
+
+            const jsonStr = line.slice(6)
+            if (jsonStr === '[DONE]') continue
+
+            try {
+              const parsed = JSON.parse(jsonStr)
+              if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
+                fullText += parsed.delta.text
+                controller.enqueue(
+                  encoder.encode(`data: ${JSON.stringify({ text: parsed.delta.text, raw: fullText })}\n\n`)
+                )
+              }
+            } catch {
+              // ignore parse failures from non-content events
+            }
+          }
+        }
+
+        controller.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({
+              done: true,
+              raw: fullText,
+              model: MODEL,
+              sections: parseSections(fullText),
+            })}\n\n`
+          )
+        )
+        controller.close()
+      } catch (error) {
+        console.error('Video remix stream error:', error)
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: '영상 분석 중 오류가 발생했습니다.' })}\n\n`))
+        controller.close()
+      }
+    },
+  })
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    },
+  })
 }

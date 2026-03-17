@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Clapperboard, Film, Loader2, Sparkles, Upload, Wand2 } from 'lucide-react'
+import { Clapperboard, Film, Loader2, Radio, Sparkles, Upload, Wand2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -27,6 +27,7 @@ interface AnalysisSections {
   creativeOpportunities: string
   remixConcept: string
   remixScript: string
+  alternateScript: string
   productionPlan: string
   riskNotes: string
 }
@@ -37,6 +38,7 @@ const EMPTY_SECTIONS: AnalysisSections = {
   creativeOpportunities: '',
   remixConcept: '',
   remixScript: '',
+  alternateScript: '',
   productionPlan: '',
   riskNotes: '',
 }
@@ -131,11 +133,21 @@ async function extractFramesFromVideo(file: File) {
   return { objectUrl, metadata, frames }
 }
 
-function SectionCard({ title, description, content }: { title: string; description?: string; content: string }) {
+function SectionCard({
+  title,
+  description,
+  content,
+  emphasis = false,
+}: {
+  title: string
+  description?: string
+  content: string
+  emphasis?: boolean
+}) {
   return (
-    <Card className="border-slate-200">
+    <Card className={emphasis ? 'border-blue-300 shadow-sm' : 'border-slate-200'}>
       <CardHeader className="pb-3">
-        <CardTitle className="text-base">{title}</CardTitle>
+        <CardTitle className={emphasis ? 'text-lg text-slate-950' : 'text-base'}>{title}</CardTitle>
         {description ? <CardDescription>{description}</CardDescription> : null}
       </CardHeader>
       <CardContent>
@@ -211,6 +223,8 @@ export default function VideoProductionPage() {
 
     setAnalyzing(true)
     setError('')
+    setAnalysisSections(EMPTY_SECTIONS)
+    setRawResponse('')
 
     try {
       const response = await fetch('/api/ai/video-remix', {
@@ -231,22 +245,49 @@ export default function VideoProductionPage() {
         }),
       })
 
-      const data = await response.json()
-      if (!response.ok) {
+      if (!response.ok || !response.body) {
+        const data = await response.json().catch(() => ({}))
         throw new Error(data.error || '영상 분석 요청에 실패했습니다.')
       }
 
-      setAnalysisSections({
-        overview: data.sections?.overview || '',
-        sceneBreakdown: data.sections?.sceneBreakdown || '',
-        creativeOpportunities: data.sections?.creativeOpportunities || '',
-        remixConcept: data.sections?.remixConcept || '',
-        remixScript: data.sections?.remixScript || '',
-        productionPlan: data.sections?.productionPlan || '',
-        riskNotes: data.sections?.riskNotes || '',
-      })
-      setRawResponse(data.raw || '')
-      setModelName(data.model || '')
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+
+          const payload = JSON.parse(line.slice(6)) as {
+            text?: string
+            raw?: string
+            done?: boolean
+            error?: string
+            model?: string
+            sections?: AnalysisSections
+          }
+
+          if (payload.error) {
+            throw new Error(payload.error)
+          }
+
+          if (payload.raw) {
+            setRawResponse(payload.raw)
+          }
+
+          if (payload.done) {
+            setModelName(payload.model || '')
+            setAnalysisSections(payload.sections || EMPTY_SECTIONS)
+          }
+        }
+      }
     } catch (analysisError) {
       console.error(analysisError)
       setError(analysisError instanceof Error ? analysisError.message : '영상 분석에 실패했습니다.')
@@ -265,10 +306,10 @@ export default function VideoProductionPage() {
               영상 분석 및 제작
             </div>
             <div>
-              <h1 className="text-3xl font-semibold tracking-tight">업로드한 영상을 바로 분석하고 리믹스 제작안까지 받으세요</h1>
+              <h1 className="text-3xl font-semibold tracking-tight">분석에서 끝나지 않고, 리믹스 대본까지 바로 뽑아줍니다</h1>
               <p className="mt-2 max-w-3xl text-sm text-slate-200">
-                영상에서 대표 프레임을 자동 샘플링한 뒤, Opus 계열 모델이 후킹 포인트, 장면 흐름, 리믹스 콘셉트,
-                편집 가이드를 한 번에 정리합니다.
+                업로드한 영상에서 대표 프레임을 자동 샘플링한 뒤, Opus 계열 모델이 분석을 실시간으로 작성하고
+                최종적으로 리믹스 대본 2안과 제작 가이드까지 정리합니다.
               </p>
             </div>
           </div>
@@ -353,7 +394,7 @@ export default function VideoProductionPage() {
                   id="creative-goal"
                   value={creativeGoal}
                   onChange={(event) => setCreativeGoal(event.target.value)}
-                  placeholder="예: 첫 3초 후킹 강화, 숏폼 리믹스 버전 제작"
+                  placeholder="예: 첫 3초 후킹 강화, 숏폼 리믹스 대본 2안 제작"
                 />
               </div>
 
@@ -361,12 +402,12 @@ export default function VideoProductionPage() {
                 {analyzing ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    영상 분석 중...
+                    분석과 리믹스 대본 작성 중...
                   </>
                 ) : (
                   <>
                     <Sparkles className="mr-2 h-4 w-4" />
-                    Opus로 분석 및 제작안 생성
+                    실시간 분석 + 리믹스 대본 생성
                   </>
                 )}
               </Button>
@@ -403,6 +444,33 @@ export default function VideoProductionPage() {
         </div>
 
         <div className="space-y-6">
+          <Card className="border-blue-200 bg-blue-50/40">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-xl">
+                <Radio className={`h-5 w-5 ${analyzing ? 'animate-pulse text-blue-600' : 'text-blue-600'}`} />
+                실시간 응답
+              </CardTitle>
+              <CardDescription>분석과 리믹스 초안이 생성되는 동안 응답이 실시간으로 누적됩니다.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="min-h-56 whitespace-pre-wrap rounded-2xl bg-slate-950 p-4 text-sm leading-6 text-slate-100">
+                {rawResponse || (analyzing ? '모델이 응답을 작성하는 중입니다...' : '분석을 시작하면 실시간 응답이 여기에 표시됩니다.')}
+              </div>
+            </CardContent>
+          </Card>
+
+          <SectionCard
+            title="리믹스 대본 1안"
+            description="실제로 편집 가능한 메인 리믹스 대본입니다."
+            content={analysisSections.remixScript}
+            emphasis
+          />
+          <SectionCard
+            title="리믹스 대본 2안"
+            description="후킹 각도를 달리한 보조 대본입니다."
+            content={analysisSections.alternateScript}
+            emphasis
+          />
           <SectionCard
             title="전체 진단"
             description="타깃 추정, 메시지 밀도, 현재 영상의 포지션을 빠르게 요약합니다."
@@ -414,11 +482,6 @@ export default function VideoProductionPage() {
             title="추천 리믹스 콘셉트"
             description="광고 성과를 높이기 위한 방향을 3개 안으로 제안합니다."
             content={analysisSections.remixConcept}
-          />
-          <SectionCard
-            title="리믹스 제작안"
-            description="바로 편집 가능한 shot-by-shot 구성입니다."
-            content={analysisSections.remixScript}
           />
           <SectionCard title="편집 및 제작 가이드" content={analysisSections.productionPlan} />
           <SectionCard title="리스크 및 추가 요청 자료" content={analysisSections.riskNotes} />
