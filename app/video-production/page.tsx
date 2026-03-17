@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Clapperboard, Film, Loader2, Radio, Sparkles, Upload, Wand2 } from 'lucide-react'
+import { Clapperboard, Download, Film, Loader2, Radio, Sparkles, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -19,28 +19,17 @@ interface VideoMetadata {
 interface SampledFrame {
   dataUrl: string
   timestampLabel: string
+  fileName: string
 }
 
-interface AnalysisSections {
-  overview: string
-  sceneBreakdown: string
-  creativeOpportunities: string
-  remixConcept: string
-  remixScript: string
-  alternateScript: string
-  productionPlan: string
-  riskNotes: string
+interface StreamState {
+  raw: string
+  loading: boolean
 }
 
-const EMPTY_SECTIONS: AnalysisSections = {
-  overview: '',
-  sceneBreakdown: '',
-  creativeOpportunities: '',
-  remixConcept: '',
-  remixScript: '',
-  alternateScript: '',
-  productionPlan: '',
-  riskNotes: '',
+const EMPTY_STREAM: StreamState = {
+  raw: '',
+  loading: false,
 }
 
 function formatSeconds(seconds: number) {
@@ -53,6 +42,19 @@ function formatSeconds(seconds: number) {
 function formatFileSize(sizeBytes: number) {
   if (!sizeBytes) return '-'
   return `${(sizeBytes / 1024 / 1024).toFixed(2)}MB`
+}
+
+function sanitizeFileName(name: string) {
+  return name.replace(/[<>:"/\\|?*]+/g, '-')
+}
+
+function triggerDownload(dataUrl: string, fileName: string) {
+  const link = document.createElement('a')
+  link.href = dataUrl
+  link.download = fileName
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
 }
 
 function onceEvent<T extends Event>(target: EventTarget, eventName: string) {
@@ -110,49 +112,58 @@ async function extractFramesFromVideo(file: File) {
   canvas.width = targetWidth
   canvas.height = targetHeight
 
-  const rawTimestamps =
-    metadata.duration > 1
-      ? [0.12, 0.32, 0.55, 0.8].map((ratio) =>
-          Math.min(metadata.duration * ratio, Math.max(metadata.duration - 0.15, 0))
-        )
-      : [0]
+  const timestamps: number[] = []
+  if (metadata.duration <= 0) {
+    timestamps.push(0)
+  } else {
+    for (let time = 0; time < metadata.duration; time += 3) {
+      timestamps.push(Number(Math.min(time, Math.max(metadata.duration - 0.1, 0)).toFixed(2)))
+    }
+    const lastFrameTime = Number(Math.max(metadata.duration - 0.1, 0).toFixed(2))
+    if (!timestamps.includes(lastFrameTime)) {
+      timestamps.push(lastFrameTime)
+    }
+  }
 
-  const timestamps = Array.from(new Set(rawTimestamps.map((time) => Number(time.toFixed(2)))))
+  const baseName = sanitizeFileName(file.name.replace(/\.[^.]+$/, ''))
   const frames: SampledFrame[] = []
 
   for (const timestamp of timestamps) {
     video.currentTime = timestamp
     await onceEvent(video, 'seeked')
     context.drawImage(video, 0, 0, canvas.width, canvas.height)
+    const secondsLabel = Math.floor(timestamp)
     frames.push({
-      dataUrl: canvas.toDataURL('image/jpeg', 0.82),
+      dataUrl: canvas.toDataURL('image/jpeg', 0.84),
       timestampLabel: `${formatSeconds(timestamp)} 구간`,
+      fileName: `${baseName}-frame-${secondsLabel.toString().padStart(3, '0')}s.jpg`,
     })
   }
 
   return { objectUrl, metadata, frames }
 }
 
-function SectionCard({
+function StreamCard({
   title,
   description,
-  content,
-  emphasis = false,
+  state,
 }: {
   title: string
-  description?: string
-  content: string
-  emphasis?: boolean
+  description: string
+  state: StreamState
 }) {
   return (
-    <Card className={emphasis ? 'border-blue-300 shadow-sm' : 'border-slate-200'}>
-      <CardHeader className="pb-3">
-        <CardTitle className={emphasis ? 'text-lg text-slate-950' : 'text-base'}>{title}</CardTitle>
-        {description ? <CardDescription>{description}</CardDescription> : null}
+    <Card className="border-slate-200">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-xl">
+          <Radio className={`h-5 w-5 ${state.loading ? 'animate-pulse text-blue-600' : 'text-slate-500'}`} />
+          {title}
+        </CardTitle>
+        <CardDescription>{description}</CardDescription>
       </CardHeader>
       <CardContent>
-        <div className="whitespace-pre-wrap text-sm leading-6 text-slate-700">
-          {content || '아직 결과가 없습니다.'}
+        <div className="min-h-56 whitespace-pre-wrap rounded-2xl border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-900">
+          {state.raw || (state.loading ? '실시간으로 응답을 작성하는 중입니다...' : '생성을 시작하면 여기에 표시됩니다.')}
         </div>
       </CardContent>
     </Card>
@@ -165,14 +176,16 @@ export default function VideoProductionPage() {
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
   const [videoMetadata, setVideoMetadata] = useState<VideoMetadata | null>(null)
   const [sampledFrames, setSampledFrames] = useState<SampledFrame[]>([])
-  const [brandContext, setBrandContext] = useState('')
+  const [brandName, setBrandName] = useState('')
+  const [productInfo, setProductInfo] = useState('')
+  const [productAppeal, setProductAppeal] = useState('')
   const [creativeGoal, setCreativeGoal] = useState('')
   const [preparing, setPreparing] = useState(false)
-  const [analyzing, setAnalyzing] = useState(false)
-  const [analysisSections, setAnalysisSections] = useState<AnalysisSections>(EMPTY_SECTIONS)
-  const [rawResponse, setRawResponse] = useState('')
   const [modelName, setModelName] = useState('')
   const [error, setError] = useState('')
+  const [analysis, setAnalysis] = useState<StreamState>(EMPTY_STREAM)
+  const [script1, setScript1] = useState<StreamState>(EMPTY_STREAM)
+  const [script2, setScript2] = useState<StreamState>(EMPTY_STREAM)
 
   useEffect(() => {
     return () => {
@@ -189,8 +202,9 @@ export default function VideoProductionPage() {
     setPreparing(true)
     setError('')
     setVideoFile(file)
-    setAnalysisSections(EMPTY_SECTIONS)
-    setRawResponse('')
+    setAnalysis(EMPTY_STREAM)
+    setScript1(EMPTY_STREAM)
+    setScript2(EMPTY_STREAM)
     setModelName('')
 
     try {
@@ -215,85 +229,112 @@ export default function VideoProductionPage() {
     }
   }
 
-  async function handleAnalyze() {
+  async function streamIntoState(
+    endpoint: string,
+    setter: React.Dispatch<React.SetStateAction<StreamState>>,
+    payload: Record<string, unknown>
+  ) {
+    setter({ raw: '', loading: true })
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    })
+
+    if (!response.ok || !response.body) {
+      const data = await response.json().catch(() => ({}))
+      throw new Error(data.error || 'AI 응답 생성에 실패했습니다.')
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        const payload = JSON.parse(line.slice(6)) as {
+          raw?: string
+          done?: boolean
+          error?: string
+          model?: string
+        }
+
+        if (payload.error) {
+          throw new Error(payload.error)
+        }
+
+        if (payload.model) {
+          setModelName(payload.model)
+        }
+
+        if (typeof payload.raw === 'string') {
+          setter((prev) => ({ ...prev, raw: payload.raw }))
+        }
+
+        if (payload.done) {
+          setter((prev) => ({ ...prev, loading: false }))
+        }
+      }
+    }
+  }
+
+  async function handleGenerate() {
     if (!videoFile || sampledFrames.length === 0 || !videoMetadata) {
       setError('영상을 먼저 업로드해 주세요.')
       return
     }
 
-    setAnalyzing(true)
     setError('')
-    setAnalysisSections(EMPTY_SECTIONS)
-    setRawResponse('')
+    setAnalysis(EMPTY_STREAM)
+    setScript1(EMPTY_STREAM)
+    setScript2(EMPTY_STREAM)
+
+    const payload = {
+      videoName: videoFile.name,
+      mimeType: videoMetadata.mimeType,
+      duration: videoMetadata.duration,
+      width: videoMetadata.width,
+      height: videoMetadata.height,
+      sizeBytes: videoMetadata.sizeBytes,
+      brandName,
+      productInfo,
+      productAppeal,
+      creativeGoal,
+      frames: sampledFrames,
+    }
 
     try {
-      const response = await fetch('/api/ai/video-remix', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          videoName: videoFile.name,
-          mimeType: videoMetadata.mimeType,
-          duration: videoMetadata.duration,
-          width: videoMetadata.width,
-          height: videoMetadata.height,
-          sizeBytes: videoMetadata.sizeBytes,
-          brandContext,
-          creativeGoal,
-          frames: sampledFrames,
-        }),
-      })
-
-      if (!response.ok || !response.body) {
-        const data = await response.json().catch(() => ({}))
-        throw new Error(data.error || '영상 분석 요청에 실패했습니다.')
-      }
-
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-
-          const payload = JSON.parse(line.slice(6)) as {
-            text?: string
-            raw?: string
-            done?: boolean
-            error?: string
-            model?: string
-            sections?: AnalysisSections
-          }
-
-          if (payload.error) {
-            throw new Error(payload.error)
-          }
-
-          if (payload.raw) {
-            setRawResponse(payload.raw)
-          }
-
-          if (payload.done) {
-            setModelName(payload.model || '')
-            setAnalysisSections(payload.sections || EMPTY_SECTIONS)
-          }
-        }
-      }
-    } catch (analysisError) {
-      console.error(analysisError)
-      setError(analysisError instanceof Error ? analysisError.message : '영상 분석에 실패했습니다.')
-    } finally {
-      setAnalyzing(false)
+      await Promise.all([
+        streamIntoState('/api/ai/video-analysis', setAnalysis, payload),
+        streamIntoState('/api/ai/video-remix-script-1', setScript1, payload),
+        streamIntoState('/api/ai/video-remix-script-2', setScript2, payload),
+      ])
+    } catch (generationError) {
+      console.error(generationError)
+      setError(generationError instanceof Error ? generationError.message : '영상 생성에 실패했습니다.')
+      setAnalysis((prev) => ({ ...prev, loading: false }))
+      setScript1((prev) => ({ ...prev, loading: false }))
+      setScript2((prev) => ({ ...prev, loading: false }))
     }
+  }
+
+  function handleDownloadAllFrames() {
+    sampledFrames.forEach((frame, index) => {
+      window.setTimeout(() => {
+        triggerDownload(frame.dataUrl, frame.fileName)
+      }, index * 180)
+    })
   }
 
   return (
@@ -306,10 +347,9 @@ export default function VideoProductionPage() {
               영상 분석 및 제작
             </div>
             <div>
-              <h1 className="text-3xl font-semibold tracking-tight">분석에서 끝나지 않고, 리믹스 대본까지 바로 뽑아줍니다</h1>
+              <h1 className="text-3xl font-semibold tracking-tight">분석과 리믹스 대본을 각각 실시간으로 나눠서 생성합니다</h1>
               <p className="mt-2 max-w-3xl text-sm text-slate-200">
-                업로드한 영상에서 대표 프레임을 자동 샘플링한 뒤, Opus 계열 모델이 분석을 실시간으로 작성하고
-                최종적으로 리믹스 대본 2안과 제작 가이드까지 정리합니다.
+                프레임은 3초마다 추출하고, 분석 API와 대본 1안 API, 대본 2안 API를 분리해서 토큰이 잘리지 않게 구성했습니다.
               </p>
             </div>
           </div>
@@ -327,7 +367,7 @@ export default function VideoProductionPage() {
                 <Upload className="h-5 w-5 text-primary" />
                 영상 업로드
               </CardTitle>
-              <CardDescription>MP4, MOV, WebM 파일을 올리면 대표 프레임을 뽑아서 분석 준비를 합니다.</CardDescription>
+              <CardDescription>대표 프레임은 3초마다 자동 추출됩니다.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <Button onClick={() => fileInputRef.current?.click()} className="w-full" disabled={preparing}>
@@ -371,19 +411,38 @@ export default function VideoProductionPage() {
                 </div>
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                   <p className="text-xs font-medium uppercase tracking-wide text-slate-500">샘플 프레임</p>
-                  <p className="mt-2 text-sm font-medium text-slate-900">
-                    {sampledFrames.length ? `${sampledFrames.length}장 추출 완료` : '-'}
-                  </p>
+                  <p className="mt-2 text-sm font-medium text-slate-900">{sampledFrames.length ? `${sampledFrames.length}장 추출 완료` : '-'}</p>
                 </div>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="brand-context">브랜드 / 제품 정보</Label>
+                <Label htmlFor="brand-name">브랜드명</Label>
+                <Input
+                  id="brand-name"
+                  value={brandName}
+                  onChange={(event) => setBrandName(event.target.value)}
+                  placeholder="예: 라이브인베스트"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="product-info">제품 정보</Label>
                 <Textarea
-                  id="brand-context"
-                  value={brandContext}
-                  onChange={(event) => setBrandContext(event.target.value)}
-                  placeholder="예: 투자 초보자를 위한 미국 주식 앱, 핵심 USP는 쉬운 매매와 자동 리포트"
+                  id="product-info"
+                  value={productInfo}
+                  onChange={(event) => setProductInfo(event.target.value)}
+                  placeholder="예: 투자 초보자를 위한 미국 주식 앱, 자동 리포트와 쉬운 매수/매도 UX 제공"
+                  className="min-h-24"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="product-appeal">제품 소구점</Label>
+                <Textarea
+                  id="product-appeal"
+                  value={productAppeal}
+                  onChange={(event) => setProductAppeal(event.target.value)}
+                  placeholder="예: 초보자도 쉽게 시작, 실시간 요약 리포트, 낮은 진입장벽, 간편한 사용성"
                   className="min-h-24"
                 />
               </div>
@@ -398,16 +457,20 @@ export default function VideoProductionPage() {
                 />
               </div>
 
-              <Button onClick={handleAnalyze} className="w-full" disabled={preparing || analyzing || sampledFrames.length === 0}>
-                {analyzing ? (
+              <Button
+                onClick={handleGenerate}
+                className="w-full"
+                disabled={preparing || analysis.loading || script1.loading || script2.loading || sampledFrames.length === 0}
+              >
+                {analysis.loading || script1.loading || script2.loading ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    분석과 리믹스 대본 작성 중...
+                    분석 + 대본 생성 중...
                   </>
                 ) : (
                   <>
                     <Sparkles className="mr-2 h-4 w-4" />
-                    실시간 분석 + 리믹스 대본 생성
+                    분석 / 대본1 / 대본2 실시간 생성
                   </>
                 )}
               </Button>
@@ -418,20 +481,36 @@ export default function VideoProductionPage() {
 
           <Card className="border-slate-200">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-xl">
-                <Clapperboard className="h-5 w-5 text-primary" />
-                대표 프레임
-              </CardTitle>
-              <CardDescription>업로드한 영상에서 자동으로 뽑은 핵심 장면입니다.</CardDescription>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2 text-xl">
+                    <Clapperboard className="h-5 w-5 text-primary" />
+                    대표 프레임
+                  </CardTitle>
+                  <CardDescription>썸네일을 클릭하면 개별 다운로드되고, 버튼으로 전체 다운로드도 가능합니다.</CardDescription>
+                </div>
+                <Button variant="outline" onClick={handleDownloadAllFrames} disabled={sampledFrames.length === 0}>
+                  <Download className="mr-2 h-4 w-4" />
+                  전체 다운로드
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               {sampledFrames.length > 0 ? (
                 <div className="grid gap-4 sm:grid-cols-2">
                   {sampledFrames.map((frame) => (
-                    <div key={frame.timestampLabel} className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                    <button
+                      key={frame.fileName}
+                      type="button"
+                      onClick={() => triggerDownload(frame.dataUrl, frame.fileName)}
+                      className="overflow-hidden rounded-2xl border border-slate-200 bg-white text-left transition hover:border-primary hover:shadow-sm"
+                    >
                       <img src={frame.dataUrl} alt={frame.timestampLabel} className="aspect-video w-full object-cover" />
-                      <div className="border-t border-slate-200 px-3 py-2 text-sm text-slate-600">{frame.timestampLabel}</div>
-                    </div>
+                      <div className="border-t border-slate-200 px-3 py-2 text-sm text-slate-600">
+                        <div>{frame.timestampLabel}</div>
+                        <div className="text-xs text-slate-400">{frame.fileName}</div>
+                      </div>
+                    </button>
                   ))}
                 </div>
               ) : (
@@ -444,64 +523,21 @@ export default function VideoProductionPage() {
         </div>
 
         <div className="space-y-6">
-          <Card className="border-blue-200 bg-blue-50/40">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-xl">
-                <Radio className={`h-5 w-5 ${analyzing ? 'animate-pulse text-blue-600' : 'text-blue-600'}`} />
-                실시간 응답
-              </CardTitle>
-              <CardDescription>분석과 리믹스 초안이 생성되는 동안 응답이 실시간으로 누적됩니다.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="min-h-56 whitespace-pre-wrap rounded-2xl bg-slate-950 p-4 text-sm leading-6 text-slate-100">
-                {rawResponse || (analyzing ? '모델이 응답을 작성하는 중입니다...' : '분석을 시작하면 실시간 응답이 여기에 표시됩니다.')}
-              </div>
-            </CardContent>
-          </Card>
-
-          <SectionCard
+          <StreamCard
+            title="실시간 분석"
+            description="원본 영상의 구조, 타깃, 문제점, 리믹스 포인트를 실시간으로 분석합니다."
+            state={analysis}
+          />
+          <StreamCard
             title="리믹스 대본 1안"
-            description="실제로 편집 가능한 메인 리믹스 대본입니다."
-            content={analysisSections.remixScript}
-            emphasis
+            description="메인 콘셉트 기준의 대본 1안을 실시간으로 작성합니다."
+            state={script1}
           />
-          <SectionCard
+          <StreamCard
             title="리믹스 대본 2안"
-            description="후킹 각도를 달리한 보조 대본입니다."
-            content={analysisSections.alternateScript}
-            emphasis
+            description="다른 후킹 구조의 대본 2안을 실시간으로 작성합니다."
+            state={script2}
           />
-          <SectionCard
-            title="전체 진단"
-            description="타깃 추정, 메시지 밀도, 현재 영상의 포지션을 빠르게 요약합니다."
-            content={analysisSections.overview}
-          />
-          <SectionCard title="장면 흐름 분석" content={analysisSections.sceneBreakdown} />
-          <SectionCard title="리믹스 기회" content={analysisSections.creativeOpportunities} />
-          <SectionCard
-            title="추천 리믹스 콘셉트"
-            description="광고 성과를 높이기 위한 방향을 3개 안으로 제안합니다."
-            content={analysisSections.remixConcept}
-          />
-          <SectionCard title="편집 및 제작 가이드" content={analysisSections.productionPlan} />
-          <SectionCard title="리스크 및 추가 요청 자료" content={analysisSections.riskNotes} />
-
-          {rawResponse ? (
-            <Card className="border-slate-200">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-xl">
-                  <Wand2 className="h-5 w-5 text-primary" />
-                  원문 응답
-                </CardTitle>
-                <CardDescription>태그 기반 파싱 전 원본 응답입니다.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <pre className="whitespace-pre-wrap rounded-2xl bg-slate-950 p-4 text-xs leading-6 text-slate-100">
-                  {rawResponse}
-                </pre>
-              </CardContent>
-            </Card>
-          ) : null}
         </div>
       </div>
     </div>
