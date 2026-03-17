@@ -143,6 +143,56 @@ async function extractFramesFromVideo(file: File) {
   return { objectUrl, metadata, frames }
 }
 
+function renderLine(line: string, index: number) {
+  const trimmed = line.trim()
+  if (!trimmed) {
+    return <div key={`space-${index}`} className="h-2" />
+  }
+
+  const styles = [
+    { match: /^\[.*\]$/, emoji: '📌', className: 'bg-blue-50 text-blue-900 font-semibold' },
+    { match: /^-\s*콘셉트:/, emoji: '💡', className: 'bg-amber-50 text-amber-900 font-medium' },
+    { match: /^-\s*Hook:/, emoji: '🎯', className: 'bg-rose-50 text-rose-900 font-medium' },
+    { match: /^-\s*Shot\s*\d+/, emoji: '🎬', className: 'bg-slate-100 text-slate-900 font-semibold' },
+    { match: /^화면:/, emoji: '👀', className: 'text-slate-800' },
+    { match: /^자막:/, emoji: '📝', className: 'text-slate-800' },
+    { match: /^내레이션:/, emoji: '🎙️', className: 'text-slate-800' },
+    { match: /^편집포인트:/, emoji: '✂️', className: 'text-slate-800' },
+    { match: /^-\s*엔딩 CTA:/, emoji: '🚀', className: 'bg-emerald-50 text-emerald-900 font-medium' },
+    { match: /^-\s*썸네일 카피:/, emoji: '🖼️', className: 'bg-violet-50 text-violet-900 font-medium' },
+    { match: /^\d+\./, emoji: '🔎', className: 'bg-slate-50 text-slate-900 font-medium' },
+  ]
+
+  const found = styles.find((style) => style.match.test(trimmed))
+
+  if (found) {
+    return (
+      <div key={index} className={`rounded-xl px-3 py-2 ${found.className}`}>
+        <span className="mr-2">{found.emoji}</span>
+        <span>{trimmed}</span>
+      </div>
+    )
+  }
+
+  return (
+    <div key={index} className="px-1 text-slate-800">
+      {trimmed}
+    </div>
+  )
+}
+
+function RichStreamContent({ text, loading }: { text: string; loading: boolean }) {
+  if (!text) {
+    return (
+      <div className="text-sm text-slate-500">
+        {loading ? '실시간으로 응답을 작성하는 중입니다...' : '생성을 시작하면 여기에 표시됩니다.'}
+      </div>
+    )
+  }
+
+  return <div className="space-y-2">{text.split('\n').map((line, index) => renderLine(line, index))}</div>
+}
+
 function StreamCard({
   title,
   description,
@@ -162,8 +212,8 @@ function StreamCard({
         <CardDescription>{description}</CardDescription>
       </CardHeader>
       <CardContent>
-        <div className="min-h-56 whitespace-pre-wrap rounded-2xl border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-900">
-          {state.raw || (state.loading ? '실시간으로 응답을 작성하는 중입니다...' : '생성을 시작하면 여기에 표시됩니다.')}
+        <div className="min-h-56 rounded-2xl border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-900">
+          <RichStreamContent text={state.raw} loading={state.loading} />
         </div>
       </CardContent>
     </Card>
@@ -231,7 +281,7 @@ export default function VideoProductionPage() {
 
   async function streamIntoState(
     endpoint: string,
-    setter: React.Dispatch<React.SetStateAction<StreamState>>,
+    setter: (value: StreamState | ((prev: StreamState) => StreamState)) => void,
     payload: Record<string, unknown>
   ) {
     setter({ raw: '', loading: true })
@@ -252,6 +302,7 @@ export default function VideoProductionPage() {
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
+    let finalRaw = ''
 
     while (true) {
       const { done, value } = await reader.read()
@@ -263,30 +314,33 @@ export default function VideoProductionPage() {
 
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue
-        const payload = JSON.parse(line.slice(6)) as {
+        const streamPayload = JSON.parse(line.slice(6)) as {
           raw?: string
           done?: boolean
           error?: string
           model?: string
         }
 
-        if (payload.error) {
-          throw new Error(payload.error)
+        if (streamPayload.error) {
+          throw new Error(streamPayload.error)
         }
 
-        if (payload.model) {
-          setModelName(payload.model)
+        if (streamPayload.model) {
+          setModelName(streamPayload.model)
         }
 
-        if (typeof payload.raw === 'string') {
-          setter((prev) => ({ ...prev, raw: payload.raw }))
+        if (typeof streamPayload.raw === 'string') {
+          finalRaw = streamPayload.raw
+          setter((prev) => ({ ...prev, raw: streamPayload.raw || '' }))
         }
 
-        if (payload.done) {
+        if (streamPayload.done) {
           setter((prev) => ({ ...prev, loading: false }))
         }
       }
     }
+
+    return finalRaw
   }
 
   async function handleGenerate() {
@@ -300,7 +354,7 @@ export default function VideoProductionPage() {
     setScript1(EMPTY_STREAM)
     setScript2(EMPTY_STREAM)
 
-    const payload = {
+    const basePayload = {
       videoName: videoFile.name,
       mimeType: videoMetadata.mimeType,
       duration: videoMetadata.duration,
@@ -315,10 +369,16 @@ export default function VideoProductionPage() {
     }
 
     try {
+      const analysisRaw = await streamIntoState('/api/ai/video-analysis', setAnalysis, basePayload)
+
+      const scriptPayload = {
+        ...basePayload,
+        analysisContext: analysisRaw,
+      }
+
       await Promise.all([
-        streamIntoState('/api/ai/video-analysis', setAnalysis, payload),
-        streamIntoState('/api/ai/video-remix-script-1', setScript1, payload),
-        streamIntoState('/api/ai/video-remix-script-2', setScript2, payload),
+        streamIntoState('/api/ai/video-remix-script-1', setScript1, scriptPayload),
+        streamIntoState('/api/ai/video-remix-script-2', setScript2, scriptPayload),
       ])
     } catch (generationError) {
       console.error(generationError)
@@ -347,9 +407,9 @@ export default function VideoProductionPage() {
               영상 분석 및 제작
             </div>
             <div>
-              <h1 className="text-3xl font-semibold tracking-tight">분석과 리믹스 대본을 각각 실시간으로 나눠서 생성합니다</h1>
+              <h1 className="text-3xl font-semibold tracking-tight">실시간 분석을 먼저 끝내고, 그 결과로 리믹스 대본을 생성합니다</h1>
               <p className="mt-2 max-w-3xl text-sm text-slate-200">
-                프레임은 3초마다 추출하고, 분석 API와 대본 1안 API, 대본 2안 API를 분리해서 토큰이 잘리지 않게 구성했습니다.
+                이제 대본 1안과 2안은 원본 프레임만 보고 쓰는 게 아니라, 먼저 생성된 실시간 분석 내용을 바탕으로 이어서 작성됩니다.
               </p>
             </div>
           </div>
@@ -465,12 +525,12 @@ export default function VideoProductionPage() {
                 {analysis.loading || script1.loading || script2.loading ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    분석 + 대본 생성 중...
+                    분석 후 대본 생성 중...
                   </>
                 ) : (
                   <>
                     <Sparkles className="mr-2 h-4 w-4" />
-                    분석 / 대본1 / 대본2 실시간 생성
+                    분석 -> 대본 1안/2안 생성
                   </>
                 )}
               </Button>
@@ -487,7 +547,7 @@ export default function VideoProductionPage() {
                     <Clapperboard className="h-5 w-5 text-primary" />
                     대표 프레임
                   </CardTitle>
-                  <CardDescription>썸네일을 클릭하면 개별 다운로드되고, 버튼으로 전체 다운로드도 가능합니다.</CardDescription>
+                  <CardDescription>썸네일 클릭 시 개별 다운로드, 버튼 클릭 시 전체 다운로드됩니다.</CardDescription>
                 </div>
                 <Button variant="outline" onClick={handleDownloadAllFrames} disabled={sampledFrames.length === 0}>
                   <Download className="mr-2 h-4 w-4" />
@@ -525,17 +585,17 @@ export default function VideoProductionPage() {
         <div className="space-y-6">
           <StreamCard
             title="실시간 분석"
-            description="원본 영상의 구조, 타깃, 문제점, 리믹스 포인트를 실시간으로 분석합니다."
+            description="먼저 영상 구조와 리믹스 포인트를 분석합니다."
             state={analysis}
           />
           <StreamCard
             title="리믹스 대본 1안"
-            description="메인 콘셉트 기준의 대본 1안을 실시간으로 작성합니다."
+            description="분석 결과를 바탕으로 메인 대본을 작성합니다."
             state={script1}
           />
           <StreamCard
             title="리믹스 대본 2안"
-            description="다른 후킹 구조의 대본 2안을 실시간으로 작성합니다."
+            description="분석 결과를 바탕으로 다른 후킹 구조의 대본을 작성합니다."
             state={script2}
           />
         </div>

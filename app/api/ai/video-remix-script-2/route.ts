@@ -18,10 +18,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: '리믹스할 대표 프레임이 없습니다.' }, { status: 400 })
   }
 
+  if (!body.analysisContext?.trim()) {
+    return NextResponse.json({ error: '분석 결과가 먼저 필요합니다.' }, { status: 400 })
+  }
+
   const prompt = `당신은 퍼포먼스 광고 영상 카피라이터이자 숏폼 리믹스 디렉터입니다.
 
-대표 프레임과 메타데이터를 바탕으로 리믹스 대본 2안을 작성해 주세요.
-1안과 달리 다른 후킹 각도와 다른 전개를 사용해야 합니다.
+아래 영상 분석 결과를 기반으로 리믹스 대본 2안을 작성해 주세요.
+1안과는 다른 후킹 구조, 다른 논리 전개, 다른 감정 톤을 사용해야 합니다.
 
 [영상 정보]
 ${buildVideoFacts(body) || '없음'}
@@ -29,10 +33,8 @@ ${buildVideoFacts(body) || '없음'}
 [프레임 시점]
 ${buildFrameFacts(body) || '없음'}
 
-[대본 목표]
-- 1안보다 더 다른 후킹 방식
-- 문제 제기형 또는 비교형 구조
-- 제품 소구점이 설득 논리로 자연스럽게 이어지게 구성
+[기존 분석 결과]
+${body.analysisContext.trim()}
 
 [필수 반영]
 - 브랜드명: ${body.brandName?.trim() || '미입력'}
@@ -40,34 +42,44 @@ ${buildFrameFacts(body) || '없음'}
 - 제품 소구점: ${body.productAppeal?.trim() || '미입력'}
 - 제작 목표: ${body.creativeGoal?.trim() || '미입력'}
 
+[지시]
+- 한국어로 작성
+- 가독성이 좋게 줄바꿈을 충분히 사용
+- 각 항목은 짧고 명확하게 작성
+- 1안보다 다른 관점의 Hook 사용
+- Shot별로 화면, 자막, 내레이션, 편집포인트를 분리
+
 [출력 형식]
 [리믹스 대본 2안]
 - 콘셉트:
 - Hook:
-- Shot 1:
-  화면:
-  자막:
-  내레이션:
-  편집포인트:
-- Shot 2:
-  화면:
-  자막:
-  내레이션:
-  편집포인트:
-- Shot 3:
-  화면:
-  자막:
-  내레이션:
-  편집포인트:
-- Shot 4:
-  화면:
-  자막:
-  내레이션:
-  편집포인트:
-- 엔딩 CTA:
-- 썸네일 카피:
 
-반드시 15~30초 분량의 실제 제작 가능한 수준으로 구체적으로 작성하세요.`
+- Shot 1 (0:00~):
+화면:
+자막:
+내레이션:
+편집포인트:
+
+- Shot 2:
+화면:
+자막:
+내레이션:
+편집포인트:
+
+- Shot 3:
+화면:
+자막:
+내레이션:
+편집포인트:
+
+- Shot 4:
+화면:
+자막:
+내레이션:
+편집포인트:
+
+- 엔딩 CTA:
+- 썸네일 카피:`
 
   const stream = createSseStream({
     apiKey,

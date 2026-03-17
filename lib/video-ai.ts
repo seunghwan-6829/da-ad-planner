@@ -21,6 +21,7 @@ export interface VideoRequestPayload {
   productInfo?: string
   productAppeal?: string
   creativeGoal?: string
+  analysisContext?: string
   frames?: VideoFramePayload[]
 }
 
