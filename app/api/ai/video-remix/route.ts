@@ -4,7 +4,7 @@ const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages'
 const MODEL =
   process.env.ANTHROPIC_VIDEO_MODEL ||
   process.env.ANTHROPIC_MODEL ||
-  'claude-opus-4-20250514'
+  'claude-opus-4-6'
 
 interface VideoFrame {
   dataUrl: string
