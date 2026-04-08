@@ -11,6 +11,7 @@ import {
   FileCode,
   FileEdit,
   FileText,
+  Images,
   Image as ImageIcon,
   LayoutDashboard,
   LogOut,
@@ -29,6 +30,7 @@ const navigationTop = [
   { name: 'AI 광고 기획서', href: '/plans', icon: FileText },
   { name: '광고주 관리', href: '/advertisers', icon: Users },
   { name: 'BP소재', href: '/templates', icon: FileCode },
+  { name: '이미지 보드', href: '/image-board', icon: Images },
 ]
 
 const navigationBottom = [

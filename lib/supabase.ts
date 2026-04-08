@@ -66,3 +66,30 @@ export interface BPMaterial {
   category: string | null
   created_at: string
 }
+
+export interface ImageBoardCategory {
+  id: string
+  name: string
+  slug: string
+  color: string | null
+  is_default: boolean
+  sort_order: number
+  created_at: string
+}
+
+export interface ImageBoardItem {
+  id: string
+  title: string
+  image_url: string
+  image_path: string
+  category_id: string | null
+  ai_category: string | null
+  notes: string | null
+  width: number | null
+  height: number | null
+  file_size: number | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+  category?: ImageBoardCategory | null
+}

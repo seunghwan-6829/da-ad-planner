@@ -271,3 +271,112 @@ CREATE INDEX IF NOT EXISTS idx_project_plans_client_id ON project_plans(client_i
 CREATE INDEX IF NOT EXISTS idx_plan_scenes_plan_id ON plan_scenes(plan_id);
 CREATE INDEX IF NOT EXISTS idx_client_permissions_user_id ON client_permissions(user_id);
 CREATE INDEX IF NOT EXISTS idx_client_permissions_client_id ON client_permissions(client_id);
+
+-- =============================================
+-- 이미지 보드 카테고리 / 이미지 보드
+-- =============================================
+CREATE TABLE IF NOT EXISTS image_board_categories (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL UNIQUE,
+  slug TEXT NOT NULL UNIQUE,
+  color TEXT DEFAULT '#E2E8F0',
+  is_default BOOLEAN DEFAULT FALSE,
+  sort_order INTEGER DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS image_board_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,
+  image_url TEXT NOT NULL,
+  image_path TEXT NOT NULL UNIQUE,
+  category_id UUID REFERENCES image_board_categories(id) ON DELETE SET NULL,
+  ai_category TEXT,
+  notes TEXT,
+  width INTEGER,
+  height INTEGER,
+  file_size BIGINT,
+  created_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE image_board_categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE image_board_items ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Authenticated users can read image board categories" ON image_board_categories;
+DROP POLICY IF EXISTS "Admins can manage image board categories" ON image_board_categories;
+DROP POLICY IF EXISTS "Authenticated users can read image board items" ON image_board_items;
+DROP POLICY IF EXISTS "Admins can manage image board items" ON image_board_items;
+
+CREATE POLICY "Authenticated users can read image board categories" ON image_board_categories
+  FOR SELECT TO authenticated USING (true);
+
+CREATE POLICY "Admins can manage image board categories" ON image_board_categories
+  FOR ALL TO authenticated
+  USING (EXISTS (SELECT 1 FROM user_profiles WHERE user_profiles.id = auth.uid() AND user_profiles.role = 'admin'))
+  WITH CHECK (EXISTS (SELECT 1 FROM user_profiles WHERE user_profiles.id = auth.uid() AND user_profiles.role = 'admin'));
+
+CREATE POLICY "Authenticated users can read image board items" ON image_board_items
+  FOR SELECT TO authenticated USING (true);
+
+CREATE POLICY "Admins can manage image board items" ON image_board_items
+  FOR ALL TO authenticated
+  USING (EXISTS (SELECT 1 FROM user_profiles WHERE user_profiles.id = auth.uid() AND user_profiles.role = 'admin'))
+  WITH CHECK (EXISTS (SELECT 1 FROM user_profiles WHERE user_profiles.id = auth.uid() AND user_profiles.role = 'admin'));
+
+INSERT INTO image_board_categories (name, slug, color, is_default, sort_order)
+VALUES
+  ('의류', 'fashion', '#DBEAFE', true, 1),
+  ('식품', 'food', '#FEF3C7', true, 2),
+  ('부동산', 'real-estate', '#E0E7FF', true, 3),
+  ('뷰티', 'beauty', '#FCE7F3', true, 4),
+  ('건강', 'health', '#DCFCE7', true, 5),
+  ('금융', 'finance', '#FDE68A', true, 6),
+  ('교육', 'education', '#EDE9FE', true, 7),
+  ('여행', 'travel', '#CFFAFE', true, 8),
+  ('자동차', 'auto', '#E5E7EB', true, 9),
+  ('가전', 'electronics', '#D1FAE5', true, 10),
+  ('기타', 'etc', '#F3F4F6', true, 99)
+ON CONFLICT (slug) DO NOTHING;
+
+CREATE INDEX IF NOT EXISTS idx_image_board_items_created_at ON image_board_items(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_image_board_items_category_id ON image_board_items(category_id);
+
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('image-board', 'image-board', true)
+ON CONFLICT (id) DO NOTHING;
+
+DROP POLICY IF EXISTS "Authenticated users can view image board storage" ON storage.objects;
+DROP POLICY IF EXISTS "Admins can upload image board storage" ON storage.objects;
+DROP POLICY IF EXISTS "Admins can update image board storage" ON storage.objects;
+DROP POLICY IF EXISTS "Admins can delete image board storage" ON storage.objects;
+
+CREATE POLICY "Authenticated users can view image board storage" ON storage.objects
+  FOR SELECT TO authenticated
+  USING (bucket_id = 'image-board');
+
+CREATE POLICY "Admins can upload image board storage" ON storage.objects
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    bucket_id = 'image-board' AND
+    EXISTS (SELECT 1 FROM user_profiles WHERE user_profiles.id = auth.uid() AND user_profiles.role = 'admin')
+  );
+
+CREATE POLICY "Admins can update image board storage" ON storage.objects
+  FOR UPDATE TO authenticated
+  USING (
+    bucket_id = 'image-board' AND
+    EXISTS (SELECT 1 FROM user_profiles WHERE user_profiles.id = auth.uid() AND user_profiles.role = 'admin')
+  )
+  WITH CHECK (
+    bucket_id = 'image-board' AND
+    EXISTS (SELECT 1 FROM user_profiles WHERE user_profiles.id = auth.uid() AND user_profiles.role = 'admin')
+  );
+
+CREATE POLICY "Admins can delete image board storage" ON storage.objects
+  FOR DELETE TO authenticated
+  USING (
+    bucket_id = 'image-board' AND
+    EXISTS (SELECT 1 FROM user_profiles WHERE user_profiles.id = auth.uid() AND user_profiles.role = 'admin')
+  );
