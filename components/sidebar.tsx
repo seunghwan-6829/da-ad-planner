@@ -6,10 +6,7 @@ import {
   BookOpen,
   ChevronRight,
   Clapperboard,
-  ExternalLink,
-  FileAudio,
   FileCode,
-  FileEdit,
   FileText,
   Images,
   Image as ImageIcon,
@@ -39,12 +36,6 @@ const navigationBottom = [
   { name: '영상 분석 및 제작', href: '/video-production', icon: Wand2 },
   { name: '기획안 제작', href: '/project-plans', icon: Clapperboard },
   { name: 'AI 학습', href: '/ai-test', icon: BookOpen },
-]
-
-const externalLinks = [
-  { name: 'DA/숏폼 기획안', href: 'https://rebootadvert.vercel.app/', icon: Video },
-  { name: 'SRT 소스 제작', href: 'https://srt-source-planner.vercel.app/', icon: FileAudio },
-  { name: 'AI PDF 편집기', href: 'https://pdf-editor-sand-seven.vercel.app/', icon: FileEdit },
 ]
 
 export function Sidebar() {
@@ -118,23 +109,6 @@ export function Sidebar() {
             {pathname === '/admin' && <ChevronRight className="ml-auto h-4 w-4" />}
           </Link>
         )}
-
-        <div className="my-4 border-t pt-4">
-          <p className="mb-2 px-3 text-xs font-medium uppercase text-gray-400">외부 도구</p>
-          {externalLinks.map((item) => (
-            <a
-              key={item.name}
-              href={item.href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-100"
-            >
-              <item.icon className="h-5 w-5 text-gray-500" />
-              {item.name}
-              <ExternalLink className="ml-auto h-3 w-3 text-gray-400" />
-            </a>
-          ))}
-        </div>
       </nav>
 
       <div className="space-y-3 border-t p-4">
