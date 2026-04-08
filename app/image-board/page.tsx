@@ -14,7 +14,7 @@ import {
   X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
@@ -49,7 +49,7 @@ function slugify(text: string) {
     .toLowerCase()
     .trim()
     .replace(/\s+/g, '-')
-    .replace(/[^a-z0-9가-힣-_]/g, '')
+    .replace(/[^a-z0-9가-힣_]/g, '')
 }
 
 async function compressImage(file: File): Promise<UploadCandidate> {
@@ -74,7 +74,7 @@ async function compressImage(file: File): Promise<UploadCandidate> {
 
         const context = canvas.getContext('2d')
         if (!context) {
-          reject(new Error('이미지 압축에 실패했습니다.'))
+          reject(new Error('이미지를 처리하지 못했습니다.'))
           return
         }
 
@@ -140,6 +140,11 @@ function getCategoryLabel(categoryId: string, categories: ImageBoardCategory[]) 
   return categories.find((category) => category.id === categoryId)?.name || '기타'
 }
 
+function formatFileSize(size: number | null) {
+  if (!size) return '-'
+  return `${(size / 1024 / 1024).toFixed(2)}MB`
+}
+
 export default function ImageBoardPage() {
   const { user, isAdmin } = useAuth()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -154,8 +159,8 @@ export default function ImageBoardPage() {
   const [selectedCategoryId, setSelectedCategoryId] = useState('all')
   const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({})
   const [uploadQueue, setUploadQueue] = useState<UploadCandidate[]>([])
-  const [showUploadPanel, setShowUploadPanel] = useState(false)
-  const [showCategoryPanel, setShowCategoryPanel] = useState(false)
+  const [showUploadModal, setShowUploadModal] = useState(false)
+  const [showCategoryModal, setShowCategoryModal] = useState(false)
   const [newCategoryName, setNewCategoryName] = useState('')
   const [newCategoryColor, setNewCategoryColor] = useState('#E2E8F0')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -228,6 +233,11 @@ export default function ImageBoardPage() {
     setEditCategoryId('')
   }
 
+  function closeUploadModal() {
+    setShowUploadModal(false)
+    setUploadQueue([])
+  }
+
   async function handleFileSelect(event: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files || []).filter((file) => file.type.startsWith('image/'))
     if (files.length === 0) return
@@ -241,7 +251,7 @@ export default function ImageBoardPage() {
 
     const compressed = await Promise.all(selectedFiles.map((file) => compressImage(file)))
     setUploadQueue((prev) => [...prev, ...compressed].slice(0, 30))
-    setShowUploadPanel(true)
+    setShowUploadModal(true)
     event.target.value = ''
   }
 
@@ -294,8 +304,7 @@ export default function ImageBoardPage() {
         })
       }
 
-      setUploadQueue([])
-      setShowUploadPanel(false)
+      closeUploadModal()
       setCurrentPage(1)
       setSelectedCategoryId('all')
       await loadData()
@@ -316,7 +325,8 @@ export default function ImageBoardPage() {
     if (created) {
       setCategories((prev) => [...prev, created])
       setNewCategoryName('')
-      setShowCategoryPanel(false)
+      setNewCategoryColor('#E2E8F0')
+      setShowCategoryModal(false)
     }
   }
 
@@ -393,99 +403,8 @@ export default function ImageBoardPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">이미지 보드</h1>
-          <p className="mt-1 text-muted-foreground">
-            Pinterest 스타일로 이미지를 저장하고 분류하는 보드입니다. 데이터는 Supabase에 저장되어 다른 PC에서도 동일하게 보입니다.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          {isAdmin && (
-            <>
-              <Button variant="outline" onClick={() => setShowCategoryPanel((prev) => !prev)}>
-                <FolderPlus className="mr-2 h-4 w-4" />
-                카테고리 추가
-              </Button>
-              <Button variant="outline" onClick={() => setSelectionMode((prev) => !prev)}>
-                {selectionMode ? '선택 종료' : '선택 모드'}
-              </Button>
-              <Button onClick={() => fileInputRef.current?.click()}>
-                <Plus className="mr-2 h-4 w-4" />
-                이미지 추가
-              </Button>
-              <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFileSelect} />
-            </>
-          )}
-        </div>
-      </div>
-
-      {showCategoryPanel && isAdmin && (
-        <Card>
-          <CardHeader>
-            <CardTitle>새 카테고리 만들기</CardTitle>
-            <CardDescription>기본 대분류 외에 원하는 카테고리를 직접 추가할 수 있습니다.</CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-4 md:grid-cols-[1fr,160px,120px]">
-            <Input value={newCategoryName} onChange={(event) => setNewCategoryName(event.target.value)} placeholder="예: 해외 무드보드" />
-            <Input type="color" value={newCategoryColor} onChange={(event) => setNewCategoryColor(event.target.value)} />
-            <Button onClick={handleCreateCategory}>추가</Button>
-          </CardContent>
-        </Card>
-      )}
-
-      {showUploadPanel && isAdmin && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Upload className="h-5 w-5 text-primary" />
-              다중 업로드
-            </CardTitle>
-            <CardDescription>최대 30장까지 업로드됩니다. 저장 전 자동 최적화하고 AI가 1차 대분류를 지정합니다.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-              {uploadQueue.map((file, index) => (
-                <div key={file.id} className="overflow-hidden rounded-2xl border bg-white">
-                  <img src={file.previewUrl} alt={file.title || '업로드 미리보기'} className="aspect-[4/5] w-full object-cover" />
-                  <div className="space-y-2 p-3">
-                    <Input
-                      value={file.title}
-                      onChange={(event) =>
-                        setUploadQueue((prev) =>
-                          prev.map((item) => (item.id === file.id ? { ...item, title: event.target.value } : item))
-                        )
-                      }
-                      placeholder="제목 없이 저장해도 됩니다"
-                    />
-                    <div className="text-xs text-slate-500">
-                      {(file.file.size / 1024 / 1024).toFixed(2)}MB / {file.width}x{file.height}
-                    </div>
-                    <Button variant="ghost" size="sm" className="w-full" onClick={() => setUploadQueue((prev) => prev.filter((_, i) => i !== index))}>
-                      <X className="mr-2 h-4 w-4" />
-                      제외
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setUploadQueue([])} disabled={uploading}>
-                초기화
-              </Button>
-              <Button onClick={handleUploadImages} disabled={uploading || uploadQueue.length === 0}>
-                {uploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
-                {uploading ? '업로드 중...' : `${uploadQueue.length}장 업로드`}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+    <div className="space-y-5">
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex flex-wrap gap-2">
           {filterCategories.map((category) => (
             <button
@@ -504,8 +423,8 @@ export default function ImageBoardPage() {
           ))}
         </div>
 
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-slate-500">페이지당 보기</span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm text-slate-500">페이지당</span>
           <Select
             value={String(pageSize)}
             onChange={(event) => {
@@ -516,17 +435,38 @@ export default function ImageBoardPage() {
           >
             {PAGE_SIZE_OPTIONS.map((option) => (
               <option key={option} value={option}>
-                {option}개씩 보기
+                {option}개 보기
               </option>
             ))}
           </Select>
+          {isAdmin && (
+            <>
+              <Button variant="outline" onClick={() => setSelectionMode((prev) => !prev)}>
+                {selectionMode ? '선택 종료' : '선택 모드'}
+              </Button>
+              <Button variant="outline" onClick={() => setShowCategoryModal(true)}>
+                <FolderPlus className="mr-2 h-4 w-4" />
+                카테고리 추가
+              </Button>
+              <Button
+                onClick={() => {
+                  setShowUploadModal(true)
+                  window.setTimeout(() => fileInputRef.current?.click(), 0)
+                }}
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                이미지 추가
+              </Button>
+              <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFileSelect} />
+            </>
+          )}
         </div>
       </div>
 
       {selectionMode && isAdmin && (
         <Card>
           <CardContent className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="text-sm text-slate-600">선택된 이미지 {selectedIds.size}장</div>
+            <div className="text-sm text-slate-600">선택된 이미지 {selectedIds.size}개</div>
             <div className="flex flex-wrap gap-2">
               <Select
                 defaultValue=""
@@ -560,7 +500,7 @@ export default function ImageBoardPage() {
           <CardContent className="flex h-60 flex-col items-center justify-center gap-3 text-center">
             <Images className="h-10 w-10 text-slate-300" />
             <div className="text-lg font-semibold text-slate-700">아직 저장된 이미지가 없습니다.</div>
-            <p className="text-sm text-slate-500">업로드하면 Supabase에 저장되어 다른 PC에서도 그대로 보입니다.</p>
+            {isAdmin ? <Button onClick={() => setShowUploadModal(true)}>이미지 추가</Button> : null}
           </CardContent>
         </Card>
       ) : (
@@ -570,44 +510,33 @@ export default function ImageBoardPage() {
             return (
               <div
                 key={item.id}
-                className={`mb-4 break-inside-avoid overflow-hidden rounded-3xl border bg-white shadow-sm transition ${
+                className={`mb-4 break-inside-avoid overflow-hidden rounded-3xl border bg-white shadow-sm transition hover:shadow-md ${
                   isSelected ? 'ring-2 ring-primary' : ''
                 } ${selectionMode && isAdmin ? 'cursor-pointer' : ''}`}
                 onClick={() => {
                   if (selectionMode && isAdmin) {
                     toggleSelected(item.id)
+                    return
                   }
+
+                  setPreviewItem(item)
                 }}
               >
                 <div className="relative">
                   <img src={item.image_url} alt={item.title} className="w-full object-cover" />
+                  {selectionMode && isAdmin ? <div className="absolute inset-0 bg-primary/5" /> : null}
                   {selectionMode && isAdmin ? (
-                    <div className="absolute inset-0 bg-primary/5" />
-                  ) : (
-                    <button
-                      type="button"
-                      className="absolute inset-0"
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        setPreviewItem(item)
-                      }}
-                      aria-label="이미지 크게 보기"
-                    />
-                  )}
-                  {selectionMode && isAdmin && (
                     <div className="absolute left-3 top-3 rounded-full bg-white/95 px-3 py-1 text-xs font-semibold shadow">
                       {isSelected ? '선택됨' : '클릭해서 선택'}
                     </div>
-                  )}
+                  ) : null}
                 </div>
                 <div className="space-y-3 p-4">
                   <div className="flex items-start justify-between gap-2">
                     <div>
-                      {item.title !== DEFAULT_IMAGE_BOARD_TITLE ? (
-                        <h3 className="font-semibold text-slate-900">{item.title}</h3>
-                      ) : null}
+                      {item.title !== DEFAULT_IMAGE_BOARD_TITLE ? <h3 className="font-semibold text-slate-900">{item.title}</h3> : null}
                       <p className="mt-1 text-xs text-slate-500">
-                        {item.width || '-'}x{item.height || '-'} / {item.file_size ? `${(item.file_size / 1024 / 1024).toFixed(2)}MB` : '-'}
+                        {item.width || '-'}x{item.height || '-'} / {formatFileSize(item.file_size)}
                       </p>
                     </div>
                     <Badge variant="outline">{item.category?.name || item.ai_category || '미분류'}</Badge>
@@ -615,48 +544,20 @@ export default function ImageBoardPage() {
 
                   {item.notes ? <p className="text-sm text-slate-600">{item.notes}</p> : null}
 
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        setPreviewItem(item)
-                      }}
-                    >
+                  <div className="flex flex-wrap gap-2" onClick={(event) => event.stopPropagation()}>
+                    <Button variant="outline" size="sm" onClick={() => setPreviewItem(item)}>
                       크게 보기
                     </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        triggerDownload(item.image_url, `${slugify(item.title) || 'image'}.jpg`)
-                      }}
-                    >
+                    <Button variant="outline" size="sm" onClick={() => triggerDownload(item.image_url, `${slugify(item.title) || 'image'}.jpg`)}>
                       <Download className="mr-2 h-4 w-4" />
                       다운로드
                     </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={async (event) => {
-                        event.stopPropagation()
-                        await handleCopyImage(item)
-                      }}
-                    >
+                    <Button variant="outline" size="sm" onClick={() => handleCopyImage(item)}>
                       <Copy className="mr-2 h-4 w-4" />
                       {copiedItemId === item.id ? '복사됨' : '복사'}
                     </Button>
                     {isAdmin && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          openEditModal(item)
-                        }}
-                      >
+                      <Button variant="outline" size="sm" onClick={() => openEditModal(item)}>
                         <Pencil className="mr-2 h-4 w-4" />
                         편집
                       </Button>
@@ -672,7 +573,7 @@ export default function ImageBoardPage() {
       {totalCount > 0 && (
         <div className="flex flex-col gap-3 rounded-2xl border bg-white p-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="text-sm text-slate-500">
-            총 {totalCount}장 / 현재 카테고리: {getCategoryLabel(selectedCategoryId, categories)}
+            총 {totalCount}개 / 현재 카테고리: {getCategoryLabel(selectedCategoryId, categories)}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" size="sm" disabled={currentPage === 1} onClick={() => setCurrentPage((prev) => prev - 1)}>
@@ -692,20 +593,128 @@ export default function ImageBoardPage() {
         </div>
       )}
 
+      {showUploadModal && isAdmin && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+          <Card className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden">
+            <CardHeader className="flex flex-row items-center justify-between gap-4 border-b">
+              <CardTitle className="flex items-center gap-2 text-xl">
+                <Upload className="h-5 w-5 text-primary" />
+                이미지 추가
+              </CardTitle>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  파일 더 추가
+                </Button>
+                <Button variant="ghost" size="icon" onClick={closeUploadModal} disabled={uploading}>
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="flex-1 overflow-y-auto p-6">
+              {uploadQueue.length === 0 ? (
+                <div className="flex min-h-[360px] flex-col items-center justify-center gap-4 rounded-3xl border border-dashed bg-slate-50 text-center">
+                  <Upload className="h-10 w-10 text-slate-400" />
+                  <div className="space-y-1">
+                    <p className="text-lg font-semibold text-slate-900">업로드할 이미지를 선택해 주세요</p>
+                    <p className="text-sm text-slate-500">한 번에 최대 30장까지 추가할 수 있습니다.</p>
+                  </div>
+                  <Button onClick={() => fileInputRef.current?.click()}>
+                    <Plus className="mr-2 h-4 w-4" />
+                    이미지 선택
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    {uploadQueue.map((file) => (
+                      <div key={file.id} className="overflow-hidden rounded-2xl border bg-white">
+                        <img src={file.previewUrl} alt="업로드 미리보기" className="aspect-[4/5] w-full object-cover" />
+                        <div className="space-y-3 p-4">
+                          <Input
+                            value={file.title}
+                            onChange={(event) =>
+                              setUploadQueue((prev) =>
+                                prev.map((item) => (item.id === file.id ? { ...item, title: event.target.value } : item))
+                              )
+                            }
+                            placeholder="제목 없이 저장해도 됩니다"
+                          />
+                          <div className="text-xs text-slate-500">
+                            {formatFileSize(file.file.size)} / {file.width}x{file.height}
+                          </div>
+                          <Button variant="ghost" size="sm" className="w-full" onClick={() => setUploadQueue((prev) => prev.filter((item) => item.id !== file.id))}>
+                            <X className="mr-2 h-4 w-4" />
+                            제외
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+            <div className="flex flex-wrap justify-end gap-2 border-t px-6 py-4">
+              <Button variant="outline" onClick={closeUploadModal} disabled={uploading}>
+                닫기
+              </Button>
+              <Button variant="outline" onClick={() => setUploadQueue([])} disabled={uploading || uploadQueue.length === 0}>
+                전체 비우기
+              </Button>
+              <Button onClick={handleUploadImages} disabled={uploading || uploadQueue.length === 0}>
+                {uploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+                {uploading ? '업로드 중...' : `${uploadQueue.length}장 저장`}
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {showCategoryModal && isAdmin && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <Card className="w-full max-w-md">
+            <CardHeader className="flex flex-row items-center justify-between gap-4">
+              <CardTitle>카테고리 추가</CardTitle>
+              <Button variant="ghost" size="icon" onClick={() => setShowCategoryModal(false)}>
+                <X className="h-4 w-4" />
+              </Button>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label>카테고리명</Label>
+                <Input value={newCategoryName} onChange={(event) => setNewCategoryName(event.target.value)} placeholder="예: 무드보드" />
+              </div>
+              <div className="space-y-2">
+                <Label>카테고리 색상</Label>
+                <Input type="color" value={newCategoryColor} onChange={(event) => setNewCategoryColor(event.target.value)} />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setShowCategoryModal(false)}>
+                  취소
+                </Button>
+                <Button onClick={handleCreateCategory}>추가</Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
       {deleteConfirmOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <Card className="w-full max-w-md">
             <CardHeader>
               <CardTitle>정말 삭제하시겠습니까?</CardTitle>
-              <CardDescription>선택한 이미지 {selectedIds.size}장은 Supabase 저장소와 보드 목록에서 함께 삭제됩니다.</CardDescription>
             </CardHeader>
-            <CardContent className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setDeleteConfirmOpen(false)}>
-                취소
-              </Button>
-              <Button variant="destructive" onClick={handleDeleteSelected}>
-                확인 삭제
-              </Button>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-slate-600">선택된 이미지 {selectedIds.size}개가 Supabase 저장소와 보드 목록에서 함께 삭제됩니다.</p>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setDeleteConfirmOpen(false)}>
+                  취소
+                </Button>
+                <Button variant="destructive" onClick={handleDeleteSelected}>
+                  확인 삭제
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </div>
@@ -714,9 +723,11 @@ export default function ImageBoardPage() {
       {editTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <Card className="w-full max-w-lg">
-            <CardHeader>
+            <CardHeader className="flex flex-row items-center justify-between gap-4">
               <CardTitle>이미지 편집</CardTitle>
-              <CardDescription>제목, 메모, 카테고리를 수정할 수 있습니다.</CardDescription>
+              <Button variant="ghost" size="icon" onClick={resetEditModal}>
+                <X className="h-4 w-4" />
+              </Button>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
@@ -724,7 +735,7 @@ export default function ImageBoardPage() {
                 <Input
                   value={editTitle === DEFAULT_IMAGE_BOARD_TITLE ? '' : editTitle}
                   onChange={(event) => setEditTitle(event.target.value)}
-                  placeholder="제목 없이 둘 수 있습니다"
+                  placeholder="제목 없이 저장할 수 있습니다"
                 />
               </div>
               <div className="space-y-2">
@@ -755,20 +766,15 @@ export default function ImageBoardPage() {
 
       {previewItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setPreviewItem(null)}>
-          <div className="max-h-[90vh] max-w-[90vw]" onClick={(event) => event.stopPropagation()}>
-            <img src={previewItem.image_url} alt={previewItem.title} className="max-h-[80vh] max-w-[90vw] rounded-2xl object-contain shadow-2xl" />
+          <div className="max-h-[92vh] max-w-[92vw]" onClick={(event) => event.stopPropagation()}>
+            <img src={previewItem.image_url} alt={previewItem.title} className="max-h-[80vh] max-w-[92vw] rounded-2xl object-contain shadow-2xl" />
             <div className="mt-3 flex flex-wrap justify-end gap-2">
               <Button variant="outline" className="bg-white" onClick={() => setPreviewItem(null)}>
                 닫기
               </Button>
-              <Button
-                className="bg-white text-slate-900 hover:bg-slate-100"
-                onClick={async () => {
-                  await handleCopyImage(previewItem)
-                }}
-              >
+              <Button className="bg-white text-slate-900 hover:bg-slate-100" onClick={() => handleCopyImage(previewItem)}>
                 <Copy className="mr-2 h-4 w-4" />
-                복사
+                {copiedItemId === previewItem.id ? '복사됨' : '복사'}
               </Button>
               <Button
                 className="bg-white text-slate-900 hover:bg-slate-100"
