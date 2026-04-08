@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  Copy,
   Download,
   FolderPlus,
   Images,
@@ -32,18 +33,15 @@ import {
 import { ImageBoardCategory, ImageBoardItem } from '@/lib/supabase'
 
 const PAGE_SIZE_OPTIONS = [10, 30, 50, 100]
-
-interface VideoLikeImageMeta {
-  width: number
-  height: number
-}
+const DEFAULT_IMAGE_BOARD_TITLE = '이미지 보드 항목'
 
 interface UploadCandidate {
   id: string
   previewUrl: string
   file: File
   title: string
-  meta: VideoLikeImageMeta
+  width: number
+  height: number
 }
 
 function slugify(text: string) {
@@ -98,8 +96,9 @@ async function compressImage(file: File): Promise<UploadCandidate> {
                 id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                 previewUrl: previewReader.result as string,
                 file: optimizedFile,
-                title: file.name.replace(/\.[^.]+$/, ''),
-                meta: { width, height },
+                title: '',
+                width,
+                height,
               })
             }
             previewReader.readAsDataURL(optimizedFile)
@@ -123,6 +122,16 @@ function triggerDownload(url: string, fileName: string) {
   document.body.appendChild(link)
   link.click()
   link.remove()
+}
+
+async function copyImageToClipboard(url: string) {
+  const response = await fetch(url)
+  const blob = await response.blob()
+  await navigator.clipboard.write([
+    new ClipboardItem({
+      [blob.type || 'image/png']: blob,
+    }),
+  ])
 }
 
 function getCategoryLabel(categoryId: string, categories: ImageBoardCategory[]) {
@@ -156,6 +165,8 @@ export default function ImageBoardPage() {
   const [editTitle, setEditTitle] = useState('')
   const [editNotes, setEditNotes] = useState('')
   const [editCategoryId, setEditCategoryId] = useState('')
+  const [previewItem, setPreviewItem] = useState<ImageBoardItem | null>(null)
+  const [copiedItemId, setCopiedItemId] = useState<string | null>(null)
 
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
 
@@ -223,8 +234,12 @@ export default function ImageBoardPage() {
 
     const remainingSlots = Math.max(0, 30 - uploadQueue.length)
     const selectedFiles = files.slice(0, remainingSlots)
-    const compressed = await Promise.all(selectedFiles.map((file) => compressImage(file)))
 
+    if (files.length > remainingSlots) {
+      alert('한 번에 최대 30장까지 업로드할 수 있습니다.')
+    }
+
+    const compressed = await Promise.all(selectedFiles.map((file) => compressImage(file)))
     setUploadQueue((prev) => [...prev, ...compressed].slice(0, 30))
     setShowUploadPanel(true)
     event.target.value = ''
@@ -261,19 +276,19 @@ export default function ImageBoardPage() {
           latestCategories.find((category) => category.name === '기타') ||
           null
 
-        const filePath = `${user.id}/${Date.now()}-${slugify(candidate.title)}-${Math.random().toString(36).slice(2, 8)}.jpg`
+        const filePath = `${user.id}/${Date.now()}-${slugify(candidate.title || 'image')}-${Math.random().toString(36).slice(2, 8)}.jpg`
         const imageUrl = await uploadImageBoardFile(filePath, candidate.file)
         if (!imageUrl) continue
 
         await createImageBoardItem({
-          title: candidate.title,
+          title: candidate.title.trim() || DEFAULT_IMAGE_BOARD_TITLE,
           image_url: imageUrl,
           image_path: filePath,
           category_id: matchedCategory?.id || null,
           ai_category: categoryName,
           notes: null,
-          width: candidate.meta.width,
-          height: candidate.meta.height,
+          width: candidate.width,
+          height: candidate.height,
           file_size: candidate.file.size,
           created_by: user.id,
         })
@@ -316,7 +331,7 @@ export default function ImageBoardPage() {
     if (!editTarget) return
 
     const updated = await updateImageBoardItem(editTarget.id, {
-      title: editTitle.trim() || editTarget.title,
+      title: editTitle.trim() || DEFAULT_IMAGE_BOARD_TITLE,
       notes: editNotes.trim() || null,
       category_id: editCategoryId || null,
     })
@@ -355,6 +370,17 @@ export default function ImageBoardPage() {
       setSelectedIds(new Set())
       setSelectionMode(false)
       await loadData()
+    }
+  }
+
+  async function handleCopyImage(item: ImageBoardItem) {
+    try {
+      await copyImageToClipboard(item.image_url)
+      setCopiedItemId(item.id)
+      window.setTimeout(() => setCopiedItemId(null), 1600)
+    } catch (error) {
+      console.error(error)
+      alert('이미지 복사에 실패했습니다. 브라우저 권한을 확인해 주세요.')
     }
   }
 
@@ -423,7 +449,7 @@ export default function ImageBoardPage() {
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
               {uploadQueue.map((file, index) => (
                 <div key={file.id} className="overflow-hidden rounded-2xl border bg-white">
-                  <img src={file.previewUrl} alt={file.title} className="aspect-[4/5] w-full object-cover" />
+                  <img src={file.previewUrl} alt={file.title || '업로드 미리보기'} className="aspect-[4/5] w-full object-cover" />
                   <div className="space-y-2 p-3">
                     <Input
                       value={file.title}
@@ -432,9 +458,10 @@ export default function ImageBoardPage() {
                           prev.map((item) => (item.id === file.id ? { ...item, title: event.target.value } : item))
                         )
                       }
+                      placeholder="제목 없이 저장해도 됩니다"
                     />
                     <div className="text-xs text-slate-500">
-                      {(file.file.size / 1024 / 1024).toFixed(2)}MB / {file.meta.width}x{file.meta.height}
+                      {(file.file.size / 1024 / 1024).toFixed(2)}MB / {file.width}x{file.height}
                     </div>
                     <Button variant="ghost" size="sm" className="w-full" onClick={() => setUploadQueue((prev) => prev.filter((_, i) => i !== index))}>
                       <X className="mr-2 h-4 w-4" />
@@ -538,44 +565,107 @@ export default function ImageBoardPage() {
         </Card>
       ) : (
         <div className="columns-2 gap-4 md:columns-3 xl:columns-4 2xl:columns-5">
-          {items.map((item) => (
-            <div key={item.id} className="mb-4 break-inside-avoid overflow-hidden rounded-3xl border bg-white shadow-sm">
-              <div className="relative">
-                <img src={item.image_url} alt={item.title} className="w-full object-cover" />
-                {selectionMode && isAdmin && (
-                  <label className="absolute left-3 top-3 rounded-full bg-white/90 p-2 shadow">
-                    <input type="checkbox" checked={selectedIds.has(item.id)} onChange={() => toggleSelected(item.id)} />
-                  </label>
-                )}
-              </div>
-              <div className="space-y-3 p-4">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <h3 className="font-semibold text-slate-900">{item.title}</h3>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {item.width || '-'}x{item.height || '-'} / {item.file_size ? `${(item.file_size / 1024 / 1024).toFixed(2)}MB` : '-'}
-                    </p>
-                  </div>
-                  <Badge variant="outline">{item.category?.name || item.ai_category || '미분류'}</Badge>
-                </div>
-
-                {item.notes ? <p className="text-sm text-slate-600">{item.notes}</p> : null}
-
-                <div className="flex flex-wrap gap-2">
-                  <Button variant="outline" size="sm" onClick={() => triggerDownload(item.image_url, `${slugify(item.title) || 'image'}.jpg`)}>
-                    <Download className="mr-2 h-4 w-4" />
-                    다운로드
-                  </Button>
-                  {isAdmin && (
-                    <Button variant="outline" size="sm" onClick={() => openEditModal(item)}>
-                      <Pencil className="mr-2 h-4 w-4" />
-                      편집
-                    </Button>
+          {items.map((item) => {
+            const isSelected = selectedIds.has(item.id)
+            return (
+              <div
+                key={item.id}
+                className={`mb-4 break-inside-avoid overflow-hidden rounded-3xl border bg-white shadow-sm transition ${
+                  isSelected ? 'ring-2 ring-primary' : ''
+                } ${selectionMode && isAdmin ? 'cursor-pointer' : ''}`}
+                onClick={() => {
+                  if (selectionMode && isAdmin) {
+                    toggleSelected(item.id)
+                  }
+                }}
+              >
+                <div className="relative">
+                  <img src={item.image_url} alt={item.title} className="w-full object-cover" />
+                  {selectionMode && isAdmin ? (
+                    <div className="absolute inset-0 bg-primary/5" />
+                  ) : (
+                    <button
+                      type="button"
+                      className="absolute inset-0"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        setPreviewItem(item)
+                      }}
+                      aria-label="이미지 크게 보기"
+                    />
+                  )}
+                  {selectionMode && isAdmin && (
+                    <div className="absolute left-3 top-3 rounded-full bg-white/95 px-3 py-1 text-xs font-semibold shadow">
+                      {isSelected ? '선택됨' : '클릭해서 선택'}
+                    </div>
                   )}
                 </div>
+                <div className="space-y-3 p-4">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      {item.title !== DEFAULT_IMAGE_BOARD_TITLE ? (
+                        <h3 className="font-semibold text-slate-900">{item.title}</h3>
+                      ) : null}
+                      <p className="mt-1 text-xs text-slate-500">
+                        {item.width || '-'}x{item.height || '-'} / {item.file_size ? `${(item.file_size / 1024 / 1024).toFixed(2)}MB` : '-'}
+                      </p>
+                    </div>
+                    <Badge variant="outline">{item.category?.name || item.ai_category || '미분류'}</Badge>
+                  </div>
+
+                  {item.notes ? <p className="text-sm text-slate-600">{item.notes}</p> : null}
+
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        setPreviewItem(item)
+                      }}
+                    >
+                      크게 보기
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        triggerDownload(item.image_url, `${slugify(item.title) || 'image'}.jpg`)
+                      }}
+                    >
+                      <Download className="mr-2 h-4 w-4" />
+                      다운로드
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={async (event) => {
+                        event.stopPropagation()
+                        await handleCopyImage(item)
+                      }}
+                    >
+                      <Copy className="mr-2 h-4 w-4" />
+                      {copiedItemId === item.id ? '복사됨' : '복사'}
+                    </Button>
+                    {isAdmin && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          openEditModal(item)
+                        }}
+                      >
+                        <Pencil className="mr-2 h-4 w-4" />
+                        편집
+                      </Button>
+                    )}
+                  </div>
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
 
@@ -631,7 +721,11 @@ export default function ImageBoardPage() {
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label>제목</Label>
-                <Input value={editTitle} onChange={(event) => setEditTitle(event.target.value)} />
+                <Input
+                  value={editTitle === DEFAULT_IMAGE_BOARD_TITLE ? '' : editTitle}
+                  onChange={(event) => setEditTitle(event.target.value)}
+                  placeholder="제목 없이 둘 수 있습니다"
+                />
               </div>
               <div className="space-y-2">
                 <Label>카테고리</Label>
@@ -656,6 +750,35 @@ export default function ImageBoardPage() {
               </div>
             </CardContent>
           </Card>
+        </div>
+      )}
+
+      {previewItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setPreviewItem(null)}>
+          <div className="max-h-[90vh] max-w-[90vw]" onClick={(event) => event.stopPropagation()}>
+            <img src={previewItem.image_url} alt={previewItem.title} className="max-h-[80vh] max-w-[90vw] rounded-2xl object-contain shadow-2xl" />
+            <div className="mt-3 flex flex-wrap justify-end gap-2">
+              <Button variant="outline" className="bg-white" onClick={() => setPreviewItem(null)}>
+                닫기
+              </Button>
+              <Button
+                className="bg-white text-slate-900 hover:bg-slate-100"
+                onClick={async () => {
+                  await handleCopyImage(previewItem)
+                }}
+              >
+                <Copy className="mr-2 h-4 w-4" />
+                복사
+              </Button>
+              <Button
+                className="bg-white text-slate-900 hover:bg-slate-100"
+                onClick={() => triggerDownload(previewItem.image_url, `${slugify(previewItem.title) || 'image'}.jpg`)}
+              >
+                <Download className="mr-2 h-4 w-4" />
+                다운로드
+              </Button>
+            </div>
+          </div>
         </div>
       )}
     </div>
