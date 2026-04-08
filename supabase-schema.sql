@@ -380,3 +380,36 @@ CREATE POLICY "Admins can delete image board storage" ON storage.objects
     bucket_id = 'image-board' AND
     EXISTS (SELECT 1 FROM user_profiles WHERE user_profiles.id = auth.uid() AND user_profiles.role = 'admin')
   );
+
+-- =============================================
+-- 이미지 보드 세부 그룹 폴더
+-- =============================================
+CREATE TABLE IF NOT EXISTS image_board_groups (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  category_id UUID NOT NULL REFERENCES image_board_categories(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  slug TEXT NOT NULL,
+  color TEXT DEFAULT '#E2E8F0',
+  sort_order INTEGER DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(category_id, slug)
+);
+
+ALTER TABLE image_board_items
+  ADD COLUMN IF NOT EXISTS group_id UUID REFERENCES image_board_groups(id) ON DELETE SET NULL;
+
+ALTER TABLE image_board_groups ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Authenticated users can read image board groups" ON image_board_groups;
+DROP POLICY IF EXISTS "Admins can manage image board groups" ON image_board_groups;
+
+CREATE POLICY "Authenticated users can read image board groups" ON image_board_groups
+  FOR SELECT TO authenticated USING (true);
+
+CREATE POLICY "Admins can manage image board groups" ON image_board_groups
+  FOR ALL TO authenticated
+  USING (EXISTS (SELECT 1 FROM user_profiles WHERE user_profiles.id = auth.uid() AND user_profiles.role = 'admin'))
+  WITH CHECK (EXISTS (SELECT 1 FROM user_profiles WHERE user_profiles.id = auth.uid() AND user_profiles.role = 'admin'));
+
+CREATE INDEX IF NOT EXISTS idx_image_board_groups_category_id ON image_board_groups(category_id);
+CREATE INDEX IF NOT EXISTS idx_image_board_items_group_id ON image_board_items(group_id);

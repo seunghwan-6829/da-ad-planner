@@ -5,6 +5,7 @@ import {
   Copy,
   Download,
   FolderPlus,
+  FolderTree,
   Images,
   Loader2,
   Pencil,
@@ -23,14 +24,16 @@ import { Badge } from '@/components/ui/badge'
 import { useAuth } from '@/lib/auth-context'
 import {
   createImageBoardCategory,
+  createImageBoardGroup,
   createImageBoardItem,
   deleteImageBoardItems,
   getImageBoardCategories,
+  getImageBoardGroups,
   getImageBoardItemsPaginated,
   updateImageBoardItem,
   uploadImageBoardFile,
 } from '@/lib/api/image-board'
-import { ImageBoardCategory, ImageBoardItem } from '@/lib/supabase'
+import { ImageBoardCategory, ImageBoardGroup, ImageBoardItem } from '@/lib/supabase'
 
 const PAGE_SIZE_OPTIONS = [10, 30, 50, 100]
 const DEFAULT_IMAGE_BOARD_TITLE = '이미지 보드 항목'
@@ -50,6 +53,30 @@ function slugify(text: string) {
     .trim()
     .replace(/\s+/g, '-')
     .replace(/[^a-z0-9가-힣_]/g, '')
+}
+
+function formatFileSize(size: number | null) {
+  if (!size) return '-'
+  return `${(size / 1024 / 1024).toFixed(2)}MB`
+}
+
+function triggerDownload(url: string, fileName: string) {
+  const link = document.createElement('a')
+  link.href = url
+  link.download = fileName
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+}
+
+async function copyImageToClipboard(url: string) {
+  const response = await fetch(url)
+  const blob = await response.blob()
+  await navigator.clipboard.write([
+    new ClipboardItem({
+      [blob.type || 'image/png']: blob,
+    }),
+  ])
 }
 
 async function compressImage(file: File): Promise<UploadCandidate> {
@@ -115,34 +142,16 @@ async function compressImage(file: File): Promise<UploadCandidate> {
   })
 }
 
-function triggerDownload(url: string, fileName: string) {
-  const link = document.createElement('a')
-  link.href = url
-  link.download = fileName
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-}
-
-async function copyImageToClipboard(url: string) {
-  const response = await fetch(url)
-  const blob = await response.blob()
-  await navigator.clipboard.write([
-    new ClipboardItem({
-      [blob.type || 'image/png']: blob,
-    }),
-  ])
-}
-
 function getCategoryLabel(categoryId: string, categories: ImageBoardCategory[]) {
   if (categoryId === 'all') return '전체'
   if (categoryId === 'uncategorized') return '미분류'
   return categories.find((category) => category.id === categoryId)?.name || '기타'
 }
 
-function formatFileSize(size: number | null) {
-  if (!size) return '-'
-  return `${(size / 1024 / 1024).toFixed(2)}MB`
+function getGroupLabel(groupId: string, groups: ImageBoardGroup[]) {
+  if (groupId === 'all') return '전체'
+  if (groupId === 'ungrouped') return '그룹 없음'
+  return groups.find((group) => group.id === groupId)?.name || '그룹 없음'
 }
 
 export default function ImageBoardPage() {
@@ -151,18 +160,25 @@ export default function ImageBoardPage() {
 
   const [items, setItems] = useState<ImageBoardItem[]>([])
   const [categories, setCategories] = useState<ImageBoardCategory[]>([])
+  const [groups, setGroups] = useState<ImageBoardGroup[]>([])
+  const [editGroups, setEditGroups] = useState<ImageBoardGroup[]>([])
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(30)
   const [totalCount, setTotalCount] = useState(0)
   const [selectedCategoryId, setSelectedCategoryId] = useState('all')
+  const [selectedGroupId, setSelectedGroupId] = useState('all')
   const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({})
+  const [groupCounts, setGroupCounts] = useState<Record<string, number>>({})
   const [uploadQueue, setUploadQueue] = useState<UploadCandidate[]>([])
   const [showUploadModal, setShowUploadModal] = useState(false)
   const [showCategoryModal, setShowCategoryModal] = useState(false)
+  const [showGroupModal, setShowGroupModal] = useState(false)
   const [newCategoryName, setNewCategoryName] = useState('')
   const [newCategoryColor, setNewCategoryColor] = useState('#E2E8F0')
+  const [newGroupName, setNewGroupName] = useState('')
+  const [newGroupColor, setNewGroupColor] = useState('#E2E8F0')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [selectionMode, setSelectionMode] = useState(false)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
@@ -170,10 +186,13 @@ export default function ImageBoardPage() {
   const [editTitle, setEditTitle] = useState('')
   const [editNotes, setEditNotes] = useState('')
   const [editCategoryId, setEditCategoryId] = useState('')
+  const [editGroupId, setEditGroupId] = useState('')
   const [previewItem, setPreviewItem] = useState<ImageBoardItem | null>(null)
   const [copiedItemId, setCopiedItemId] = useState<string | null>(null)
 
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
+  const canUseGroups = selectedCategoryId !== 'all' && selectedCategoryId !== 'uncategorized'
+  const canCreateGroup = isAdmin && canUseGroups
 
   const filterCategories = useMemo(
     () => [
@@ -184,6 +203,15 @@ export default function ImageBoardPage() {
     [categories]
   )
 
+  const filterGroups = useMemo(
+    () => [
+      { id: 'all', name: '전체' },
+      { id: 'ungrouped', name: '그룹 없음' },
+      ...groups.map((group) => ({ id: group.id, name: group.name })),
+    ],
+    [groups]
+  )
+
   useEffect(() => {
     const savedPageSize = window.localStorage.getItem('image-board-page-size')
     const savedCategoryId = window.localStorage.getItem('image-board-category')
@@ -191,6 +219,7 @@ export default function ImageBoardPage() {
     if (savedPageSize && PAGE_SIZE_OPTIONS.includes(Number(savedPageSize))) {
       setPageSize(Number(savedPageSize))
     }
+
     if (savedCategoryId) {
       setSelectedCategoryId(savedCategoryId)
     }
@@ -205,17 +234,49 @@ export default function ImageBoardPage() {
   }, [selectedCategoryId])
 
   useEffect(() => {
+    if (!canUseGroups) {
+      setSelectedGroupId('all')
+      setGroups([])
+      return
+    }
+
+    getImageBoardGroups(selectedCategoryId).then(setGroups)
+  }, [canUseGroups, selectedCategoryId])
+
+  useEffect(() => {
+    if (!editTarget) {
+      setEditGroups([])
+      return
+    }
+
+    if (!editCategoryId) {
+      setEditGroupId('')
+      setEditGroups([])
+      return
+    }
+
+    getImageBoardGroups(editCategoryId).then((data) => {
+      setEditGroups(data)
+      if (!data.some((group) => group.id === editGroupId)) {
+        setEditGroupId('')
+      }
+    })
+  }, [editTarget, editCategoryId])
+
+  useEffect(() => {
     loadData()
-  }, [currentPage, pageSize, selectedCategoryId])
+  }, [currentPage, pageSize, selectedCategoryId, selectedGroupId])
 
   async function loadData() {
     setLoading(true)
+
     const [categoryData, listResult] = await Promise.all([
       getImageBoardCategories(),
       getImageBoardItemsPaginated({
         page: currentPage,
         pageSize,
         categoryId: selectedCategoryId,
+        groupId: canUseGroups ? selectedGroupId : 'all',
       }),
     ])
 
@@ -223,6 +284,7 @@ export default function ImageBoardPage() {
     setItems(listResult.data)
     setTotalCount(listResult.totalCount)
     setCategoryCounts(listResult.categoryCounts)
+    setGroupCounts(listResult.groupCounts)
     setLoading(false)
   }
 
@@ -231,6 +293,8 @@ export default function ImageBoardPage() {
     setEditTitle('')
     setEditNotes('')
     setEditCategoryId('')
+    setEditGroupId('')
+    setEditGroups([])
   }
 
   function closeUploadModal() {
@@ -295,6 +359,7 @@ export default function ImageBoardPage() {
           image_url: imageUrl,
           image_path: filePath,
           category_id: matchedCategory?.id || null,
+          group_id: null,
           ai_category: categoryName,
           notes: null,
           width: candidate.width,
@@ -307,6 +372,7 @@ export default function ImageBoardPage() {
       closeUploadModal()
       setCurrentPage(1)
       setSelectedCategoryId('all')
+      setSelectedGroupId('all')
       await loadData()
     } finally {
       setUploading(false)
@@ -330,11 +396,32 @@ export default function ImageBoardPage() {
     }
   }
 
+  async function handleCreateGroup() {
+    if (!newGroupName.trim() || !canUseGroups) return
+
+    const created = await createImageBoardGroup({
+      category_id: selectedCategoryId,
+      name: newGroupName.trim(),
+      slug: slugify(`${selectedCategoryId}-${newGroupName}`),
+      color: newGroupColor,
+    })
+
+    if (created) {
+      setGroups((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)))
+      setNewGroupName('')
+      setNewGroupColor('#E2E8F0')
+      setShowGroupModal(false)
+      setSelectedGroupId(created.id)
+      setCurrentPage(1)
+    }
+  }
+
   function openEditModal(item: ImageBoardItem) {
     setEditTarget(item)
     setEditTitle(item.title)
     setEditNotes(item.notes || '')
     setEditCategoryId(item.category_id || '')
+    setEditGroupId(item.group_id || '')
   }
 
   async function handleSaveEdit() {
@@ -344,6 +431,7 @@ export default function ImageBoardPage() {
       title: editTitle.trim() || DEFAULT_IMAGE_BOARD_TITLE,
       notes: editNotes.trim() || null,
       category_id: editCategoryId || null,
+      group_id: editCategoryId ? editGroupId || null : null,
     })
 
     if (updated) {
@@ -365,7 +453,22 @@ export default function ImageBoardPage() {
   async function handleBulkMove(categoryId: string) {
     const ids = Array.from(selectedIds)
     for (const id of ids) {
-      await updateImageBoardItem(id, { category_id: categoryId || null })
+      await updateImageBoardItem(id, {
+        category_id: categoryId || null,
+        group_id: null,
+      })
+    }
+    setSelectedIds(new Set())
+    setSelectionMode(false)
+    await loadData()
+  }
+
+  async function handleBulkMoveGroup(groupId: string) {
+    const ids = Array.from(selectedIds)
+    for (const id of ids) {
+      await updateImageBoardItem(id, {
+        group_id: groupId || null,
+      })
     }
     setSelectedIds(new Set())
     setSelectionMode(false)
@@ -411,6 +514,7 @@ export default function ImageBoardPage() {
               key={category.id}
               onClick={() => {
                 setSelectedCategoryId(category.id)
+                setSelectedGroupId('all')
                 setCurrentPage(1)
               }}
               className={`rounded-full px-4 py-2 text-sm font-medium transition ${
@@ -448,6 +552,12 @@ export default function ImageBoardPage() {
                 <FolderPlus className="mr-2 h-4 w-4" />
                 카테고리 추가
               </Button>
+              {canCreateGroup && (
+                <Button variant="outline" onClick={() => setShowGroupModal(true)}>
+                  <FolderTree className="mr-2 h-4 w-4" />
+                  그룹 추가
+                </Button>
+              )}
               <Button
                 onClick={() => {
                   setShowUploadModal(true)
@@ -463,18 +573,43 @@ export default function ImageBoardPage() {
         </div>
       </div>
 
+      {canUseGroups && (
+        <div className="rounded-3xl border bg-white p-4">
+          <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-700">
+            <FolderTree className="h-4 w-4 text-primary" />
+            {getCategoryLabel(selectedCategoryId, categories)} 그룹
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {filterGroups.map((group) => (
+              <button
+                key={group.id}
+                onClick={() => {
+                  setSelectedGroupId(group.id)
+                  setCurrentPage(1)
+                }}
+                className={`rounded-full px-4 py-2 text-sm font-medium transition ${
+                  selectedGroupId === group.id ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                {group.name}
+                <span className="ml-2 text-xs opacity-80">{groupCounts[group.id] || 0}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {selectionMode && isAdmin && (
         <Card>
-          <CardContent className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
+          <CardContent className="flex flex-col gap-3 p-4 xl:flex-row xl:items-center xl:justify-between">
             <div className="text-sm text-slate-600">선택된 이미지 {selectedIds.size}개</div>
             <div className="flex flex-wrap gap-2">
               <Select
                 defaultValue=""
                 onChange={(event) => {
-                  if (event.target.value) {
-                    handleBulkMove(event.target.value === 'uncategorized' ? '' : event.target.value)
-                    event.target.value = ''
-                  }
+                  if (!event.target.value) return
+                  handleBulkMove(event.target.value === 'uncategorized' ? '' : event.target.value)
+                  event.target.value = ''
                 }}
                 className="w-[220px]"
               >
@@ -486,6 +621,25 @@ export default function ImageBoardPage() {
                   </option>
                 ))}
               </Select>
+              {canUseGroups && (
+                <Select
+                  defaultValue=""
+                  onChange={(event) => {
+                    if (!event.target.value) return
+                    handleBulkMoveGroup(event.target.value === 'ungrouped' ? '' : event.target.value)
+                    event.target.value = ''
+                  }}
+                  className="w-[220px]"
+                >
+                  <option value="">그룹으로 이동</option>
+                  <option value="ungrouped">그룹 없음으로 이동</option>
+                  {groups.map((group) => (
+                    <option key={group.id} value={group.id}>
+                      {group.name}
+                    </option>
+                  ))}
+                </Select>
+              )}
               <Button variant="destructive" disabled={selectedIds.size === 0} onClick={() => setDeleteConfirmOpen(true)}>
                 <Trash2 className="mr-2 h-4 w-4" />
                 삭제
@@ -507,6 +661,7 @@ export default function ImageBoardPage() {
         <div className="columns-2 gap-4 md:columns-3 xl:columns-4 2xl:columns-5">
           {items.map((item) => {
             const isSelected = selectedIds.has(item.id)
+
             return (
               <div
                 key={item.id}
@@ -525,12 +680,13 @@ export default function ImageBoardPage() {
                 <div className="relative">
                   <img src={item.image_url} alt={item.title} className="w-full object-cover" />
                   {selectionMode && isAdmin ? <div className="absolute inset-0 bg-primary/5" /> : null}
-                  {selectionMode && isAdmin ? (
+                  {selectionMode && isAdmin && (
                     <div className="absolute left-3 top-3 rounded-full bg-white/95 px-3 py-1 text-xs font-semibold shadow">
                       {isSelected ? '선택됨' : '클릭해서 선택'}
                     </div>
-                  ) : null}
+                  )}
                 </div>
+
                 <div className="space-y-3 p-4">
                   <div className="flex items-start justify-between gap-2">
                     <div>
@@ -539,7 +695,10 @@ export default function ImageBoardPage() {
                         {item.width || '-'}x{item.height || '-'} / {formatFileSize(item.file_size)}
                       </p>
                     </div>
-                    <Badge variant="outline">{item.category?.name || item.ai_category || '미분류'}</Badge>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <Badge variant="outline">{item.category?.name || item.ai_category || '미분류'}</Badge>
+                      {item.group?.name ? <Badge variant="secondary">{item.group.name}</Badge> : null}
+                    </div>
                   </div>
 
                   {item.notes ? <p className="text-sm text-slate-600">{item.notes}</p> : null}
@@ -571,9 +730,10 @@ export default function ImageBoardPage() {
       )}
 
       {totalCount > 0 && (
-        <div className="flex flex-col gap-3 rounded-2xl border bg-white p-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-col gap-3 rounded-2xl border bg-white p-4 xl:flex-row xl:items-center xl:justify-between">
           <div className="text-sm text-slate-500">
             총 {totalCount}개 / 현재 카테고리: {getCategoryLabel(selectedCategoryId, categories)}
+            {canUseGroups ? ` / 현재 그룹: ${getGroupLabel(selectedGroupId, groups)}` : ''}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" size="sm" disabled={currentPage === 1} onClick={() => setCurrentPage((prev) => prev - 1)}>
@@ -643,7 +803,12 @@ export default function ImageBoardPage() {
                           <div className="text-xs text-slate-500">
                             {formatFileSize(file.file.size)} / {file.width}x{file.height}
                           </div>
-                          <Button variant="ghost" size="sm" className="w-full" onClick={() => setUploadQueue((prev) => prev.filter((item) => item.id !== file.id))}>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="w-full"
+                            onClick={() => setUploadQueue((prev) => prev.filter((item) => item.id !== file.id))}
+                          >
                             <X className="mr-2 h-4 w-4" />
                             제외
                           </Button>
@@ -699,6 +864,38 @@ export default function ImageBoardPage() {
         </div>
       )}
 
+      {showGroupModal && canCreateGroup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <Card className="w-full max-w-md">
+            <CardHeader className="flex flex-row items-center justify-between gap-4">
+              <CardTitle>그룹 폴더 추가</CardTitle>
+              <Button variant="ghost" size="icon" onClick={() => setShowGroupModal(false)}>
+                <X className="h-4 w-4" />
+              </Button>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="rounded-2xl bg-slate-50 p-3 text-sm text-slate-600">
+                현재 카테고리: <span className="font-medium text-slate-900">{getCategoryLabel(selectedCategoryId, categories)}</span>
+              </div>
+              <div className="space-y-2">
+                <Label>그룹명</Label>
+                <Input value={newGroupName} onChange={(event) => setNewGroupName(event.target.value)} placeholder="예: 상의, 하의, 가디건" />
+              </div>
+              <div className="space-y-2">
+                <Label>그룹 색상</Label>
+                <Input type="color" value={newGroupColor} onChange={(event) => setNewGroupColor(event.target.value)} />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setShowGroupModal(false)}>
+                  취소
+                </Button>
+                <Button onClick={handleCreateGroup}>추가</Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
       {deleteConfirmOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <Card className="w-full max-w-md">
@@ -740,7 +937,13 @@ export default function ImageBoardPage() {
               </div>
               <div className="space-y-2">
                 <Label>카테고리</Label>
-                <Select value={editCategoryId} onChange={(event) => setEditCategoryId(event.target.value)}>
+                <Select
+                  value={editCategoryId}
+                  onChange={(event) => {
+                    setEditCategoryId(event.target.value)
+                    setEditGroupId('')
+                  }}
+                >
                   <option value="">미분류</option>
                   {categories.map((category) => (
                     <option key={category.id} value={category.id}>
@@ -749,6 +952,19 @@ export default function ImageBoardPage() {
                   ))}
                 </Select>
               </div>
+              {editCategoryId ? (
+                <div className="space-y-2">
+                  <Label>그룹 폴더</Label>
+                  <Select value={editGroupId} onChange={(event) => setEditGroupId(event.target.value)}>
+                    <option value="">그룹 없음</option>
+                    {editGroups.map((group) => (
+                      <option key={group.id} value={group.id}>
+                        {group.name}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              ) : null}
               <div className="space-y-2">
                 <Label>메모</Label>
                 <Textarea value={editNotes} onChange={(event) => setEditNotes(event.target.value)} className="min-h-32" />

@@ -77,12 +77,23 @@ export interface ImageBoardCategory {
   created_at: string
 }
 
+export interface ImageBoardGroup {
+  id: string
+  category_id: string
+  name: string
+  slug: string
+  color: string | null
+  sort_order: number
+  created_at: string
+}
+
 export interface ImageBoardItem {
   id: string
   title: string
   image_url: string
   image_path: string
   category_id: string | null
+  group_id: string | null
   ai_category: string | null
   notes: string | null
   width: number | null
@@ -92,4 +103,5 @@ export interface ImageBoardItem {
   created_at: string
   updated_at: string
   category?: ImageBoardCategory | null
+  group?: ImageBoardGroup | null
 }
