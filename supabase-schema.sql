@@ -280,10 +280,15 @@ CREATE TABLE IF NOT EXISTS image_board_categories (
   name TEXT NOT NULL UNIQUE,
   slug TEXT NOT NULL UNIQUE,
   color TEXT DEFAULT '#E2E8F0',
+  thumbnail_url TEXT,
+  thumbnail_path TEXT,
   is_default BOOLEAN DEFAULT FALSE,
   sort_order INTEGER DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE image_board_categories ADD COLUMN IF NOT EXISTS thumbnail_url TEXT;
+ALTER TABLE image_board_categories ADD COLUMN IF NOT EXISTS thumbnail_path TEXT;
 
 CREATE TABLE IF NOT EXISTS image_board_items (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

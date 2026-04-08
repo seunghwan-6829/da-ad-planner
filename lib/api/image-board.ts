@@ -35,6 +35,8 @@ export async function createImageBoardCategory(input: {
   name: string
   slug: string
   color?: string | null
+  thumbnail_url?: string | null
+  thumbnail_path?: string | null
 }): Promise<ImageBoardCategory | null> {
   if (!supabase) return null
 
@@ -45,6 +47,8 @@ export async function createImageBoardCategory(input: {
         name: input.name,
         slug: input.slug,
         color: input.color || '#E2E8F0',
+        thumbnail_url: input.thumbnail_url || null,
+        thumbnail_path: input.thumbnail_path || null,
         is_default: false,
       },
     ])
@@ -53,6 +57,27 @@ export async function createImageBoardCategory(input: {
 
   if (error) {
     console.error('Image board category create failed:', error)
+    return null
+  }
+
+  return data
+}
+
+export async function updateImageBoardCategory(
+  id: string,
+  updates: Partial<ImageBoardCategory>
+): Promise<ImageBoardCategory | null> {
+  if (!supabase) return null
+
+  const { data, error } = await supabase
+    .from('image_board_categories')
+    .update(updates)
+    .eq('id', id)
+    .select('*')
+    .single()
+
+  if (error) {
+    console.error('Image board category update failed:', error)
     return null
   }
 
@@ -218,6 +243,19 @@ export async function uploadImageBoardFile(filePath: string, file: File) {
   return data.publicUrl
 }
 
+export async function deleteImageBoardStorageFiles(paths: string[]) {
+  if (!supabase || paths.length === 0) return true
+
+  const { error } = await supabase.storage.from('image-board').remove(paths)
+
+  if (error) {
+    console.error('Image board storage delete failed:', error)
+    return false
+  }
+
+  return true
+}
+
 export async function createImageBoardItem(
   input: Omit<ImageBoardItem, 'id' | 'created_at' | 'updated_at' | 'category' | 'group'>
 ): Promise<ImageBoardItem | null> {
@@ -292,9 +330,8 @@ export async function deleteImageBoardItems(items: Pick<ImageBoardItem, 'id' | '
 
   const paths = items.map((item) => item.image_path).filter(Boolean)
   if (paths.length > 0) {
-    const { error: storageError } = await supabase.storage.from('image-board').remove(paths)
-    if (storageError) {
-      console.error('Image board storage delete failed:', storageError)
+    const deleted = await deleteImageBoardStorageFiles(paths)
+    if (!deleted) {
       return false
     }
   }

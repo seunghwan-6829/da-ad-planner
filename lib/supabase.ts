@@ -72,6 +72,8 @@ export interface ImageBoardCategory {
   name: string
   slug: string
   color: string | null
+  thumbnail_url: string | null
+  thumbnail_path: string | null
   is_default: boolean
   sort_order: number
   created_at: string

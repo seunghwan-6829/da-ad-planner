@@ -26,10 +26,12 @@ import {
   createImageBoardCategory,
   createImageBoardGroup,
   createImageBoardItem,
+  deleteImageBoardStorageFiles,
   deleteImageBoardItems,
   getImageBoardCategories,
   getImageBoardGroups,
   getImageBoardItemsPaginated,
+  updateImageBoardCategory,
   updateImageBoardItem,
   uploadImageBoardFile,
 } from '@/lib/api/image-board'
@@ -157,6 +159,7 @@ function getGroupLabel(groupId: string, groups: ImageBoardGroup[]) {
 export default function ImageBoardPage() {
   const { user, isAdmin } = useAuth()
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const categoryThumbInputRef = useRef<HTMLInputElement>(null)
 
   const [items, setItems] = useState<ImageBoardItem[]>([])
   const [categories, setCategories] = useState<ImageBoardCategory[]>([])
@@ -189,6 +192,8 @@ export default function ImageBoardPage() {
   const [editGroupId, setEditGroupId] = useState('')
   const [previewItem, setPreviewItem] = useState<ImageBoardItem | null>(null)
   const [copiedItemId, setCopiedItemId] = useState<string | null>(null)
+  const [categoryThumbTarget, setCategoryThumbTarget] = useState<ImageBoardCategory | null>(null)
+  const [categoryThumbUploadingId, setCategoryThumbUploadingId] = useState<string | null>(null)
 
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
   const canUseGroups = selectedCategoryId !== 'all' && selectedCategoryId !== 'uncategorized'
@@ -396,6 +401,56 @@ export default function ImageBoardPage() {
     }
   }
 
+  async function handleCategoryThumbnailChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (!file || !categoryThumbTarget || !user) return
+
+    setCategoryThumbUploadingId(categoryThumbTarget.id)
+    try {
+      const optimized = await compressImage(file)
+      const nextPath = `categories/${categoryThumbTarget.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`
+      const nextUrl = await uploadImageBoardFile(nextPath, optimized.file)
+      if (!nextUrl) return
+
+      const updated = await updateImageBoardCategory(categoryThumbTarget.id, {
+        thumbnail_url: nextUrl,
+        thumbnail_path: nextPath,
+      })
+
+      if (!updated) return
+
+      if (categoryThumbTarget.thumbnail_path) {
+        await deleteImageBoardStorageFiles([categoryThumbTarget.thumbnail_path])
+      }
+
+      setCategories((prev) => prev.map((category) => (category.id === updated.id ? updated : category)))
+      if (selectedCategoryId === updated.id) {
+        setSelectedCategoryId(updated.id)
+      }
+    } finally {
+      setCategoryThumbUploadingId(null)
+      setCategoryThumbTarget(null)
+      event.target.value = ''
+    }
+  }
+
+  async function handleRemoveCategoryThumbnail(category: ImageBoardCategory) {
+    if (!category.thumbnail_path && !category.thumbnail_url) return
+
+    const updated = await updateImageBoardCategory(category.id, {
+      thumbnail_url: null,
+      thumbnail_path: null,
+    })
+
+    if (!updated) return
+
+    if (category.thumbnail_path) {
+      await deleteImageBoardStorageFiles([category.thumbnail_path])
+    }
+
+    setCategories((prev) => prev.map((item) => (item.id === updated.id ? updated : item)))
+  }
+
   async function handleCreateGroup() {
     if (!newGroupName.trim() || !canUseGroups) return
 
@@ -507,50 +562,27 @@ export default function ImageBoardPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-        <div className="flex flex-wrap gap-2">
-          {filterCategories.map((category) => (
-            <button
-              key={category.id}
-              onClick={() => {
-                setSelectedCategoryId(category.id)
-                setSelectedGroupId('all')
-                setCurrentPage(1)
-              }}
-              className={`rounded-full px-4 py-2 text-sm font-medium transition ${
-                selectedCategoryId === category.id ? 'bg-primary text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-              }`}
-            >
-              {category.name}
-              <span className="ml-2 text-xs opacity-80">{categoryCounts[category.id] || 0}</span>
-            </button>
-          ))}
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" onClick={() => setShowCategoryModal(true)}>
+            <FolderTree className="mr-2 h-4 w-4" />
+            카테고리 보기
+          </Button>
+          <Badge variant="outline" className="rounded-full px-3 py-1 text-sm">
+            현재 카테고리: {getCategoryLabel(selectedCategoryId, categories)}
+          </Badge>
+          {canUseGroups ? (
+            <Badge variant="secondary" className="rounded-full px-3 py-1 text-sm">
+              현재 그룹: {getGroupLabel(selectedGroupId, groups)}
+            </Badge>
+          ) : null}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm text-slate-500">페이지당</span>
-          <Select
-            value={String(pageSize)}
-            onChange={(event) => {
-              setPageSize(Number(event.target.value))
-              setCurrentPage(1)
-            }}
-            className="w-[150px]"
-          >
-            {PAGE_SIZE_OPTIONS.map((option) => (
-              <option key={option} value={option}>
-                {option}개 보기
-              </option>
-            ))}
-          </Select>
+        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
           {isAdmin && (
             <>
               <Button variant="outline" onClick={() => setSelectionMode((prev) => !prev)}>
                 {selectionMode ? '선택 종료' : '선택 모드'}
-              </Button>
-              <Button variant="outline" onClick={() => setShowCategoryModal(true)}>
-                <FolderPlus className="mr-2 h-4 w-4" />
-                카테고리 추가
               </Button>
               {canCreateGroup && (
                 <Button variant="outline" onClick={() => setShowGroupModal(true)}>
@@ -561,13 +593,19 @@ export default function ImageBoardPage() {
               <Button
                 onClick={() => {
                   setShowUploadModal(true)
-                  window.setTimeout(() => fileInputRef.current?.click(), 0)
                 }}
               >
                 <Plus className="mr-2 h-4 w-4" />
                 이미지 추가
               </Button>
               <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFileSelect} />
+              <input
+                ref={categoryThumbInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleCategoryThumbnailChange}
+              />
             </>
           )}
         </div>
@@ -736,6 +774,21 @@ export default function ImageBoardPage() {
             {canUseGroups ? ` / 현재 그룹: ${getGroupLabel(selectedGroupId, groups)}` : ''}
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm text-slate-500">페이지당</span>
+            <Select
+              value={String(pageSize)}
+              onChange={(event) => {
+                setPageSize(Number(event.target.value))
+                setCurrentPage(1)
+              }}
+              className="w-[150px]"
+            >
+              {PAGE_SIZE_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option}개 보기
+                </option>
+              ))}
+            </Select>
             <Button variant="outline" size="sm" disabled={currentPage === 1} onClick={() => setCurrentPage((prev) => prev - 1)}>
               이전
             </Button>
@@ -835,30 +888,91 @@ export default function ImageBoardPage() {
         </div>
       )}
 
-      {showCategoryModal && isAdmin && (
+      {showCategoryModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <Card className="w-full max-w-md">
+          <Card className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden">
             <CardHeader className="flex flex-row items-center justify-between gap-4">
-              <CardTitle>카테고리 추가</CardTitle>
+              <CardTitle>카테고리 보기</CardTitle>
               <Button variant="ghost" size="icon" onClick={() => setShowCategoryModal(false)}>
                 <X className="h-4 w-4" />
               </Button>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label>카테고리명</Label>
-                <Input value={newCategoryName} onChange={(event) => setNewCategoryName(event.target.value)} placeholder="예: 무드보드" />
+            <CardContent className="flex-1 space-y-6 overflow-y-auto">
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {filterCategories.map((category) => {
+                  const matched = categories.find((item) => item.id === category.id)
+                  const isFixed = category.id === 'all' || category.id === 'uncategorized'
+
+                  return (
+                    <button
+                      key={category.id}
+                      type="button"
+                      className={`overflow-hidden rounded-3xl border text-left transition ${
+                        selectedCategoryId === category.id ? 'border-primary ring-2 ring-primary/20' : 'hover:border-slate-300'
+                      }`}
+                      onClick={() => {
+                        setSelectedCategoryId(category.id)
+                        setSelectedGroupId('all')
+                        setCurrentPage(1)
+                        setShowCategoryModal(false)
+                      }}
+                    >
+                      <div className="aspect-[16/9] bg-slate-100">
+                        {matched?.thumbnail_url ? (
+                          <img src={matched.thumbnail_url} alt={matched.name} className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="flex h-full items-center justify-center text-slate-300">
+                            <Images className="h-10 w-10" />
+                          </div>
+                        )}
+                      </div>
+                      <div className="space-y-3 p-4">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="font-semibold text-slate-900">{category.name}</div>
+                          <Badge variant="outline">{categoryCounts[category.id] || 0}</Badge>
+                        </div>
+                        {isAdmin && !isFixed && matched ? (
+                          <div className="flex flex-wrap gap-2" onClick={(event) => event.stopPropagation()}>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={categoryThumbUploadingId === matched.id}
+                              onClick={() => {
+                                setCategoryThumbTarget(matched)
+                                categoryThumbInputRef.current?.click()
+                              }}
+                            >
+                              {matched.thumbnail_url ? '썸네일 변경' : '썸네일 추가'}
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={!matched.thumbnail_url || categoryThumbUploadingId === matched.id}
+                              onClick={() => handleRemoveCategoryThumbnail(matched)}
+                            >
+                              썸네일 삭제
+                            </Button>
+                          </div>
+                        ) : null}
+                      </div>
+                    </button>
+                  )
+                })}
               </div>
-              <div className="space-y-2">
-                <Label>카테고리 색상</Label>
-                <Input type="color" value={newCategoryColor} onChange={(event) => setNewCategoryColor(event.target.value)} />
-              </div>
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setShowCategoryModal(false)}>
-                  취소
-                </Button>
-                <Button onClick={handleCreateCategory}>추가</Button>
-              </div>
+
+              {isAdmin ? (
+                <div className="rounded-3xl border bg-slate-50 p-4">
+                  <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-700">
+                    <FolderPlus className="h-4 w-4 text-primary" />
+                    새 카테고리 추가
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-[1fr,160px,120px]">
+                    <Input value={newCategoryName} onChange={(event) => setNewCategoryName(event.target.value)} placeholder="예: 무드보드" />
+                    <Input type="color" value={newCategoryColor} onChange={(event) => setNewCategoryColor(event.target.value)} />
+                    <Button onClick={handleCreateCategory}>추가</Button>
+                  </div>
+                </div>
+              ) : null}
             </CardContent>
           </Card>
         </div>
