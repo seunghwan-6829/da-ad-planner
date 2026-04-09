@@ -213,7 +213,11 @@ export async function uploadVideoBoardFile(filePath: string, file: File) {
 
   if (error) {
     console.error('Video board upload failed:', error)
-    throw new Error(error.message || '영상 업로드에 실패했습니다.')
+    const message = error.message || '영상 업로드에 실패했습니다.'
+    if (message.toLowerCase().includes('bucket not found')) {
+      throw new Error('Supabase에 `video-board` 스토리지 버킷이 없습니다. SQL을 먼저 적용해 주세요.')
+    }
+    throw new Error(message)
   }
 
   const { data } = supabase.storage.from('video-board').getPublicUrl(filePath)

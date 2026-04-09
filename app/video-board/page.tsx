@@ -1,22 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import {
-  CheckCircle2,
-  Copy,
-  Download,
-  ExternalLink,
-  FolderPlus,
-  FolderTree,
-  Loader2,
-  Pencil,
-  PlaySquare,
-  Plus,
-  Trash2,
-  Upload,
-  Video,
-  X,
-} from 'lucide-react'
+import { CheckCircle2, Copy, Download, ExternalLink, FolderPlus, FolderTree, Loader2, Pencil, PlaySquare, Plus, Trash2, Upload, Video, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -97,28 +82,6 @@ function triggerDownload(url: string, fileName: string) {
   document.body.appendChild(link)
   link.click()
   link.remove()
-}
-
-function parseAnalysisSections(text: string) {
-  const sections = {
-    summary: '',
-    timeline: '',
-    script: '',
-    visuals: '',
-  }
-
-  const normalized = text || ''
-  const summaryMatch = normalized.match(/\[요약\]([\s\S]*?)(?=\[타임코드 포인트\]|\[대본\/메시지 추정\]|\[화면 구성 포인트\]|$)/)
-  const timelineMatch = normalized.match(/\[타임코드 포인트\]([\s\S]*?)(?=\[대본\/메시지 추정\]|\[화면 구성 포인트\]|$)/)
-  const scriptMatch = normalized.match(/\[대본\/메시지 추정\]([\s\S]*?)(?=\[화면 구성 포인트\]|$)/)
-  const visualsMatch = normalized.match(/\[화면 구성 포인트\]([\s\S]*)$/)
-
-  sections.summary = summaryMatch?.[1]?.trim() || ''
-  sections.timeline = timelineMatch?.[1]?.trim() || ''
-  sections.script = scriptMatch?.[1]?.trim() || ''
-  sections.visuals = visualsMatch?.[1]?.trim() || ''
-
-  return sections
 }
 
 function onceEvent<T extends Event>(target: EventTarget, eventName: string) {
@@ -382,44 +345,6 @@ export default function VideoBoardPage() {
   }
 
   async function saveSingleCandidate(candidate: UploadCandidate) {
-    const categorizeResponse = await fetch('/api/ai/video-board-categorize', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        videoName: candidate.file.name,
-        duration: candidate.metadata.duration,
-        width: candidate.metadata.width,
-        height: candidate.metadata.height,
-        sizeBytes: candidate.metadata.sizeBytes,
-        frames: candidate.frames,
-      }),
-    })
-
-    const categorizeData = await categorizeResponse.json().catch(() => ({}))
-    const aiCategory = categorizeData.category || '기타'
-
-    const analysisResponse = await fetch('/api/ai/video-board-analyze', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        videoName: candidate.file.name,
-        duration: candidate.metadata.duration,
-        width: candidate.metadata.width,
-        height: candidate.metadata.height,
-        sizeBytes: candidate.metadata.sizeBytes,
-        frames: candidate.frames,
-      }),
-    })
-
-    const analysisData = await analysisResponse.json().catch(() => ({}))
-    const analysisText = analysisData.analysis || ''
-    const sections = parseAnalysisSections(analysisText)
-
-    const matchedCategory =
-      categories.find((category) => category.name === aiCategory) ||
-      categories.find((category) => category.name === '기타') ||
-      null
-
     const extension = candidate.file.name.includes('.') ? candidate.file.name.split('.').pop() || 'mp4' : 'mp4'
     const baseName = slugify(candidate.title || candidate.file.name.replace(/\.[^.]+$/, '')) || 'video'
     const shareId = createShareId()
@@ -441,12 +366,12 @@ export default function VideoBoardPage() {
       video_path: videoPath,
       poster_url: posterUrl,
       poster_path: posterUrl ? posterPath : null,
-      category_id: matchedCategory?.id || null,
+      category_id: null,
       group_id: null,
-      ai_category: aiCategory,
-      summary: sections.summary || analysisText,
-      timeline_notes: sections.timeline || '',
-      script_notes: `${sections.script}\n\n${sections.visuals}`.trim(),
+      ai_category: null,
+      summary: null,
+      timeline_notes: null,
+      script_notes: null,
       duration: candidate.metadata.duration,
       width: candidate.metadata.width,
       height: candidate.metadata.height,
@@ -461,8 +386,9 @@ export default function VideoBoardPage() {
   async function handleSaveVideos() {
     if (!user || uploadQueue.length === 0) return
 
+    setShowUploadModal(false)
     setSaving(true)
-    openToast('영상 저장 중...', false)
+    openToast(`영상 ${uploadQueue.length}개 저장 중...`, false)
 
     let successCount = 0
     let failedMessage = ''
@@ -493,7 +419,8 @@ export default function VideoBoardPage() {
 
     if (successCount === uploadQueue.length) {
       setUploadQueue([])
-      setShowUploadModal(false)
+    } else {
+      setShowUploadModal(true)
     }
   }
 
