@@ -55,12 +55,19 @@ interface UploadCandidate {
   error: string
 }
 
-function slugify(text: string) {
-  return text.toLowerCase().trim().replace(/\s+/g, '-').replace(/[^a-z0-9가-힣_]/g, '')
-}
-
 function createShareId() {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
+}
+
+function createStorageStem(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function getDownloadExtension(mimeType: string | null | undefined) {
+  if (!mimeType) return 'mp4'
+  if (mimeType.includes('quicktime')) return 'mov'
+  if (mimeType.includes('webm')) return 'webm'
+  return 'mp4'
 }
 
 function formatDuration(seconds: number | null) {
@@ -315,7 +322,7 @@ export default function VideoBoardPage() {
 
     const created = await createVideoBoardCategory({
       name: newCategoryName.trim(),
-      slug: slugify(newCategoryName),
+      slug: createStorageStem('video-category'),
       color: newCategoryColor,
     })
 
@@ -332,7 +339,7 @@ export default function VideoBoardPage() {
     const created = await createVideoBoardGroup({
       category_id: selectedCategoryId,
       name: newGroupName.trim(),
-      slug: slugify(`${selectedCategoryId}-${newGroupName}`),
+      slug: createStorageStem('video-group'),
       color: newGroupColor,
     })
 
@@ -346,14 +353,14 @@ export default function VideoBoardPage() {
 
   async function saveSingleCandidate(candidate: UploadCandidate) {
     const extension = candidate.file.name.includes('.') ? candidate.file.name.split('.').pop() || 'mp4' : 'mp4'
-    const baseName = slugify(candidate.title || candidate.file.name.replace(/\.[^.]+$/, '')) || 'video'
+    const stem = createStorageStem('video')
     const shareId = createShareId()
-    const videoPath = `${user?.id}/${Date.now()}-${baseName}.${extension}`
-    const posterPath = `${user?.id}/posters/${Date.now()}-${baseName}.jpg`
+    const videoPath = `${user?.id}/${stem}.${extension}`
+    const posterPath = `${user?.id}/posters/${stem}.jpg`
 
     const [videoUrl, posterUrl] = await Promise.all([
       uploadVideoBoardFile(videoPath, candidate.file),
-      uploadVideoBoardFile(posterPath, await createPosterFile(candidate.posterDataUrl, `${baseName}.jpg`)),
+      uploadVideoBoardFile(posterPath, await createPosterFile(candidate.posterDataUrl, `${stem}.jpg`)),
     ])
 
     if (!videoUrl) {
@@ -443,7 +450,7 @@ export default function VideoBoardPage() {
   function openEditModal(item: VideoBoardItem) {
     setEditTarget(item)
     setEditTitle(item.title)
-    setEditNotes(item.summary || '')
+    setEditNotes('')
     setEditCategoryId(item.category_id || '')
     setEditGroupId(item.group_id || '')
   }
@@ -453,7 +460,6 @@ export default function VideoBoardPage() {
 
     const updated = await updateVideoBoardItem(editTarget.id, {
       title: editTitle.trim() || DEFAULT_VIDEO_TITLE,
-      summary: editNotes.trim() || null,
       category_id: editCategoryId || null,
       group_id: editCategoryId ? editGroupId || null : null,
     })
@@ -703,16 +709,6 @@ export default function VideoBoardPage() {
                   </div>
                 </div>
 
-                {item.summary ? <p className="line-clamp-3 text-sm text-slate-700">{item.summary}</p> : null}
-
-                <details className="rounded-2xl border bg-slate-50 p-3 text-sm text-slate-700">
-                  <summary className="cursor-pointer font-medium">분석 메모 보기</summary>
-                  <div className="mt-3 space-y-3 whitespace-pre-wrap">
-                    {item.timeline_notes ? <div><div className="font-medium text-slate-900">타임코드</div><div>{item.timeline_notes}</div></div> : null}
-                    {item.script_notes ? <div><div className="font-medium text-slate-900">대본 / 화면 구성</div><div>{item.script_notes}</div></div> : null}
-                  </div>
-                </details>
-
                 <div className="flex flex-wrap gap-2" onClick={(event) => event.stopPropagation()}>
                   <Button variant="outline" size="sm" onClick={() => setPreviewItem(item)}>
                     크게 보기
@@ -725,7 +721,7 @@ export default function VideoBoardPage() {
                     <ExternalLink className="mr-2 h-4 w-4" />
                     공유 페이지
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => triggerDownload(item.video_url, `${slugify(item.title) || 'video'}.${item.mime_type?.includes('quicktime') ? 'mov' : 'mp4'}`)}>
+                  <Button variant="outline" size="sm" onClick={() => triggerDownload(item.video_url, `${item.share_id}.${getDownloadExtension(item.mime_type)}`)}>
                     <Download className="mr-2 h-4 w-4" />
                     다운로드
                   </Button>
@@ -983,10 +979,6 @@ export default function VideoBoardPage() {
                   </Select>
                 </div>
               ) : null}
-              <div className="space-y-2">
-                <Label>요약 메모</Label>
-                <Textarea value={editNotes} onChange={(event) => setEditNotes(event.target.value)} className="min-h-32" />
-              </div>
               <div className="flex justify-end gap-2">
                 <Button variant="outline" onClick={() => setEditTarget(null)}>
                   취소
@@ -1008,7 +1000,6 @@ export default function VideoBoardPage() {
                 </div>
                 <div className="space-y-2">
                   <div className="font-semibold text-slate-900">{previewItem.title !== DEFAULT_VIDEO_TITLE ? previewItem.title : '제목 없음'}</div>
-                  {previewItem.summary ? <p className="text-sm text-slate-600">{previewItem.summary}</p> : null}
                 </div>
                 <div className="flex flex-wrap justify-end gap-2">
                   <Button variant="outline" onClick={() => setPreviewItem(null)}>
@@ -1017,7 +1008,7 @@ export default function VideoBoardPage() {
                   <Button variant="outline" onClick={() => handleCopyShareUrl(previewItem)}>
                     공유 URL 복사
                   </Button>
-                  <Button onClick={() => triggerDownload(previewItem.video_url, `${slugify(previewItem.title) || 'video'}.${previewItem.mime_type?.includes('quicktime') ? 'mov' : 'mp4'}`)}>
+                  <Button onClick={() => triggerDownload(previewItem.video_url, `${previewItem.share_id}.${getDownloadExtension(previewItem.mime_type)}`)}>
                     다운로드
                   </Button>
                 </div>
