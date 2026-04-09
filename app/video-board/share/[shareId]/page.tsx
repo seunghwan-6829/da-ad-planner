@@ -14,6 +14,15 @@ function formatDuration(seconds: number | null) {
   return `${mins}:${secs.toString().padStart(2, '0')}`
 }
 
+function formatDate(value: string | null | undefined) {
+  if (!value) return '-'
+  return new Date(value).toLocaleDateString('ko-KR', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  })
+}
+
 function triggerDownload(url: string, fileName: string) {
   const link = document.createElement('a')
   link.href = url
@@ -65,9 +74,8 @@ export default function SharedVideoBoardPage({ params }: { params: Promise<{ sha
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <p className="text-sm font-medium uppercase tracking-[0.2em] text-slate-400">Shared Video</p>
-            <h1 className="mt-2 text-3xl font-semibold text-slate-900">{item.title || '공유 영상'}</h1>
             <p className="mt-2 text-sm text-slate-500">
-              길이 {formatDuration(item.duration)} / {item.width || '-'}x{item.height || '-'}
+              추가일 {formatDate(item.created_at)} / 길이 {formatDuration(item.duration)} / {item.width || '-'}x{item.height || '-'}
             </p>
           </div>
           <Button onClick={() => triggerDownload(item.video_url, `${item.share_id}.mp4`)}>
@@ -89,34 +97,21 @@ export default function SharedVideoBoardPage({ params }: { params: Promise<{ sha
             </CardContent>
           </Card>
 
-          <div className="space-y-4">
-            {item.summary ? (
-              <Card>
-                <CardContent className="space-y-2 p-5">
-                  <div className="text-sm font-semibold text-slate-900">요약</div>
-                  <div className="whitespace-pre-wrap text-sm leading-6 text-slate-700">{item.summary}</div>
-                </CardContent>
-              </Card>
-            ) : null}
-
-            {item.timeline_notes ? (
-              <Card>
-                <CardContent className="space-y-2 p-5">
-                  <div className="text-sm font-semibold text-slate-900">타임코드 메모</div>
-                  <div className="whitespace-pre-wrap text-sm leading-6 text-slate-700">{item.timeline_notes}</div>
-                </CardContent>
-              </Card>
-            ) : null}
-
-            {item.script_notes ? (
-              <Card>
-                <CardContent className="space-y-2 p-5">
-                  <div className="text-sm font-semibold text-slate-900">대본 / 화면 구성</div>
-                  <div className="whitespace-pre-wrap text-sm leading-6 text-slate-700">{item.script_notes}</div>
-                </CardContent>
-              </Card>
-            ) : null}
-          </div>
+          <Card>
+            <CardContent className="space-y-4 p-5">
+              <div className="text-sm font-semibold text-slate-900">공유 정보</div>
+              <div className="grid gap-3 text-sm text-slate-600">
+                <div>추가일: {formatDate(item.created_at)}</div>
+                <div>길이: {formatDuration(item.duration)}</div>
+                <div>크기: {item.width || '-'}x{item.height || '-'}</div>
+                <div>
+                  분류: {item.category?.name || '미분류'}
+                  {item.group?.name ? ` / ${item.group.name}` : ''}
+                </div>
+                <div>파일 크기: {item.file_size ? `${(item.file_size / 1024 / 1024).toFixed(2)}MB` : '-'}</div>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       </div>
     </div>

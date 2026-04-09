@@ -1,13 +1,12 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { CheckCircle2, Copy, Download, ExternalLink, FolderPlus, FolderTree, Loader2, Pencil, PlaySquare, Plus, Trash2, Upload, Video, X } from 'lucide-react'
+import { CheckCircle2, Copy, Download, FolderPlus, FolderTree, Loader2, Pencil, PlaySquare, Plus, Trash2, Upload, Video, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
-import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { useAuth } from '@/lib/auth-context'
 import {
@@ -80,6 +79,15 @@ function formatDuration(seconds: number | null) {
 function formatFileSize(size: number | null) {
   if (!size) return '-'
   return `${(size / 1024 / 1024).toFixed(2)}MB`
+}
+
+function formatDate(value: string | null | undefined) {
+  if (!value) return '-'
+  return new Date(value).toLocaleDateString('ko-KR', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  })
 }
 
 function triggerDownload(url: string, fileName: string) {
@@ -210,6 +218,7 @@ export default function VideoBoardPage() {
   const [selectionMode, setSelectionMode] = useState(false)
   const [showUploadModal, setShowUploadModal] = useState(false)
   const [showCategoryModal, setShowCategoryModal] = useState(false)
+  const [showCreateCategoryModal, setShowCreateCategoryModal] = useState(false)
   const [showGroupModal, setShowGroupModal] = useState(false)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [previewItem, setPreviewItem] = useState<VideoBoardItem | null>(null)
@@ -220,17 +229,17 @@ export default function VideoBoardPage() {
   const [newGroupName, setNewGroupName] = useState('')
   const [newGroupColor, setNewGroupColor] = useState('#E2E8F0')
   const [editTarget, setEditTarget] = useState<VideoBoardItem | null>(null)
-  const [editTitle, setEditTitle] = useState('')
-  const [editNotes, setEditNotes] = useState('')
   const [editCategoryId, setEditCategoryId] = useState('')
   const [editGroupId, setEditGroupId] = useState('')
+
+  const visibleCategories = useMemo(() => categories.filter((category) => !category.is_default), [categories])
 
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
   const canUseGroups = selectedCategoryId !== 'all' && selectedCategoryId !== 'uncategorized'
 
   const filterCategories = useMemo(
-    () => [{ id: 'all', name: '전체' }, { id: 'uncategorized', name: '미분류' }, ...categories.map((category) => ({ id: category.id, name: category.name }))],
-    [categories]
+    () => [{ id: 'all', name: '전체' }, { id: 'uncategorized', name: '미분류' }, ...visibleCategories.map((category) => ({ id: category.id, name: category.name }))],
+    [visibleCategories]
   )
 
   const filterGroups = useMemo(
@@ -257,6 +266,15 @@ export default function VideoBoardPage() {
     const timer = window.setTimeout(() => setSaveToastOpen(false), 2600)
     return () => window.clearTimeout(timer)
   }, [saveToastOpen])
+
+  useEffect(() => {
+    if (selectedCategoryId === 'all' || selectedCategoryId === 'uncategorized') return
+    if (!visibleCategories.some((category) => category.id === selectedCategoryId)) {
+      setSelectedCategoryId('all')
+      setSelectedGroupId('all')
+      setCurrentPage(1)
+    }
+  }, [selectedCategoryId, visibleCategories])
 
   async function loadData() {
     setLoading(true)
@@ -330,6 +348,8 @@ export default function VideoBoardPage() {
       setCategories((prev) => [...prev, created])
       setNewCategoryName('')
       setNewCategoryColor('#E2E8F0')
+      setShowCreateCategoryModal(false)
+      await loadData()
     }
   }
 
@@ -449,8 +469,6 @@ export default function VideoBoardPage() {
 
   function openEditModal(item: VideoBoardItem) {
     setEditTarget(item)
-    setEditTitle(item.title)
-    setEditNotes('')
     setEditCategoryId(item.category_id || '')
     setEditGroupId(item.group_id || '')
   }
@@ -459,7 +477,6 @@ export default function VideoBoardPage() {
     if (!editTarget) return
 
     const updated = await updateVideoBoardItem(editTarget.id, {
-      title: editTitle.trim() || DEFAULT_VIDEO_TITLE,
       category_id: editCategoryId || null,
       group_id: editCategoryId ? editGroupId || null : null,
     })
@@ -567,6 +584,10 @@ export default function VideoBoardPage() {
               <Button variant="outline" onClick={() => setSelectionMode((prev) => !prev)}>
                 {selectionMode ? '선택 종료' : '선택 모드'}
               </Button>
+              <Button variant="outline" onClick={() => setShowCreateCategoryModal(true)}>
+                <FolderPlus className="mr-2 h-4 w-4" />
+                카테고리 추가
+              </Button>
               {canUseGroups ? (
                 <Button variant="outline" onClick={() => setShowGroupModal(true)}>
                   <FolderPlus className="mr-2 h-4 w-4" />
@@ -620,18 +641,18 @@ export default function VideoBoardPage() {
           <CardContent className="flex flex-col gap-3 p-4 xl:flex-row xl:items-center xl:justify-between">
             <div className="text-sm text-slate-600">선택된 영상 {selectedIds.size}개</div>
             <div className="flex flex-wrap gap-2">
-              <Select
-                defaultValue=""
-                onChange={(event) => {
-                  if (!event.target.value) return
-                  handleBulkMoveCategory(event.target.value === 'uncategorized' ? '' : event.target.value)
+                <Select
+                  defaultValue=""
+                  onChange={(event) => {
+                    if (!event.target.value) return
+                    handleBulkMoveCategory(event.target.value === 'uncategorized' ? '' : event.target.value)
                   event.target.value = ''
                 }}
                 className="w-[220px]"
               >
                 <option value="">카테고리로 이동</option>
                 <option value="uncategorized">미분류로 이동</option>
-                {categories.map((category) => (
+                {visibleCategories.map((category) => (
                   <option key={category.id} value={category.id}>
                     {category.name}
                   </option>
@@ -674,7 +695,7 @@ export default function VideoBoardPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
           {items.map((item) => (
             <Card
               key={item.id}
@@ -692,16 +713,24 @@ export default function VideoBoardPage() {
                     poster={item.poster_url || undefined}
                     controls={!selectionMode}
                     className="aspect-[9/16] w-full object-cover"
-                    onClick={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      if (selectionMode && isAdmin) {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        toggleSelected(item.id)
+                        return
+                      }
+                      event.stopPropagation()
+                    }}
                   />
                 </div>
 
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <h3 className="font-semibold text-slate-900">{item.title !== DEFAULT_VIDEO_TITLE ? item.title : '제목 없음'}</h3>
                     <p className="mt-1 text-xs text-slate-500">
                       {formatDuration(item.duration)} / {formatFileSize(item.file_size)} / {item.width || '-'}x{item.height || '-'}
                     </p>
+                    <p className="mt-1 text-xs text-slate-400">추가일 {formatDate(item.created_at)}</p>
                   </div>
                   <div className="flex flex-wrap justify-end gap-2">
                     <Badge variant="outline">{item.category?.name || item.ai_category || '미분류'}</Badge>
@@ -716,10 +745,6 @@ export default function VideoBoardPage() {
                   <Button variant="outline" size="sm" onClick={() => handleCopyShareUrl(item)}>
                     <Copy className="mr-2 h-4 w-4" />
                     {copiedShareId === item.id ? 'URL 복사됨' : '공유 URL 복사'}
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={() => window.open(`/video-board/share/${item.share_id}`, '_blank')}>
-                    <ExternalLink className="mr-2 h-4 w-4" />
-                    공유 페이지
                   </Button>
                   <Button variant="outline" size="sm" onClick={() => triggerDownload(item.video_url, `${item.share_id}.${getDownloadExtension(item.mime_type)}`)}>
                     <Download className="mr-2 h-4 w-4" />
@@ -804,20 +829,35 @@ export default function VideoBoardPage() {
                   </button>
                 ))}
               </div>
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
 
-              {isAdmin ? (
-                <div className="rounded-3xl border bg-slate-50 p-4">
-                  <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-700">
-                    <FolderPlus className="h-4 w-4 text-primary" />
-                    새 카테고리 추가
-                  </div>
-                  <div className="grid gap-4 md:grid-cols-[1fr,160px,120px]">
-                    <Input value={newCategoryName} onChange={(event) => setNewCategoryName(event.target.value)} placeholder="예: 반려동물" />
-                    <Input type="color" value={newCategoryColor} onChange={(event) => setNewCategoryColor(event.target.value)} />
-                    <Button onClick={handleCreateCategory}>추가</Button>
-                  </div>
-                </div>
-              ) : null}
+      {showCreateCategoryModal && isAdmin ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <Card className="w-full max-w-md">
+            <CardHeader className="flex flex-row items-center justify-between gap-4">
+              <CardTitle>카테고리 추가</CardTitle>
+              <Button variant="ghost" size="icon" onClick={() => setShowCreateCategoryModal(false)}>
+                <X className="h-4 w-4" />
+              </Button>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label>카테고리명</Label>
+                <Input value={newCategoryName} onChange={(event) => setNewCategoryName(event.target.value)} placeholder="예: 의류 후기" />
+              </div>
+              <div className="space-y-2">
+                <Label>색상</Label>
+                <Input type="color" value={newCategoryColor} onChange={(event) => setNewCategoryColor(event.target.value)} />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setShowCreateCategoryModal(false)}>
+                  취소
+                </Button>
+                <Button onClick={handleCreateCategory}>추가</Button>
+              </div>
             </CardContent>
           </Card>
         </div>
@@ -952,14 +992,10 @@ export default function VideoBoardPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label>제목</Label>
-                <Input value={editTitle === DEFAULT_VIDEO_TITLE ? '' : editTitle} onChange={(event) => setEditTitle(event.target.value)} />
-              </div>
-              <div className="space-y-2">
                 <Label>카테고리</Label>
                 <Select value={editCategoryId} onChange={(event) => setEditCategoryId(event.target.value)}>
                   <option value="">미분류</option>
-                  {categories.map((category) => (
+                  {visibleCategories.map((category) => (
                     <option key={category.id} value={category.id}>
                       {category.name}
                     </option>
@@ -999,7 +1035,10 @@ export default function VideoBoardPage() {
                   <video src={previewItem.video_url} poster={previewItem.poster_url || undefined} controls className="aspect-[9/16] w-full object-cover" />
                 </div>
                 <div className="space-y-2">
-                  <div className="font-semibold text-slate-900">{previewItem.title !== DEFAULT_VIDEO_TITLE ? previewItem.title : '제목 없음'}</div>
+                  <div className="text-sm text-slate-500">추가일 {formatDate(previewItem.created_at)}</div>
+                  <div className="text-sm text-slate-500">
+                    {formatDuration(previewItem.duration)} / {formatFileSize(previewItem.file_size)} / {previewItem.width || '-'}x{previewItem.height || '-'}
+                  </div>
                 </div>
                 <div className="flex flex-wrap justify-end gap-2">
                   <Button variant="outline" onClick={() => setPreviewItem(null)}>
