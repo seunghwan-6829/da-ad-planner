@@ -418,3 +418,155 @@ CREATE POLICY "Admins can manage image board groups" ON image_board_groups
 
 CREATE INDEX IF NOT EXISTS idx_image_board_groups_category_id ON image_board_groups(category_id);
 CREATE INDEX IF NOT EXISTS idx_image_board_items_group_id ON image_board_items(group_id);
+
+-- =============================================
+-- 영상 보드
+-- =============================================
+CREATE TABLE IF NOT EXISTS video_board_categories (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL UNIQUE,
+  slug TEXT NOT NULL UNIQUE,
+  color TEXT DEFAULT '#E2E8F0',
+  is_default BOOLEAN DEFAULT FALSE,
+  sort_order INTEGER DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS video_board_groups (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  category_id UUID NOT NULL REFERENCES video_board_categories(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  slug TEXT NOT NULL,
+  color TEXT DEFAULT '#E2E8F0',
+  sort_order INTEGER DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(category_id, slug)
+);
+
+CREATE TABLE IF NOT EXISTS video_board_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,
+  video_url TEXT NOT NULL,
+  video_path TEXT NOT NULL UNIQUE,
+  poster_url TEXT,
+  poster_path TEXT,
+  category_id UUID REFERENCES video_board_categories(id) ON DELETE SET NULL,
+  group_id UUID REFERENCES video_board_groups(id) ON DELETE SET NULL,
+  ai_category TEXT,
+  summary TEXT,
+  timeline_notes TEXT,
+  script_notes TEXT,
+  duration NUMERIC,
+  width INTEGER,
+  height INTEGER,
+  file_size BIGINT,
+  mime_type TEXT,
+  share_id TEXT NOT NULL UNIQUE,
+  is_public BOOLEAN DEFAULT TRUE,
+  created_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE video_board_categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE video_board_groups ENABLE ROW LEVEL SECURITY;
+ALTER TABLE video_board_items ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Authenticated users can read video board categories" ON video_board_categories;
+DROP POLICY IF EXISTS "Admins can manage video board categories" ON video_board_categories;
+DROP POLICY IF EXISTS "Authenticated users can read video board groups" ON video_board_groups;
+DROP POLICY IF EXISTS "Admins can manage video board groups" ON video_board_groups;
+DROP POLICY IF EXISTS "Authenticated users can read video board items" ON video_board_items;
+DROP POLICY IF EXISTS "Admins can manage video board items" ON video_board_items;
+DROP POLICY IF EXISTS "Public can view shared video board items" ON video_board_items;
+
+CREATE POLICY "Authenticated users can read video board categories" ON video_board_categories
+  FOR SELECT TO authenticated USING (true);
+
+CREATE POLICY "Admins can manage video board categories" ON video_board_categories
+  FOR ALL TO authenticated
+  USING (EXISTS (SELECT 1 FROM user_profiles WHERE user_profiles.id = auth.uid() AND user_profiles.role = 'admin'))
+  WITH CHECK (EXISTS (SELECT 1 FROM user_profiles WHERE user_profiles.id = auth.uid() AND user_profiles.role = 'admin'));
+
+CREATE POLICY "Authenticated users can read video board groups" ON video_board_groups
+  FOR SELECT TO authenticated USING (true);
+
+CREATE POLICY "Admins can manage video board groups" ON video_board_groups
+  FOR ALL TO authenticated
+  USING (EXISTS (SELECT 1 FROM user_profiles WHERE user_profiles.id = auth.uid() AND user_profiles.role = 'admin'))
+  WITH CHECK (EXISTS (SELECT 1 FROM user_profiles WHERE user_profiles.id = auth.uid() AND user_profiles.role = 'admin'));
+
+CREATE POLICY "Authenticated users can read video board items" ON video_board_items
+  FOR SELECT TO authenticated USING (true);
+
+CREATE POLICY "Admins can manage video board items" ON video_board_items
+  FOR ALL TO authenticated
+  USING (EXISTS (SELECT 1 FROM user_profiles WHERE user_profiles.id = auth.uid() AND user_profiles.role = 'admin'))
+  WITH CHECK (EXISTS (SELECT 1 FROM user_profiles WHERE user_profiles.id = auth.uid() AND user_profiles.role = 'admin'));
+
+CREATE POLICY "Public can view shared video board items" ON video_board_items
+  FOR SELECT TO anon USING (is_public = true);
+
+INSERT INTO video_board_categories (name, slug, color, is_default, sort_order)
+VALUES
+  ('의류', 'fashion', '#DBEAFE', true, 1),
+  ('식품', 'food', '#FEF3C7', true, 2),
+  ('부동산', 'real-estate', '#E0E7FF', true, 3),
+  ('뷰티', 'beauty', '#FCE7F3', true, 4),
+  ('건강', 'health', '#DCFCE7', true, 5),
+  ('금융', 'finance', '#FDE68A', true, 6),
+  ('교육', 'education', '#EDE9FE', true, 7),
+  ('여행', 'travel', '#CFFAFE', true, 8),
+  ('자동차', 'auto', '#E5E7EB', true, 9),
+  ('가전', 'electronics', '#D1FAE5', true, 10),
+  ('기타', 'etc', '#F3F4F6', true, 99)
+ON CONFLICT (slug) DO NOTHING;
+
+CREATE INDEX IF NOT EXISTS idx_video_board_groups_category_id ON video_board_groups(category_id);
+CREATE INDEX IF NOT EXISTS idx_video_board_items_category_id ON video_board_items(category_id);
+CREATE INDEX IF NOT EXISTS idx_video_board_items_group_id ON video_board_items(group_id);
+CREATE INDEX IF NOT EXISTS idx_video_board_items_share_id ON video_board_items(share_id);
+CREATE INDEX IF NOT EXISTS idx_video_board_items_created_at ON video_board_items(created_at DESC);
+
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('video-board', 'video-board', true)
+ON CONFLICT (id) DO NOTHING;
+
+DROP POLICY IF EXISTS "Authenticated users can view video board storage" ON storage.objects;
+DROP POLICY IF EXISTS "Public can view video board storage" ON storage.objects;
+DROP POLICY IF EXISTS "Admins can upload video board storage" ON storage.objects;
+DROP POLICY IF EXISTS "Admins can update video board storage" ON storage.objects;
+DROP POLICY IF EXISTS "Admins can delete video board storage" ON storage.objects;
+
+CREATE POLICY "Authenticated users can view video board storage" ON storage.objects
+  FOR SELECT TO authenticated
+  USING (bucket_id = 'video-board');
+
+CREATE POLICY "Public can view video board storage" ON storage.objects
+  FOR SELECT TO anon
+  USING (bucket_id = 'video-board');
+
+CREATE POLICY "Admins can upload video board storage" ON storage.objects
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    bucket_id = 'video-board' AND
+    EXISTS (SELECT 1 FROM user_profiles WHERE user_profiles.id = auth.uid() AND user_profiles.role = 'admin')
+  );
+
+CREATE POLICY "Admins can update video board storage" ON storage.objects
+  FOR UPDATE TO authenticated
+  USING (
+    bucket_id = 'video-board' AND
+    EXISTS (SELECT 1 FROM user_profiles WHERE user_profiles.id = auth.uid() AND user_profiles.role = 'admin')
+  )
+  WITH CHECK (
+    bucket_id = 'video-board' AND
+    EXISTS (SELECT 1 FROM user_profiles WHERE user_profiles.id = auth.uid() AND user_profiles.role = 'admin')
+  );
+
+CREATE POLICY "Admins can delete video board storage" ON storage.objects
+  FOR DELETE TO authenticated
+  USING (
+    bucket_id = 'video-board' AND
+    EXISTS (SELECT 1 FROM user_profiles WHERE user_profiles.id = auth.uid() AND user_profiles.role = 'admin')
+  );

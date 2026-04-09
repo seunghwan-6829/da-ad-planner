@@ -107,3 +107,50 @@ export interface ImageBoardItem {
   category?: ImageBoardCategory | null
   group?: ImageBoardGroup | null
 }
+
+export interface VideoBoardCategory {
+  id: string
+  name: string
+  slug: string
+  color: string | null
+  is_default: boolean
+  sort_order: number
+  created_at: string
+}
+
+export interface VideoBoardGroup {
+  id: string
+  category_id: string
+  name: string
+  slug: string
+  color: string | null
+  sort_order: number
+  created_at: string
+}
+
+export interface VideoBoardItem {
+  id: string
+  title: string
+  video_url: string
+  video_path: string
+  poster_url: string | null
+  poster_path: string | null
+  category_id: string | null
+  group_id: string | null
+  ai_category: string | null
+  summary: string | null
+  timeline_notes: string | null
+  script_notes: string | null
+  duration: number | null
+  width: number | null
+  height: number | null
+  file_size: number | null
+  mime_type: string | null
+  share_id: string
+  is_public: boolean
+  created_by: string | null
+  created_at: string
+  updated_at: string
+  category?: VideoBoardCategory | null
+  group?: VideoBoardGroup | null
+}

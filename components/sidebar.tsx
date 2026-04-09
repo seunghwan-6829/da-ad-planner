@@ -27,6 +27,7 @@ const navigationTop = [
   { name: 'AI 광고 기획서', href: '/plans', icon: FileText },
   { name: '광고주 관리', href: '/advertisers', icon: Users },
   { name: 'BP소재', href: '/templates', icon: FileCode },
+  { name: '영상 보드', href: '/video-board', icon: Video },
   { name: '이미지 보드', href: '/image-board', icon: Images },
 ]
 
@@ -112,7 +113,7 @@ export function Sidebar() {
       </nav>
 
       <div className="space-y-3 border-t p-4">
-        {user && profile && (
+        {user && profile ? (
           <div className="flex items-center gap-3 px-2">
             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10">
               <User className="h-4 w-4 text-primary" />
@@ -124,7 +125,7 @@ export function Sidebar() {
               </p>
             </div>
           </div>
-        )}
+        ) : null}
 
         {user ? (
           <Button variant="outline" size="sm" className="w-full" onClick={handleSignOut}>
