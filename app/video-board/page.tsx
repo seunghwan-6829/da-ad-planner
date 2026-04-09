@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  CheckCircle2,
   Copy,
   Download,
   ExternalLink,
@@ -40,6 +41,9 @@ import { VideoBoardCategory, VideoBoardGroup, VideoBoardItem } from '@/lib/supab
 const PAGE_SIZE_OPTIONS = [10, 30, 50, 100]
 const DEFAULT_VIDEO_TITLE = '영상 보드 항목'
 const MAX_VIDEO_SIZE = 50 * 1024 * 1024
+const MAX_BATCH_UPLOAD = 10
+
+type UploadStatus = 'idle' | 'uploading' | 'success' | 'error'
 
 interface VideoMetadata {
   duration: number
@@ -55,12 +59,15 @@ interface VideoFrame {
 }
 
 interface UploadCandidate {
+  id: string
   file: File
   previewUrl: string
   title: string
   metadata: VideoMetadata
   posterDataUrl: string
   frames: VideoFrame[]
+  status: UploadStatus
+  error: string
 }
 
 function slugify(text: string) {
@@ -193,16 +200,22 @@ async function prepareVideo(file: File): Promise<UploadCandidate> {
     })
   }
 
-  const posterDataUrl = frames[0]?.dataUrl || ''
-
   return {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     file,
     previewUrl: objectUrl,
     title: '',
     metadata,
-    posterDataUrl,
+    posterDataUrl: frames[0]?.dataUrl || '',
     frames,
+    status: 'idle',
+    error: '',
   }
+}
+
+async function createPosterFile(dataUrl: string, fileName: string) {
+  const blob = await (await fetch(dataUrl)).blob()
+  return new File([blob], fileName, { type: 'image/jpeg' })
 }
 
 export default function VideoBoardPage() {
@@ -213,6 +226,9 @@ export default function VideoBoardPage() {
   const [groups, setGroups] = useState<VideoBoardGroup[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [saveToastOpen, setSaveToastOpen] = useState(false)
+  const [saveToastMessage, setSaveToastMessage] = useState('')
+  const [saveToastError, setSaveToastError] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(30)
   const [totalCount, setTotalCount] = useState(0)
@@ -228,7 +244,7 @@ export default function VideoBoardPage() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [previewItem, setPreviewItem] = useState<VideoBoardItem | null>(null)
   const [copiedShareId, setCopiedShareId] = useState<string | null>(null)
-  const [uploadCandidate, setUploadCandidate] = useState<UploadCandidate | null>(null)
+  const [uploadQueue, setUploadQueue] = useState<UploadCandidate[]>([])
   const [newCategoryName, setNewCategoryName] = useState('')
   const [newCategoryColor, setNewCategoryColor] = useState('#E2E8F0')
   const [newGroupName, setNewGroupName] = useState('')
@@ -266,6 +282,12 @@ export default function VideoBoardPage() {
     getVideoBoardGroups(selectedCategoryId).then(setGroups)
   }, [canUseGroups, selectedCategoryId])
 
+  useEffect(() => {
+    if (!saveToastOpen) return
+    const timer = window.setTimeout(() => setSaveToastOpen(false), 2600)
+    return () => window.clearTimeout(timer)
+  }, [saveToastOpen])
+
   async function loadData() {
     setLoading(true)
     const [categoryData, listResult] = await Promise.all([
@@ -286,24 +308,39 @@ export default function VideoBoardPage() {
     setLoading(false)
   }
 
-  async function handleVideoSelect(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    if (!file) return
+  function openToast(message: string, isError = false) {
+    setSaveToastMessage(message)
+    setSaveToastError(isError)
+    setSaveToastOpen(true)
+  }
 
-    if (file.size > MAX_VIDEO_SIZE) {
-      alert('영상은 최대 50MB까지 업로드할 수 있습니다.')
-      event.target.value = ''
-      return
+  async function handleVideoSelect(event: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files || []).filter((file) => file.type.startsWith('video/'))
+    if (!files.length) return
+
+    const remainingSlots = Math.max(0, MAX_BATCH_UPLOAD - uploadQueue.length)
+    const selectedFiles = files.slice(0, remainingSlots)
+
+    if (files.length > remainingSlots) {
+      openToast(`한 번에 최대 ${MAX_BATCH_UPLOAD}개까지만 추가할 수 있습니다.`, true)
     }
 
     setSaving(true)
     try {
-      const prepared = await prepareVideo(file)
-      setUploadCandidate(prepared)
+      const prepared = await Promise.all(
+        selectedFiles.map(async (file) => {
+          if (file.size > MAX_VIDEO_SIZE) {
+            throw new Error(`${file.name}: 최대 50MB까지만 업로드할 수 있습니다.`)
+          }
+          return prepareVideo(file)
+        })
+      )
+
+      setUploadQueue((prev) => [...prev, ...prepared].slice(0, MAX_BATCH_UPLOAD))
       setShowUploadModal(true)
     } catch (error) {
       console.error(error)
-      alert(error instanceof Error ? error.message : '영상 준비 중 오류가 발생했습니다.')
+      openToast(error instanceof Error ? error.message : '영상 준비 중 오류가 발생했습니다.', true)
     } finally {
       setSaving(false)
       event.target.value = ''
@@ -344,100 +381,136 @@ export default function VideoBoardPage() {
     }
   }
 
-  async function handleSaveVideo() {
-    if (!user || !uploadCandidate) return
+  async function saveSingleCandidate(candidate: UploadCandidate) {
+    const categorizeResponse = await fetch('/api/ai/video-board-categorize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        videoName: candidate.file.name,
+        duration: candidate.metadata.duration,
+        width: candidate.metadata.width,
+        height: candidate.metadata.height,
+        sizeBytes: candidate.metadata.sizeBytes,
+        frames: candidate.frames,
+      }),
+    })
+
+    const categorizeData = await categorizeResponse.json().catch(() => ({}))
+    const aiCategory = categorizeData.category || '기타'
+
+    const analysisResponse = await fetch('/api/ai/video-board-analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        videoName: candidate.file.name,
+        duration: candidate.metadata.duration,
+        width: candidate.metadata.width,
+        height: candidate.metadata.height,
+        sizeBytes: candidate.metadata.sizeBytes,
+        frames: candidate.frames,
+      }),
+    })
+
+    const analysisData = await analysisResponse.json().catch(() => ({}))
+    const analysisText = analysisData.analysis || ''
+    const sections = parseAnalysisSections(analysisText)
+
+    const matchedCategory =
+      categories.find((category) => category.name === aiCategory) ||
+      categories.find((category) => category.name === '기타') ||
+      null
+
+    const extension = candidate.file.name.includes('.') ? candidate.file.name.split('.').pop() || 'mp4' : 'mp4'
+    const baseName = slugify(candidate.title || candidate.file.name.replace(/\.[^.]+$/, '')) || 'video'
+    const shareId = createShareId()
+    const videoPath = `${user?.id}/${Date.now()}-${baseName}.${extension}`
+    const posterPath = `${user?.id}/posters/${Date.now()}-${baseName}.jpg`
+
+    const [videoUrl, posterUrl] = await Promise.all([
+      uploadVideoBoardFile(videoPath, candidate.file),
+      uploadVideoBoardFile(posterPath, await createPosterFile(candidate.posterDataUrl, `${baseName}.jpg`)),
+    ])
+
+    if (!videoUrl) {
+      throw new Error(`${candidate.file.name}: 영상 업로드 URL 생성에 실패했습니다.`)
+    }
+
+    await createVideoBoardItem({
+      title: candidate.title.trim() || DEFAULT_VIDEO_TITLE,
+      video_url: videoUrl,
+      video_path: videoPath,
+      poster_url: posterUrl,
+      poster_path: posterUrl ? posterPath : null,
+      category_id: matchedCategory?.id || null,
+      group_id: null,
+      ai_category: aiCategory,
+      summary: sections.summary || analysisText,
+      timeline_notes: sections.timeline || '',
+      script_notes: `${sections.script}\n\n${sections.visuals}`.trim(),
+      duration: candidate.metadata.duration,
+      width: candidate.metadata.width,
+      height: candidate.metadata.height,
+      file_size: candidate.metadata.sizeBytes,
+      mime_type: candidate.metadata.mimeType,
+      share_id: shareId,
+      is_public: true,
+      created_by: user?.id || null,
+    })
+  }
+
+  async function handleSaveVideos() {
+    if (!user || uploadQueue.length === 0) return
 
     setSaving(true)
-    try {
-      const categorizeResponse = await fetch('/api/ai/video-board-categorize', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          videoName: uploadCandidate.file.name,
-          duration: uploadCandidate.metadata.duration,
-          width: uploadCandidate.metadata.width,
-          height: uploadCandidate.metadata.height,
-          sizeBytes: uploadCandidate.metadata.sizeBytes,
-          frames: uploadCandidate.frames,
-        }),
-      })
-      const categorizeData = await categorizeResponse.json().catch(() => ({}))
-      const aiCategory = categorizeData.category || '기타'
+    openToast('영상 저장 중...', false)
 
-      const analysisResponse = await fetch('/api/ai/video-board-analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          videoName: uploadCandidate.file.name,
-          duration: uploadCandidate.metadata.duration,
-          width: uploadCandidate.metadata.width,
-          height: uploadCandidate.metadata.height,
-          sizeBytes: uploadCandidate.metadata.sizeBytes,
-          frames: uploadCandidate.frames,
-        }),
-      })
-      const analysisData = await analysisResponse.json().catch(() => ({}))
-      const analysisText = analysisData.analysis || ''
-      const sections = parseAnalysisSections(analysisText)
+    let successCount = 0
+    let failedMessage = ''
 
-      const matchedCategory =
-        categories.find((category) => category.name === aiCategory) ||
-        categories.find((category) => category.name === '기타') ||
-        null
+    for (const candidate of uploadQueue) {
+      setUploadQueue((prev) => prev.map((item) => (item.id === candidate.id ? { ...item, status: 'uploading', error: '' } : item)))
 
-      const shareId = createShareId()
-      const baseName = slugify(uploadCandidate.title || uploadCandidate.file.name.replace(/\.[^.]+$/, '')) || 'video'
-      const videoPath = `${user.id}/${Date.now()}-${baseName}.mp4`
-      const posterPath = `${user.id}/posters/${Date.now()}-${baseName}.jpg`
-
-      const [videoUrl, posterUrl] = await Promise.all([
-        uploadVideoBoardFile(videoPath, uploadCandidate.file),
-        uploadVideoBoardFile(
-          posterPath,
-          new File([await (await fetch(uploadCandidate.posterDataUrl)).blob()], `${baseName}.jpg`, { type: 'image/jpeg' })
-        ),
-      ])
-
-      if (!videoUrl) {
-        throw new Error('영상 업로드에 실패했습니다.')
+      try {
+        await saveSingleCandidate(candidate)
+        successCount += 1
+        if (candidate.previewUrl) URL.revokeObjectURL(candidate.previewUrl)
+        setUploadQueue((prev) => prev.map((item) => (item.id === candidate.id ? { ...item, status: 'success' } : item)))
+      } catch (error) {
+        const message = error instanceof Error ? error.message : `${candidate.file.name}: 저장에 실패했습니다.`
+        failedMessage = message
+        setUploadQueue((prev) => prev.map((item) => (item.id === candidate.id ? { ...item, status: 'error', error: message } : item)))
       }
-
-      await createVideoBoardItem({
-        title: uploadCandidate.title.trim() || DEFAULT_VIDEO_TITLE,
-        video_url: videoUrl,
-        video_path: videoPath,
-        poster_url: posterUrl,
-        poster_path: posterUrl ? posterPath : null,
-        category_id: matchedCategory?.id || null,
-        group_id: null,
-        ai_category: aiCategory,
-        summary: sections.summary || analysisText,
-        timeline_notes: sections.timeline || '',
-        script_notes: `${sections.script}\n\n${sections.visuals}`.trim(),
-        duration: uploadCandidate.metadata.duration,
-        width: uploadCandidate.metadata.width,
-        height: uploadCandidate.metadata.height,
-        file_size: uploadCandidate.metadata.sizeBytes,
-        mime_type: uploadCandidate.metadata.mimeType,
-        share_id: shareId,
-        is_public: true,
-        created_by: user.id,
-      })
-
-      if (uploadCandidate.previewUrl) {
-        URL.revokeObjectURL(uploadCandidate.previewUrl)
-      }
-
-      setUploadCandidate(null)
-      setShowUploadModal(false)
-      setCurrentPage(1)
-      await loadData()
-    } catch (error) {
-      console.error(error)
-      alert(error instanceof Error ? error.message : '영상 저장 중 오류가 발생했습니다.')
-    } finally {
-      setSaving(false)
     }
+
+    await loadData()
+    setSaving(false)
+
+    if (failedMessage) {
+      openToast(failedMessage, true)
+    } else {
+      openToast(`${successCount}개 영상 저장 완료`, false)
+    }
+
+    if (successCount === uploadQueue.length) {
+      setUploadQueue([])
+      setShowUploadModal(false)
+    }
+  }
+
+  function removeCandidate(candidateId: string) {
+    setUploadQueue((prev) => {
+      const target = prev.find((item) => item.id === candidateId)
+      if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl)
+      return prev.filter((item) => item.id !== candidateId)
+    })
+  }
+
+  function closeUploadModal() {
+    uploadQueue.forEach((candidate) => {
+      if (candidate.previewUrl) URL.revokeObjectURL(candidate.previewUrl)
+    })
+    setUploadQueue([])
+    setShowUploadModal(false)
   }
 
   function openEditModal(item: VideoBoardItem) {
@@ -522,6 +595,23 @@ export default function VideoBoardPage() {
 
   return (
     <div className="space-y-5">
+      {saveToastOpen ? (
+        <div className="fixed right-6 top-6 z-[70] w-[340px] rounded-2xl border bg-white p-4 shadow-2xl">
+          <div className="flex items-start gap-3">
+            <div className={`mt-0.5 rounded-full p-1 ${saveToastError ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-600'}`}>
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold text-slate-900">{saveToastError ? '저장 오류' : saving ? '저장 진행 중' : '저장 완료'}</div>
+              <div className="mt-1 text-sm text-slate-600">{saveToastMessage}</div>
+            </div>
+            <button type="button" className="text-slate-400 hover:text-slate-600" onClick={() => setSaveToastOpen(false)}>
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" onClick={() => setShowCategoryModal(true)}>
@@ -539,7 +629,7 @@ export default function VideoBoardPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {isAdmin && (
+          {isAdmin ? (
             <>
               <Button variant="outline" onClick={() => setSelectionMode((prev) => !prev)}>
                 {selectionMode ? '선택 종료' : '선택 모드'}
@@ -557,16 +647,16 @@ export default function VideoBoardPage() {
                 }}
                 disabled={saving}
               >
-                {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+                <Plus className="mr-2 h-4 w-4" />
                 영상 추가
               </Button>
-              <input ref={fileInputRef} type="file" accept="video/*" className="hidden" onChange={handleVideoSelect} />
+              <input ref={fileInputRef} type="file" accept="video/*" multiple className="hidden" onChange={handleVideoSelect} />
             </>
-          )}
+          ) : null}
         </div>
       </div>
 
-      {canUseGroups && (
+      {canUseGroups ? (
         <div className="rounded-3xl border bg-white p-4">
           <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-700">
             <FolderTree className="h-4 w-4 text-primary" />
@@ -590,7 +680,7 @@ export default function VideoBoardPage() {
             ))}
           </div>
         </div>
-      )}
+      ) : null}
 
       {selectionMode && isAdmin ? (
         <Card>
@@ -659,9 +749,7 @@ export default function VideoBoardPage() {
                 selectedIds.has(item.id) ? 'ring-2 ring-primary' : ''
               }`}
               onClick={() => {
-                if (selectionMode && isAdmin) {
-                  toggleSelected(item.id)
-                }
+                if (selectionMode && isAdmin) toggleSelected(item.id)
               }}
             >
               <CardContent className="space-y-4 p-4">
@@ -677,7 +765,7 @@ export default function VideoBoardPage() {
 
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    {item.title !== DEFAULT_VIDEO_TITLE ? <h3 className="font-semibold text-slate-900">{item.title}</h3> : <h3 className="font-semibold text-slate-900">제목 없음</h3>}
+                    <h3 className="font-semibold text-slate-900">{item.title !== DEFAULT_VIDEO_TITLE ? item.title : '제목 없음'}</h3>
                     <p className="mt-1 text-xs text-slate-500">
                       {formatDuration(item.duration)} / {formatFileSize(item.file_size)} / {item.width || '-'}x{item.height || '-'}
                     </p>
@@ -694,7 +782,7 @@ export default function VideoBoardPage() {
                   <summary className="cursor-pointer font-medium">분석 메모 보기</summary>
                   <div className="mt-3 space-y-3 whitespace-pre-wrap">
                     {item.timeline_notes ? <div><div className="font-medium text-slate-900">타임코드</div><div>{item.timeline_notes}</div></div> : null}
-                    {item.script_notes ? <div><div className="font-medium text-slate-900">대본/화면 구성</div><div>{item.script_notes}</div></div> : null}
+                    {item.script_notes ? <div><div className="font-medium text-slate-900">대본 / 화면 구성</div><div>{item.script_notes}</div></div> : null}
                   </div>
                 </details>
 
@@ -710,7 +798,7 @@ export default function VideoBoardPage() {
                     <ExternalLink className="mr-2 h-4 w-4" />
                     공유 페이지
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => triggerDownload(item.video_url, `${slugify(item.title) || 'video'}.mp4`)}>
+                  <Button variant="outline" size="sm" onClick={() => triggerDownload(item.video_url, `${slugify(item.title) || 'video'}.${item.mime_type?.includes('quicktime') ? 'mov' : 'mp4'}`)}>
                     <Download className="mr-2 h-4 w-4" />
                     다운로드
                   </Button>
@@ -843,7 +931,7 @@ export default function VideoBoardPage() {
 
       {showUploadModal ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
-          <Card className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden">
+          <Card className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden">
             <CardHeader className="flex flex-row items-center justify-between gap-4 border-b">
               <CardTitle className="flex items-center gap-2 text-xl">
                 <Upload className="h-5 w-5 text-primary" />
@@ -854,57 +942,61 @@ export default function VideoBoardPage() {
                   <Plus className="mr-2 h-4 w-4" />
                   파일 선택
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => {
-                    if (uploadCandidate?.previewUrl) URL.revokeObjectURL(uploadCandidate.previewUrl)
-                    setUploadCandidate(null)
-                    setShowUploadModal(false)
-                  }}
-                >
+                <Button variant="ghost" size="icon" onClick={closeUploadModal} disabled={saving}>
                   <X className="h-4 w-4" />
                 </Button>
               </div>
             </CardHeader>
             <CardContent className="flex-1 overflow-y-auto p-6">
-              {uploadCandidate ? (
-                <div className="grid gap-6 lg:grid-cols-[0.9fr,1.1fr]">
-                  <div className="space-y-4">
-                    <div className="overflow-hidden rounded-2xl border bg-slate-950">
-                      <video src={uploadCandidate.previewUrl} poster={uploadCandidate.posterDataUrl} controls className="aspect-[9/16] w-full object-cover" />
-                    </div>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <div className="rounded-2xl border bg-slate-50 p-3 text-sm text-slate-600">길이: {formatDuration(uploadCandidate.metadata.duration)}</div>
-                      <div className="rounded-2xl border bg-slate-50 p-3 text-sm text-slate-600">용량: {formatFileSize(uploadCandidate.metadata.sizeBytes)}</div>
-                      <div className="rounded-2xl border bg-slate-50 p-3 text-sm text-slate-600">해상도: {uploadCandidate.metadata.width}x{uploadCandidate.metadata.height}</div>
-                      <div className="rounded-2xl border bg-slate-50 p-3 text-sm text-slate-600">샘플 프레임: {uploadCandidate.frames.length}장</div>
-                    </div>
-                  </div>
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <Label>영상 제목</Label>
-                      <Input value={uploadCandidate.title} onChange={(event) => setUploadCandidate((prev) => (prev ? { ...prev, title: event.target.value } : prev))} placeholder="제목 없이 저장해도 됩니다" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>샘플 프레임</Label>
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        {uploadCandidate.frames.map((frame) => (
-                          <div key={frame.timestampLabel} className="overflow-hidden rounded-2xl border">
-                            <img src={frame.dataUrl} alt={frame.timestampLabel} className="aspect-video w-full object-cover" />
-                            <div className="px-3 py-2 text-xs text-slate-500">{frame.timestampLabel}</div>
+              {uploadQueue.length > 0 ? (
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                  {uploadQueue.map((candidate) => (
+                    <div key={candidate.id} className="overflow-hidden rounded-2xl border bg-white">
+                      <video src={candidate.previewUrl} poster={candidate.posterDataUrl} controls className="aspect-[9/16] w-full object-cover" />
+                      <div className="space-y-3 p-4">
+                        <Input
+                          value={candidate.title}
+                          onChange={(event) =>
+                            setUploadQueue((prev) =>
+                              prev.map((item) => (item.id === candidate.id ? { ...item, title: event.target.value } : item))
+                            )
+                          }
+                          placeholder="제목 없이 저장해도 됩니다"
+                        />
+                        <div className="grid gap-2 text-xs text-slate-500 sm:grid-cols-2">
+                          <div>{formatDuration(candidate.metadata.duration)}</div>
+                          <div>{formatFileSize(candidate.metadata.sizeBytes)}</div>
+                          <div>{candidate.metadata.width}x{candidate.metadata.height}</div>
+                          <div>프레임 {candidate.frames.length}장</div>
+                        </div>
+                        <div className="grid gap-2 grid-cols-2">
+                          {candidate.frames.slice(0, 4).map((frame) => (
+                            <div key={frame.timestampLabel} className="overflow-hidden rounded-xl border">
+                              <img src={frame.dataUrl} alt={frame.timestampLabel} className="aspect-video w-full object-cover" />
+                              <div className="px-2 py-1 text-[11px] text-slate-500">{frame.timestampLabel}</div>
+                            </div>
+                          ))}
+                        </div>
+                        {candidate.error ? <div className="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-600">{candidate.error}</div> : null}
+                        <div className="flex items-center justify-between">
+                          <div className="text-xs font-medium text-slate-500">
+                            {candidate.status === 'uploading' ? '저장 중...' : candidate.status === 'success' ? '저장 완료' : candidate.status === 'error' ? '오류' : '대기 중'}
                           </div>
-                        ))}
+                          <Button variant="ghost" size="sm" onClick={() => removeCandidate(candidate.id)} disabled={saving}>
+                            <X className="mr-1 h-4 w-4" />
+                            제외
+                          </Button>
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  ))}
                 </div>
               ) : (
                 <div className="flex min-h-[320px] flex-col items-center justify-center gap-4 rounded-3xl border border-dashed bg-slate-50 text-center">
                   <PlaySquare className="h-10 w-10 text-slate-400" />
                   <div className="space-y-1">
                     <p className="text-lg font-semibold text-slate-900">업로드할 영상을 선택해 주세요</p>
-                    <p className="text-sm text-slate-500">최대 50MB까지 저장할 수 있습니다.</p>
+                    <p className="text-sm text-slate-500">최대 50MB, 한 번에 최대 10개까지 저장할 수 있습니다.</p>
                   </div>
                   <Button onClick={() => fileInputRef.current?.click()}>
                     <Plus className="mr-2 h-4 w-4" />
@@ -914,12 +1006,12 @@ export default function VideoBoardPage() {
               )}
             </CardContent>
             <div className="flex flex-wrap justify-end gap-2 border-t px-6 py-4">
-              <Button variant="outline" onClick={() => setShowUploadModal(false)} disabled={saving}>
+              <Button variant="outline" onClick={closeUploadModal} disabled={saving}>
                 닫기
               </Button>
-              <Button onClick={handleSaveVideo} disabled={!uploadCandidate || saving}>
+              <Button onClick={handleSaveVideos} disabled={uploadQueue.length === 0 || saving}>
                 {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
-                {saving ? '저장 중...' : 'AI 분석 후 저장'}
+                {saving ? '저장 중...' : `${uploadQueue.length}개 저장`}
               </Button>
             </div>
           </Card>
@@ -998,7 +1090,7 @@ export default function VideoBoardPage() {
                   <Button variant="outline" onClick={() => handleCopyShareUrl(previewItem)}>
                     공유 URL 복사
                   </Button>
-                  <Button onClick={() => triggerDownload(previewItem.video_url, `${slugify(previewItem.title) || 'video'}.mp4`)}>
+                  <Button onClick={() => triggerDownload(previewItem.video_url, `${slugify(previewItem.title) || 'video'}.${previewItem.mime_type?.includes('quicktime') ? 'mov' : 'mp4'}`)}>
                     다운로드
                   </Button>
                 </div>

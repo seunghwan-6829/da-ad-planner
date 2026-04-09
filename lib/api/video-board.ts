@@ -213,7 +213,7 @@ export async function uploadVideoBoardFile(filePath: string, file: File) {
 
   if (error) {
     console.error('Video board upload failed:', error)
-    return null
+    throw new Error(error.message || '영상 업로드에 실패했습니다.')
   }
 
   const { data } = supabase.storage.from('video-board').getPublicUrl(filePath)
