@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Save, Loader2, Plus, X, Upload, Image as ImageIcon, Trash2, ChevronUp, ChevronDown, GripVertical, FileUp, File, Download, FileSpreadsheet } from 'lucide-react'
+import { ArrowLeft, Save, Loader2, Plus, X, Upload, Image as ImageIcon, Trash2, ChevronUp, ChevronDown, GripVertical, FileUp, File, Download, FileSpreadsheet, Wand2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -87,7 +87,30 @@ export default function PlanDetailPage() {
   const initialLoadRef = useRef(true)
   const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null)
   
+  // AI 대본 분배 관련 state
+  const [showAiModal, setShowAiModal] = useState(false)
+  const [aiScript, setAiScript] = useState('')
+  const [aiLoading, setAiLoading] = useState(false)
+
   const fileInputRefs = useRef<{ [key: number]: HTMLInputElement | null }>({})
+
+  // 최신 state를 ref로 추적 (자동저장 클로저에서 stale closure 방지)
+  const scenesRef = useRef<SceneData[]>(scenes)
+  const titleRef = useRef(title)
+  const referenceRef = useRef(reference)
+  const ctaTextRef = useRef(ctaText)
+  const cardPreviewRef = useRef(cardPreview)
+  const rowHeightsRef = useRef(rowHeights)
+
+  useEffect(() => { scenesRef.current = scenes }, [scenes])
+  useEffect(() => { titleRef.current = title }, [title])
+  useEffect(() => { referenceRef.current = reference }, [reference])
+  useEffect(() => { ctaTextRef.current = ctaText }, [ctaText])
+  useEffect(() => { cardPreviewRef.current = cardPreview }, [cardPreview])
+  useEffect(() => { rowHeightsRef.current = rowHeights }, [rowHeights])
+
+  // 저장 진행 중 플래그 (중복 저장 방지)
+  const isSavingRef = useRef(false)
 
   useEffect(() => {
     checkPermissionAndLoad()
@@ -184,45 +207,51 @@ export default function PlanDetailPage() {
     }
   }, [title, scenes, reference, ctaText, cardPreview, rowHeights])
 
-  // 자동 저장 (2초 debounce)
+  // 자동 저장 (2초 debounce) — ref 기반으로 최신 값 사용
   useEffect(() => {
     if (!hasUnsavedChanges || initialLoadRef.current || !plan) return
-    
-    // 기존 타이머 취소
+
     if (autoSaveTimerRef.current) {
       clearTimeout(autoSaveTimerRef.current)
     }
-    
-    // 2초 후 자동 저장
+
     autoSaveTimerRef.current = setTimeout(async () => {
+      if (isSavingRef.current) return
+      isSavingRef.current = true
       setAutoSaving(true)
+
+      // 저장 시점의 스냅샷을 ref에서 읽기
+      const snapTitle = titleRef.current
+      const snapScenes = scenesRef.current.map(s => ({ ...s, sources: [...s.sources], files: [...s.files] }))
+      const snapRowHeights = { ...rowHeightsRef.current }
+      const snapReference = referenceRef.current
+      const snapCtaText = ctaTextRef.current
+      const snapCardPreview = cardPreviewRef.current
+
       try {
-        // 기획안 정보 업데이트
         try {
           await updateProjectPlan(planId, {
-            title,
-            scene_count: scenes.length,
-            row_heights: rowHeights,
-            reference: reference || null,
-            cta_text: ctaText || null,
-            card_preview: cardPreview || null
+            title: snapTitle,
+            scene_count: snapScenes.length,
+            row_heights: snapRowHeights,
+            reference: snapReference || null,
+            cta_text: snapCtaText || null,
+            card_preview: snapCardPreview || null
           } as any)
         } catch {
           await updateProjectPlan(planId, {
-            title,
-            scene_count: scenes.length,
-            row_heights: rowHeights
+            title: snapTitle,
+            scene_count: snapScenes.length,
+            row_heights: snapRowHeights
           } as any)
         }
-        
-        // 기존 씬 삭제 후 새로 생성
+
         const existingScenes = await getPlanScenes(planId)
         for (const scene of existingScenes) {
           await deletePlanScene(scene.id)
         }
-        
-        // 새 씬 생성
-        for (const scene of scenes) {
+
+        for (const scene of snapScenes) {
           const sceneData: any = {
             plan_id: planId,
             scene_number: scene.scene_number,
@@ -240,23 +269,24 @@ export default function PlanDetailPage() {
           }
           await createPlanScene(sceneData)
         }
-        
+
         await updateSceneCount(planId)
         setHasUnsavedChanges(false)
         setLastSaved(new Date())
       } catch (error) {
         console.error('자동 저장 실패:', error)
       } finally {
+        isSavingRef.current = false
         setAutoSaving(false)
       }
     }, 2000)
-    
+
     return () => {
       if (autoSaveTimerRef.current) {
         clearTimeout(autoSaveTimerRef.current)
       }
     }
-  }, [hasUnsavedChanges, title, scenes, reference, ctaText, cardPreview, rowHeights, plan, planId])
+  }, [hasUnsavedChanges, plan, planId])
 
   // 페이지 이탈 감지 (브라우저)
   useEffect(() => {
@@ -442,37 +472,48 @@ export default function PlanDetailPage() {
 
   async function handleSave() {
     if (!plan) return
-    
+    if (isSavingRef.current) return
+
+    // 진행 중인 자동저장 타이머 취소
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current)
+    }
+
+    isSavingRef.current = true
     setSaving(true)
+
+    const snapTitle = titleRef.current
+    const snapScenes = scenesRef.current.map(s => ({ ...s, sources: [...s.sources], files: [...s.files] }))
+    const snapRowHeights = { ...rowHeightsRef.current }
+    const snapReference = referenceRef.current
+    const snapCtaText = ctaTextRef.current
+    const snapCardPreview = cardPreviewRef.current
+
     try {
-      // 기획안 정보 업데이트 (행 높이, reference, cta_text, card_preview 포함)
       try {
         await updateProjectPlan(planId, {
-          title,
-          scene_count: scenes.length,
-          row_heights: rowHeights,
-          reference: reference || null,
-          cta_text: ctaText || null,
-          card_preview: cardPreview || null
+          title: snapTitle,
+          scene_count: snapScenes.length,
+          row_heights: snapRowHeights,
+          reference: snapReference || null,
+          cta_text: snapCtaText || null,
+          card_preview: snapCardPreview || null
         } as any)
       } catch (planError: any) {
         console.error('기획안 정보 업데이트 실패:', planError)
-        // 새 컬럼이 없을 수 있으므로 기본 필드만 저장 시도
         await updateProjectPlan(planId, {
-          title,
-          scene_count: scenes.length,
-          row_heights: rowHeights
+          title: snapTitle,
+          scene_count: snapScenes.length,
+          row_heights: snapRowHeights
         } as any)
       }
-      
-      // 기존 씬 삭제 후 새로 생성 (간단한 구현)
+
       const existingScenes = await getPlanScenes(planId)
       for (const scene of existingScenes) {
         await deletePlanScene(scene.id)
       }
-      
-      // 새 씬 생성 (files 포함)
-      for (const scene of scenes) {
+
+      for (const scene of snapScenes) {
         const sceneData: any = {
           plan_id: planId,
           scene_number: scene.scene_number,
@@ -484,24 +525,22 @@ export default function PlanDetailPage() {
           script: scene.script || null,
           source_info: scene.source_info || null
         }
-        
-        // files가 있으면 추가
         const validFiles = scene.files?.filter(f => f && f.name && f.url) || []
         if (validFiles.length > 0) {
           sceneData.files = validFiles
         }
-        
         await createPlanScene(sceneData)
       }
-      
+
       await updateSceneCount(planId)
-      
       setHasUnsavedChanges(false)
+      setLastSaved(new Date())
       alert('저장되었습니다!')
     } catch (error: any) {
       console.error('저장 실패:', error)
       alert(`저장에 실패했습니다: ${error?.message || '알 수 없는 오류'}`)
     } finally {
+      isSavingRef.current = false
       setSaving(false)
     }
   }
@@ -531,6 +570,56 @@ export default function PlanDetailPage() {
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
+  }
+
+  // AI 대본 분배
+  async function handleAiScriptDistribute() {
+    if (!aiScript.trim()) {
+      alert('대본을 입력해주세요.')
+      return
+    }
+    if (scenes.length < 1) {
+      alert('씬이 1개 이상 필요합니다.')
+      return
+    }
+
+    setAiLoading(true)
+    try {
+      const res = await fetch('/api/ai/script-distribute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          script: aiScript.trim(),
+          sceneCount: scenes.length
+        })
+      })
+
+      const data = await res.json()
+      if (!res.ok) {
+        throw new Error(data.error || 'AI 처리에 실패했습니다.')
+      }
+
+      if (data.scenes && Array.isArray(data.scenes)) {
+        const newScenes = scenes.map((scene, i) => {
+          const aiScene = data.scenes[i]
+          if (!aiScene) return scene
+          return {
+            ...scene,
+            script: aiScene.script || scene.script,
+            effect: aiScene.effect || scene.effect,
+            special_notes: aiScene.special_notes || scene.special_notes
+          }
+        })
+        setScenes(newScenes)
+        setShowAiModal(false)
+        setAiScript('')
+      }
+    } catch (error: any) {
+      console.error('AI 대본 분배 실패:', error)
+      alert(`AI 처리 실패: ${error?.message || '알 수 없는 오류'}`)
+    } finally {
+      setAiLoading(false)
+    }
   }
 
   if (loading) {
@@ -600,6 +689,10 @@ export default function PlanDetailPage() {
           ) : lastSaved ? (
             <span className="text-xs text-green-500 whitespace-nowrap">자동 저장됨</span>
           ) : null}
+          <Button onClick={() => setShowAiModal(true)} size="sm" variant="outline" className="border-purple-300 text-purple-600 hover:bg-purple-50">
+            <Wand2 className="h-4 w-4 mr-1" />
+            AI 대본 분배
+          </Button>
           <Button onClick={exportToExcel} size="sm" variant="outline">
             <FileSpreadsheet className="h-4 w-4 mr-1" />
             내보내기
@@ -916,6 +1009,59 @@ export default function PlanDetailPage() {
                 }}
               >
                 아니오
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI 대본 분배 모달 */}
+      {showAiModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 w-full max-w-lg shadow-xl">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Wand2 className="h-5 w-5 text-purple-600" />
+                <h3 className="text-lg font-bold">AI 대본 분배</h3>
+              </div>
+              <button onClick={() => { setShowAiModal(false); setAiScript('') }} className="p-1 hover:bg-gray-100 rounded">
+                <X className="h-5 w-5 text-gray-500" />
+              </button>
+            </div>
+            <p className="text-sm text-gray-600 mb-3">
+              풀 대본을 입력하면 현재 <span className="font-bold text-purple-600">{scenes.length}개 씬</span>에 맞춰 대본을 자동 분배하고, 각 씬의 효과와 특이사항도 자동으로 채워줍니다.
+            </p>
+            <Textarea
+              value={aiScript}
+              onChange={(e) => setAiScript(e.target.value)}
+              placeholder="여기에 풀 대본을 붙여넣으세요..."
+              className="min-h-[200px] mb-4 resize-none"
+            />
+            <div className="flex gap-3">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => { setShowAiModal(false); setAiScript('') }}
+                disabled={aiLoading}
+              >
+                취소
+              </Button>
+              <Button
+                className="flex-1 bg-purple-600 hover:bg-purple-700"
+                onClick={handleAiScriptDistribute}
+                disabled={aiLoading || !aiScript.trim()}
+              >
+                {aiLoading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    AI 분석 중...
+                  </>
+                ) : (
+                  <>
+                    <Wand2 className="h-4 w-4 mr-2" />
+                    대본 분배하기
+                  </>
+                )}
               </Button>
             </div>
           </div>
