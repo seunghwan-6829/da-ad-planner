@@ -93,6 +93,7 @@ export default function PlanDetailPage() {
   const [aiScript, setAiScript] = useState('')
   const [aiLoading, setAiLoading] = useState(false)
   const [aiProgress, setAiProgress] = useState('')
+  const [aiAutoFill, setAiAutoFill] = useState(true)
 
   const fileInputRefs = useRef<{ [key: number]: HTMLInputElement | null }>({})
 
@@ -602,7 +603,8 @@ export default function PlanDetailPage() {
         method: 'POST',
         body: JSON.stringify({
           script: aiScript.trim(),
-          sceneCount: scenes.length
+          sceneCount: scenes.length,
+          autoFill: aiAutoFill
         })
       })
 
@@ -621,12 +623,15 @@ export default function PlanDetailPage() {
         const newScenes = scenes.map((scene, i) => {
           const aiScene = data.scenes[i]
           if (!aiScene) return scene
-          return {
+          const updated: typeof scene = {
             ...scene,
             script: aiScene.script || scene.script,
-            effect: aiScene.effect || scene.effect,
-            special_notes: aiScene.special_notes || scene.special_notes
           }
+          if (aiAutoFill) {
+            updated.effect = aiScene.effect || scene.effect
+            updated.special_notes = aiScene.special_notes || scene.special_notes
+          }
+          return updated
         })
         setScenes(newScenes)
         setShowAiModal(false)
@@ -1050,6 +1055,19 @@ export default function PlanDetailPage() {
             <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
               풀 대본을 입력하면 현재 <span className="font-bold text-purple-600">{scenes.length}개 씬</span>에 맞춰 대본을 자동 분배하고, 각 씬의 효과와 특이사항도 자동으로 채워줍니다.
             </p>
+            <div className="flex items-center justify-between mb-3 p-3 rounded-lg bg-gray-50 dark:bg-gray-800">
+              <div>
+                <p className="text-sm font-medium dark:text-gray-200">효과 · 특이사항 자동 생성</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400">OFF 시 대본만 분배합니다</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAiAutoFill(!aiAutoFill)}
+                className={`relative w-11 h-6 rounded-full transition-colors ${aiAutoFill ? 'bg-purple-600' : 'bg-gray-300 dark:bg-gray-600'}`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${aiAutoFill ? 'translate-x-5' : ''}`} />
+              </button>
+            </div>
             <Textarea
               value={aiScript}
               onChange={(e) => setAiScript(e.target.value)}

@@ -5,7 +5,7 @@ const MODEL = 'claude-sonnet-4-6'
 const MAX_TOKENS = 4096
 
 export async function POST(request: NextRequest) {
-  let body: { script: string; sceneCount: number }
+  let body: { script: string; sceneCount: number; autoFill?: boolean }
   try {
     body = await request.json()
   } catch {
@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  const { script, sceneCount } = body
+  const { script, sceneCount, autoFill = true } = body
   const apiKey = request.headers.get('x-user-api-key') || process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
     return NextResponse.json(
@@ -30,7 +30,8 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  const systemPrompt = `영상 광고 스토리보드 전문가. 풀 대본을 ${sceneCount}개 씬으로 나누고 효과·특이사항을 짧게 제안.
+  const systemPrompt = autoFill
+    ? `영상 광고 스토리보드 전문가. 풀 대본을 ${sceneCount}개 씬으로 나누고 효과·특이사항을 짧게 제안.
 
 ## 규칙
 1. 대본을 의미 단위로 ${sceneCount}개로 나눈다. 문장 중간에서 자르지 않는다.
@@ -46,6 +47,24 @@ export async function POST(request: NextRequest) {
       "script": "씬 대본",
       "effect": "짧은 효과 (한 줄)",
       "special_notes": "짧은 특이사항 (한 줄)"
+    }
+  ]
+}`
+    : `영상 광고 스토리보드 전문가. 풀 대본을 ${sceneCount}개 씬으로 나눈다.
+
+## 규칙
+1. 대본을 의미 단위로 ${sceneCount}개로 나눈다. 문장 중간에서 자르지 않는다.
+2. 반드시 정확히 ${sceneCount}개 씬.
+3. effect와 special_notes는 빈 문자열로 둔다.
+
+## 응답 형식 (JSON만, 다른 텍스트 없이)
+{
+  "scenes": [
+    {
+      "scene_number": 1,
+      "script": "씬 대본",
+      "effect": "",
+      "special_notes": ""
     }
   ]
 }`
