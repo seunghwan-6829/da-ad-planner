@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Save, Loader2, Plus, X, Upload, Image as ImageIcon, Trash2, ChevronUp, ChevronDown, GripVertical, FileUp, File, Download, FileSpreadsheet, Wand2 } from 'lucide-react'
+import { ArrowLeft, Save, Loader2, Plus, X, Upload, Image as ImageIcon, Trash2, ChevronUp, ChevronDown, GripVertical, FileUp, File, Download, FileSpreadsheet, Wand2, HelpCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -94,6 +94,7 @@ export default function PlanDetailPage() {
   const [aiLoading, setAiLoading] = useState(false)
   const [aiProgress, setAiProgress] = useState('')
   const [aiAutoFill, setAiAutoFill] = useState(true)
+  const [aiExistingFootage, setAiExistingFootage] = useState(false)
 
   const fileInputRefs = useRef<{ [key: number]: HTMLInputElement | null }>({})
 
@@ -604,7 +605,8 @@ export default function PlanDetailPage() {
         body: JSON.stringify({
           script: aiScript.trim(),
           sceneCount: scenes.length,
-          autoFill: aiAutoFill
+          autoFill: aiAutoFill,
+          existingFootage: aiExistingFootage
         })
       })
 
@@ -1055,18 +1057,43 @@ export default function PlanDetailPage() {
             <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
               풀 대본을 입력하면 현재 <span className="font-bold text-purple-600">{scenes.length}개 씬</span>에 맞춰 대본을 자동 분배하고, 각 씬의 효과와 특이사항도 자동으로 채워줍니다.
             </p>
-            <div className="flex items-center justify-between mb-3 p-3 rounded-lg bg-gray-50 dark:bg-gray-800">
-              <div>
-                <p className="text-sm font-medium dark:text-gray-200">효과 · 특이사항 자동 생성</p>
-                <p className="text-xs text-gray-500 dark:text-gray-400">OFF 시 대본만 분배합니다</p>
+            <div className="space-y-2 mb-3">
+              <div className="flex items-center justify-between p-3 rounded-lg bg-gray-50 dark:bg-gray-800">
+                <div className="flex items-center gap-1.5">
+                  <p className="text-sm font-medium dark:text-gray-200">효과 · 특이사항 자동 생성</p>
+                  <div className="relative group">
+                    <HelpCircle className="h-3.5 w-3.5 text-gray-400 cursor-help" />
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-3 py-1.5 bg-gray-800 dark:bg-gray-700 text-white text-xs rounded-lg whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-10">
+                      ON: 대본과 함께 효과·특이사항도 AI가 자동 작성<br/>OFF: 대본만 씬별로 나눠줍니다
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAiAutoFill(!aiAutoFill)}
+                  className={`relative w-11 h-6 rounded-full transition-colors ${aiAutoFill ? 'bg-purple-600' : 'bg-gray-300 dark:bg-gray-600'}`}
+                >
+                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${aiAutoFill ? 'translate-x-5' : ''}`} />
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setAiAutoFill(!aiAutoFill)}
-                className={`relative w-11 h-6 rounded-full transition-colors ${aiAutoFill ? 'bg-purple-600' : 'bg-gray-300 dark:bg-gray-600'}`}
-              >
-                <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${aiAutoFill ? 'translate-x-5' : ''}`} />
-              </button>
+              <div className="flex items-center justify-between p-3 rounded-lg bg-gray-50 dark:bg-gray-800">
+                <div className="flex items-center gap-1.5">
+                  <p className="text-sm font-medium dark:text-gray-200">기존 촬영본 사용</p>
+                  <div className="relative group">
+                    <HelpCircle className="h-3.5 w-3.5 text-gray-400 cursor-help" />
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-3 py-1.5 bg-gray-800 dark:bg-gray-700 text-white text-xs rounded-lg whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-10">
+                      ON: 이미 촬영된 영상을 편집할 때 (편집 중심 제안)<br/>OFF: 새로 촬영할 때 (촬영+편집 모두 제안)
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAiExistingFootage(!aiExistingFootage)}
+                  className={`relative w-11 h-6 rounded-full transition-colors ${aiExistingFootage ? 'bg-purple-600' : 'bg-gray-300 dark:bg-gray-600'}`}
+                >
+                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${aiExistingFootage ? 'translate-x-5' : ''}`} />
+                </button>
+              </div>
             </div>
             <Textarea
               value={aiScript}
