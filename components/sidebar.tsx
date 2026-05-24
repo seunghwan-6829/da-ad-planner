@@ -52,7 +52,7 @@ export function Sidebar() {
   return (
     <div className="flex h-full w-64 flex-col border-r bg-white dark:bg-gray-950 dark:border-gray-800">
       <div className="flex h-16 items-center border-b dark:border-gray-800 px-6 gap-2">
-        <img src="/logo.png" alt="로고" className="h-7 w-7 rounded" />
+        <img src="/logo.png" alt="로고" className="h-7 rounded" style={{ aspectRatio: '390/300' }} />
         <h1 className="text-lg font-bold text-primary">컨텐츠 디벨로퍼</h1>
       </div>
 
