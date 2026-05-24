@@ -570,3 +570,30 @@ CREATE POLICY "Admins can delete video board storage" ON storage.objects
     bucket_id = 'video-board' AND
     EXISTS (SELECT 1 FROM user_profiles WHERE user_profiles.id = auth.uid() AND user_profiles.role = 'admin')
   );
+
+-- =============================================
+-- 사용자 설정 테이블 (API 키, 테마 등)
+-- =============================================
+CREATE TABLE IF NOT EXISTS user_settings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE UNIQUE,
+  anthropic_api_key TEXT,
+  theme TEXT DEFAULT 'light' CHECK (theme IN ('light', 'dark')),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE user_settings ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can read own settings" ON user_settings;
+DROP POLICY IF EXISTS "Users can insert own settings" ON user_settings;
+DROP POLICY IF EXISTS "Users can update own settings" ON user_settings;
+
+CREATE POLICY "Users can read own settings" ON user_settings
+  FOR SELECT TO authenticated USING (user_id = auth.uid());
+
+CREATE POLICY "Users can insert own settings" ON user_settings
+  FOR INSERT TO authenticated WITH CHECK (user_id = auth.uid());
+
+CREATE POLICY "Users can update own settings" ON user_settings
+  FOR UPDATE TO authenticated USING (user_id = auth.uid());

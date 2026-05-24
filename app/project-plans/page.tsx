@@ -338,7 +338,7 @@ export default function ProjectPlansPage() {
   if (!user) {
     return (
       <div className="flex items-center justify-center h-full">
-        <p className="text-gray-500">로그인이 필요합니다.</p>
+        <p className="text-gray-500 dark:text-gray-400">로그인이 필요합니다.</p>
       </div>
     )
   }
@@ -346,8 +346,8 @@ export default function ProjectPlansPage() {
   return (
     <div className="flex h-full">
       {/* 좌측: 클라이언트(프로젝트) 목록 */}
-      <div className="w-72 border-r bg-gray-50 flex flex-col">
-        <div className="p-4 border-b bg-white">
+      <div className="w-72 border-r dark:border-gray-800 bg-gray-50 dark:bg-gray-900 flex flex-col">
+        <div className="p-4 border-b dark:border-gray-800 bg-white dark:bg-gray-950">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-bold text-lg flex items-center gap-2">
               <Folder className="h-5 w-5 text-primary" />
@@ -385,7 +385,7 @@ export default function ProjectPlansPage() {
           {showClientTrash ? (
             <>
               <div className="flex items-center justify-between p-2 mb-2">
-                <span className="text-sm font-medium text-gray-600">프로젝트 휴지통</span>
+                <span className="text-sm font-medium text-gray-600 dark:text-gray-400">프로젝트 휴지통</span>
                 <Button size="sm" variant="ghost" onClick={() => setShowClientTrash(false)}>
                   <X className="h-4 w-4" />
                 </Button>
@@ -397,7 +397,7 @@ export default function ProjectPlansPage() {
                 </div>
               ) : (
                 deletedClients.map(client => (
-                  <div key={client.id} className="flex items-center gap-2 p-3 rounded-lg bg-gray-100 opacity-60 hover:opacity-100">
+                  <div key={client.id} className="flex items-center gap-2 p-3 rounded-lg bg-gray-100 dark:bg-gray-800 opacity-60 hover:opacity-100">
                     <div 
                       className="w-3 h-3 rounded-full flex-shrink-0"
                       style={{ backgroundColor: client.color || '#3B82F6' }}
@@ -443,7 +443,7 @@ export default function ProjectPlansPage() {
                 className="group relative"
               >
                 {editingId === client.id ? (
-                  <div className="p-2 bg-white rounded-lg border space-y-2">
+                  <div className="p-2 bg-white dark:bg-gray-950 rounded-lg border space-y-2">
                     <Input
                       value={editingName}
                       onChange={(e) => setEditingName(e.target.value)}
@@ -474,8 +474,8 @@ export default function ProjectPlansPage() {
                   <div
                     className={`flex items-center gap-2 p-3 rounded-lg cursor-pointer transition-all ${
                       selectedClient?.id === client.id 
-                        ? 'bg-primary text-white shadow-md' 
-                        : 'hover:bg-white hover:shadow-sm'
+                        ? 'bg-primary text-white shadow-md'
+                        : 'hover:bg-white dark:hover:bg-gray-900 hover:shadow-sm'
                     }`}
                     onClick={() => !editMode && handleSelectClient(client)}
                   >
@@ -483,18 +483,18 @@ export default function ProjectPlansPage() {
                     {editMode && isAdmin && (
                       <div className="flex flex-col gap-0.5">
                         <button
-                          className={`p-0.5 rounded hover:bg-gray-200 ${index === 0 ? 'opacity-30' : ''}`}
+                          className={`p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700 ${index === 0 ? 'opacity-30' : ''}`}
                           onClick={(e) => { e.stopPropagation(); moveClient(index, 'up') }}
                           disabled={index === 0}
                         >
-                          <ArrowUp className="h-3 w-3 text-gray-500" />
+                          <ArrowUp className="h-3 w-3 text-gray-500 dark:text-gray-400" />
                         </button>
                         <button
-                          className={`p-0.5 rounded hover:bg-gray-200 ${index === clients.length - 1 ? 'opacity-30' : ''}`}
+                          className={`p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700 ${index === clients.length - 1 ? 'opacity-30' : ''}`}
                           onClick={(e) => { e.stopPropagation(); moveClient(index, 'down') }}
                           disabled={index === clients.length - 1}
                         >
-                          <ArrowDown className="h-3 w-3 text-gray-500" />
+                          <ArrowDown className="h-3 w-3 text-gray-500 dark:text-gray-400" />
                         </button>
                       </div>
                     )}
@@ -547,11 +547,11 @@ export default function ProjectPlansPage() {
 
         {/* 휴지통 버튼 */}
         {isAdmin && !showClientTrash && (
-          <div className="px-3 py-2 border-t">
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="w-full justify-start text-gray-500"
+          <div className="px-3 py-2 border-t dark:border-gray-800">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-full justify-start text-gray-500 dark:text-gray-400"
               onClick={loadDeletedClients}
             >
               <Trash2 className="h-4 w-4 mr-2" />
@@ -562,7 +562,7 @@ export default function ProjectPlansPage() {
 
         {/* 관리자만 클라이언트 추가 가능 */}
         {isAdmin && !showClientTrash && (
-          <div className="p-3 border-t bg-white">
+          <div className="p-3 border-t dark:border-gray-800 bg-white dark:bg-gray-950">
             {showAddForm ? (
               <div className="space-y-2">
                 <Input
@@ -601,11 +601,11 @@ export default function ProjectPlansPage() {
       </div>
 
       {/* 우측: 기획안 목록 */}
-      <div className="flex-1 flex flex-col bg-gray-50/50">
+      <div className="flex-1 flex flex-col bg-gray-50/50 dark:bg-gray-950">
         {selectedClient ? (
           <>
             {/* 헤더 */}
-            <div className="p-6 border-b bg-white">
+            <div className="p-6 border-b dark:border-gray-800 bg-white dark:bg-gray-950">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div 
@@ -613,7 +613,7 @@ export default function ProjectPlansPage() {
                     style={{ backgroundColor: selectedClient.color || '#3B82F6' }}
                   />
                   <h2 className="text-2xl font-bold">{selectedClient.name}</h2>
-                  <span className="text-sm text-gray-500">기획안 {plans.length}개</span>
+                  <span className="text-sm text-gray-500 dark:text-gray-400">기획안 {plans.length}개</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <Button 
@@ -646,7 +646,7 @@ export default function ProjectPlansPage() {
                   <div className="flex items-center justify-center h-full">
                     <div className="text-center">
                       <Trash2 className="h-16 w-16 mx-auto text-gray-300 mb-4" />
-                      <p className="text-gray-500">휴지통이 비어있습니다.</p>
+                      <p className="text-gray-500 dark:text-gray-400">휴지통이 비어있습니다.</p>
                     </div>
                   </div>
                 ) : (
@@ -690,7 +690,7 @@ export default function ProjectPlansPage() {
                 <div className="flex items-center justify-center h-full">
                   <div className="text-center">
                     <FileText className="h-16 w-16 mx-auto text-gray-300 mb-4" />
-                    <p className="text-gray-500 mb-4">아직 기획안이 없습니다.</p>
+                    <p className="text-gray-500 dark:text-gray-400 mb-4">아직 기획안이 없습니다.</p>
                     <Button onClick={() => setShowAddPlanModal(true)}>
                       <Plus className="h-4 w-4 mr-2" />
                       첫 기획안 만들기
@@ -723,7 +723,7 @@ export default function ProjectPlansPage() {
                               className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium transition-colors ${
                                 isCompleted 
                                   ? 'bg-green-100 text-green-700' 
-                                  : 'bg-gray-100 text-gray-600'
+                                  : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'
                               }`}
                               onClick={(e) => toggleComplete(plan, e)}
                             >
@@ -752,7 +752,7 @@ export default function ProjectPlansPage() {
                           
                           <h3 className="font-semibold text-lg mb-2 line-clamp-2 pr-8">{plan.title}</h3>
                           
-                          <div className="flex items-center gap-4 text-sm text-gray-500">
+                          <div className="flex items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
                             <span className="flex items-center gap-1">
                               <Film className="h-4 w-4" />
                               {plan.scene_count}개 장면
@@ -784,7 +784,7 @@ export default function ProjectPlansPage() {
       {/* 새 기획안 모달 */}
       {showAddPlanModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowAddPlanModal(false)}>
-          <div className="bg-white rounded-xl p-6 w-full max-w-md" onClick={e => e.stopPropagation()}>
+          <div className="bg-white dark:bg-gray-900 rounded-xl p-6 w-full max-w-md" onClick={e => e.stopPropagation()}>
             <h2 className="text-xl font-bold mb-4">새 기획안 만들기</h2>
             <Input
               placeholder="기획안 제목을 입력하세요"

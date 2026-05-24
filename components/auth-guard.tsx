@@ -38,7 +38,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
         <div className="text-center">
           <AlertTriangle className="h-12 w-12 text-yellow-500 mx-auto mb-4" />
           <h2 className="text-xl font-bold mb-2">연결 오류</h2>
-          <p className="text-gray-600 mb-4">{error}</p>
+          <p className="text-gray-600 dark:text-gray-400 mb-4">{error}</p>
           <button 
             onClick={() => window.location.reload()}
             className="px-4 py-2 bg-primary text-white rounded"
@@ -64,10 +64,10 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   if (profile && !isApproved) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
-        <div className="bg-white rounded-lg shadow-lg p-8 max-w-md text-center">
+        <div className="bg-white dark:bg-gray-900 rounded-lg shadow-lg p-8 max-w-md text-center">
           <AlertTriangle className="h-12 w-12 text-yellow-500 mx-auto mb-4" />
-          <h2 className="text-xl font-bold mb-2">권한이 없습니다</h2>
-          <p className="text-gray-600 mb-4">
+          <h2 className="text-xl font-bold mb-2 dark:text-white">권한이 없습니다</h2>
+          <p className="text-gray-600 dark:text-gray-400 mb-4">
             관리자 승인 후 서비스를 이용할 수 있습니다.
           </p>
           <button 

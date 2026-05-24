@@ -12,6 +12,7 @@ import {
   Image as ImageIcon,
   LayoutDashboard,
   LogOut,
+  Settings,
   Shield,
   User,
   Users,
@@ -49,9 +50,10 @@ export function Sidebar() {
   }
 
   return (
-    <div className="flex h-full w-64 flex-col border-r bg-white">
-      <div className="flex h-16 items-center border-b px-6">
-        <h1 className="text-xl font-bold text-primary">DA 광고 플래너</h1>
+    <div className="flex h-full w-64 flex-col border-r bg-white dark:bg-gray-950 dark:border-gray-800">
+      <div className="flex h-16 items-center border-b dark:border-gray-800 px-6 gap-2">
+        <img src="/logo.png" alt="로고" className="h-7 w-7 rounded" />
+        <h1 className="text-lg font-bold text-primary">컨텐츠 디벨로퍼</h1>
       </div>
 
       <nav className="flex-1 space-y-1 overflow-y-auto p-4">
@@ -64,7 +66,7 @@ export function Sidebar() {
               href={item.href}
               className={cn(
                 'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                isActive ? 'bg-primary text-white' : 'text-gray-700 hover:bg-gray-100'
+                isActive ? 'bg-primary text-white' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'
               )}
             >
               <item.icon className="h-5 w-5" />
@@ -74,8 +76,8 @@ export function Sidebar() {
           )
         })}
 
-        <div className="my-3 border-t pt-3">
-          <p className="mb-2 px-3 text-xs font-medium uppercase text-gray-400">제작 도구</p>
+        <div className="my-3 border-t dark:border-gray-800 pt-3">
+          <p className="mb-2 px-3 text-xs font-medium uppercase text-gray-400 dark:text-gray-500">제작 도구</p>
         </div>
 
         {navigationBottom.map((item) => {
@@ -87,7 +89,7 @@ export function Sidebar() {
               href={item.href}
               className={cn(
                 'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                isActive ? 'bg-primary text-white' : 'text-gray-700 hover:bg-gray-100'
+                isActive ? 'bg-primary text-white' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'
               )}
             >
               <item.icon className="h-5 w-5" />
@@ -102,7 +104,7 @@ export function Sidebar() {
             href="/admin"
             className={cn(
               'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-              pathname === '/admin' ? 'bg-red-600 text-white' : 'text-red-600 hover:bg-red-50'
+              pathname === '/admin' ? 'bg-red-600 text-white' : 'text-red-600 hover:bg-red-50 dark:hover:bg-red-950'
             )}
           >
             <Shield className="h-5 w-5" />
@@ -112,23 +114,24 @@ export function Sidebar() {
         )}
       </nav>
 
-      <div className="space-y-3 border-t p-4">
+      <div className="space-y-3 border-t dark:border-gray-800 p-4">
         {user && profile ? (
-          <div className="flex items-center gap-3 px-2">
+          <Link href="/mypage" className="flex items-center gap-3 px-2 rounded-lg py-1 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10">
               <User className="h-4 w-4 text-primary" />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">{profile.name || profile.email}</p>
+              <p className="truncate text-sm font-medium dark:text-gray-200">{profile.name || profile.email}</p>
               <p className="text-xs text-muted-foreground">
                 {profile.role === 'admin' ? '관리자' : profile.role === 'approved' ? '승인됨' : '대기중'}
               </p>
             </div>
-          </div>
+            <Settings className="h-4 w-4 text-gray-400" />
+          </Link>
         ) : null}
 
         {user ? (
-          <Button variant="outline" size="sm" className="w-full" onClick={handleSignOut}>
+          <Button variant="outline" size="sm" className="w-full dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800" onClick={handleSignOut}>
             <LogOut className="mr-2 h-4 w-4" />
             로그아웃
           </Button>
@@ -138,7 +141,7 @@ export function Sidebar() {
           </Button>
         )}
 
-        <p className="text-center text-xs text-gray-500">© 2026 DA Ad Planner</p>
+        <p className="text-center text-xs text-gray-500 dark:text-gray-600">© 2026 컨텐츠 디벨로퍼</p>
       </div>
     </div>
   )

@@ -18,7 +18,7 @@ export function LayoutWrapper({ children }: { children: React.ReactNode }) {
         <AuthGuard>
           <div className="flex h-screen">
             <Sidebar />
-            <main className="flex-1 overflow-auto bg-gray-50 p-8">{children}</main>
+            <main className="flex-1 overflow-auto bg-gray-50 dark:bg-gray-900 p-8">{children}</main>
           </div>
         </AuthGuard>
       )}

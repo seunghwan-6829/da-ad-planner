@@ -7,7 +7,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { useAuth } from '@/lib/auth-context'
-import { 
+import { aiFetch } from '@/lib/ai-fetch'
+import {
   getClient,
   getProjectPlan,
   updateProjectPlan,
@@ -597,9 +598,8 @@ export default function PlanDetailPage() {
       const progressTimer2 = setTimeout(() => setAiProgress('효과 · 특이사항 생성 중...'), 6000)
       const progressTimer3 = setTimeout(() => setAiProgress('최종 정리 중...'), 9000)
 
-      const res = await fetch('/api/ai/script-distribute', {
+      const res = await aiFetch('/api/ai/script-distribute', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           script: aiScript.trim(),
           sceneCount: scenes.length
@@ -658,9 +658,9 @@ export default function PlanDetailPage() {
   }
 
   return (
-    <div className={`h-full flex flex-col bg-white ${resizing ? 'select-none' : ''}`} style={resizing ? { cursor: 'row-resize' } : {}}>
+    <div className={`h-full flex flex-col bg-white dark:bg-gray-950 ${resizing ? 'select-none' : ''}`} style={resizing ? { cursor: 'row-resize' } : {}}>
       {/* 통합 상단 헤더 */}
-      <div className="flex items-center justify-between px-4 py-3 border-b bg-white">
+      <div className="flex items-center justify-between px-4 py-3 border-b dark:border-gray-800 bg-white dark:bg-gray-950">
         <div className="flex items-center gap-4 flex-1">
           <Button variant="ghost" size="sm" onClick={handleGoBack}>
             <ArrowLeft className="h-4 w-4 mr-1" />
@@ -669,7 +669,7 @@ export default function PlanDetailPage() {
           {client && (
             <span style={{ color: client.color || '#F97316' }} className="font-medium">{client.name}</span>
           )}
-          <div className="h-6 w-px bg-gray-200" />
+          <div className="h-6 w-px bg-gray-200 dark:bg-gray-700" />
           <Input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
@@ -725,7 +725,7 @@ export default function PlanDetailPage() {
 
       {/* 씬 테이블 */}
       <div className="flex-1 overflow-auto p-6">
-        <div className="border rounded-lg overflow-x-auto">
+        <div className="border dark:border-gray-700 rounded-lg overflow-x-auto">
           <table className="table-fixed" style={{ minWidth: `${100 + scenes.length * 270 + 48}px` }}>
             <colgroup>
               <col style={{ width: '100px' }} />
@@ -735,7 +735,7 @@ export default function PlanDetailPage() {
               <col style={{ width: '48px' }} />
             </colgroup>
             <thead>
-              <tr className="bg-gray-50 border-b">
+              <tr className="bg-gray-50 dark:bg-gray-900 border-b dark:border-gray-700">
                 <th className="p-3 text-left text-sm font-medium text-gray-500 border-r" style={{ width: '100px' }}></th>
                 {scenes.map((scene, index) => (
                   <th key={index} className="p-3 text-center text-sm font-medium border-r last:border-r-0 relative group" style={{ width: '270px' }}>
@@ -778,7 +778,7 @@ export default function PlanDetailPage() {
             <tbody>
               {/* 영상 (이미지) */}
               <tr style={{ height: rowHeights.video }}>
-                <td className="p-3 bg-orange-50 border-r font-medium text-sm text-gray-700 text-center align-middle">영상</td>
+                <td className="p-3 bg-orange-50 dark:bg-orange-950 border-r dark:border-gray-700 font-medium text-sm text-gray-700 dark:text-gray-300 text-center align-middle">영상</td>
                 {scenes.map((scene, index) => (
                   <td key={index} className="p-2 border-r last:border-r-0 align-top overflow-hidden">
                     <div 
@@ -821,7 +821,7 @@ export default function PlanDetailPage() {
 
               {/* 타임라인 - Textarea로 변경 */}
               <tr style={{ height: rowHeights.timeline }}>
-                <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700 text-center align-middle">타임라인</td>
+                <td className="p-3 bg-gray-50 dark:bg-gray-900 border-r dark:border-gray-700 font-medium text-sm text-gray-700 dark:text-gray-300 text-center align-middle">타임라인</td>
                 {scenes.map((scene, index) => (
                   <td key={index} className="p-2 border-r last:border-r-0 align-top">
                     <Textarea
@@ -850,7 +850,7 @@ export default function PlanDetailPage() {
 
               {/* 효과 */}
               <tr style={{ height: rowHeights.effect }}>
-                <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700 text-center align-middle">효과</td>
+                <td className="p-3 bg-gray-50 dark:bg-gray-900 border-r dark:border-gray-700 font-medium text-sm text-gray-700 dark:text-gray-300 text-center align-middle">효과</td>
                 {scenes.map((scene, index) => (
                   <td key={index} className="p-2 border-r last:border-r-0 align-top">
                     <Textarea
@@ -879,7 +879,7 @@ export default function PlanDetailPage() {
 
               {/* 특이사항 */}
               <tr style={{ height: rowHeights.special_notes }}>
-                <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700 text-center align-middle">특이사항</td>
+                <td className="p-3 bg-gray-50 dark:bg-gray-900 border-r dark:border-gray-700 font-medium text-sm text-gray-700 dark:text-gray-300 text-center align-middle">특이사항</td>
                 {scenes.map((scene, index) => (
                   <td key={index} className="p-2 border-r last:border-r-0 align-top">
                     <Textarea
@@ -908,7 +908,7 @@ export default function PlanDetailPage() {
 
               {/* 대본 (나레이션) */}
               <tr style={{ height: rowHeights.script }}>
-                <td className="p-3 bg-orange-50 border-r font-medium text-sm text-gray-700 text-center align-middle">
+                <td className="p-3 bg-orange-50 dark:bg-orange-950 border-r dark:border-gray-700 font-medium text-sm text-gray-700 dark:text-gray-300 text-center align-middle">
                   대본<br/><span className="text-xs text-gray-400">(나레이션)</span>
                 </td>
                 {scenes.map((scene, index) => (
@@ -939,7 +939,7 @@ export default function PlanDetailPage() {
 
               {/* 소스 파일 업로드 - 3개 슬롯 */}
               <tr style={{ height: rowHeights.source_info }}>
-                <td className="p-3 bg-gray-50 border-r font-medium text-sm text-gray-700 text-center align-middle">
+                <td className="p-3 bg-gray-50 dark:bg-gray-900 border-r dark:border-gray-700 font-medium text-sm text-gray-700 dark:text-gray-300 text-center align-middle">
                   소스<br/><span className="text-xs text-gray-400">(파일)</span>
                 </td>
                 {scenes.map((scene, sceneIndex) => (
@@ -1004,9 +1004,9 @@ export default function PlanDetailPage() {
       {/* 저장 확인 모달 */}
       {showExitModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl p-6 w-full max-w-sm shadow-xl">
-            <h3 className="text-lg font-bold mb-3">저장 확인</h3>
-            <p className="text-gray-600 mb-6">저장을 하지 않고 나가시겠습니까?</p>
+          <div className="bg-white dark:bg-gray-900 rounded-xl p-6 w-full max-w-sm shadow-xl">
+            <h3 className="text-lg font-bold mb-3 dark:text-white">저장 확인</h3>
+            <p className="text-gray-600 dark:text-gray-400 mb-6">저장을 하지 않고 나가시겠습니까?</p>
             <div className="flex gap-3">
               <Button
                 variant="outline"
@@ -1037,7 +1037,7 @@ export default function PlanDetailPage() {
       {/* AI 대본 분배 모달 */}
       {showAiModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl p-6 w-full max-w-lg shadow-xl">
+          <div className="bg-white dark:bg-gray-900 rounded-xl p-6 w-full max-w-lg shadow-xl">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <Wand2 className="h-5 w-5 text-purple-600" />
@@ -1047,7 +1047,7 @@ export default function PlanDetailPage() {
                 <X className="h-5 w-5 text-gray-500" />
               </button>
             </div>
-            <p className="text-sm text-gray-600 mb-3">
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
               풀 대본을 입력하면 현재 <span className="font-bold text-purple-600">{scenes.length}개 씬</span>에 맞춰 대본을 자동 분배하고, 각 씬의 효과와 특이사항도 자동으로 채워줍니다.
             </p>
             <Textarea

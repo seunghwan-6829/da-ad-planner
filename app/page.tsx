@@ -63,7 +63,7 @@ export default function DashboardPage() {
     <div className="space-y-8">
       {/* Header */}
       <div>
-        <h1 className="text-3xl font-bold">DA 광고 기획 플래너</h1>
+        <h1 className="text-3xl font-bold">컨텐츠 디벨로퍼</h1>
         <p className="text-muted-foreground mt-2">
           이미지/영상 광고 소재 기획을 효율적으로 관리하세요
         </p>

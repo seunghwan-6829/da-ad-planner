@@ -4,9 +4,12 @@ const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages'
 const MODEL = 'claude-opus-4-5-20251101'
 
 export async function POST(request: NextRequest) {
-  const apiKey = process.env.ANTHROPIC_API_KEY
+  const apiKey = request.headers.get('x-user-api-key') || process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
-    return NextResponse.json({ error: 'API 키 없음' }, { status: 500 })
+    return NextResponse.json(
+      { error: 'API 키가 설정되지 않았습니다. 마이페이지에서 Anthropic API 키를 입력해주세요.' },
+      { status: 401 }
+    )
   }
 
   const body = await request.json()
