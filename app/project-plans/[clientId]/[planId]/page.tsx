@@ -91,6 +91,7 @@ export default function PlanDetailPage() {
   const [showAiModal, setShowAiModal] = useState(false)
   const [aiScript, setAiScript] = useState('')
   const [aiLoading, setAiLoading] = useState(false)
+  const [aiProgress, setAiProgress] = useState('')
 
   const fileInputRefs = useRef<{ [key: number]: HTMLInputElement | null }>({})
 
@@ -111,6 +112,8 @@ export default function PlanDetailPage() {
 
   // 저장 진행 중 플래그 (중복 저장 방지)
   const isSavingRef = useRef(false)
+  // 데이터 로딩 완료 여부 (탭 전환 시 재로딩 방지)
+  const dataLoadedRef = useRef(false)
 
   useEffect(() => {
     checkPermissionAndLoad()
@@ -121,6 +124,8 @@ export default function PlanDetailPage() {
       setLoading(false)
       return
     }
+    // 이미 데이터를 로딩한 경우 재로딩 방지 (탭 전환 시 auth state 변경으로 인한 재실행 차단)
+    if (dataLoadedRef.current) return
     
     try {
       if (isAdmin) {
@@ -179,6 +184,7 @@ export default function PlanDetailPage() {
         ])
       }
       initialLoadRef.current = false
+      dataLoadedRef.current = true
     } catch (error) {
       console.error('데이터 로드 실패:', error)
     } finally {
@@ -584,7 +590,13 @@ export default function PlanDetailPage() {
     }
 
     setAiLoading(true)
+    setAiProgress('대본 분석 중...')
     try {
+      // 단계 시뮬레이션: 실제 API 호출 전 진행 상태 표시
+      const progressTimer = setTimeout(() => setAiProgress('씬별 대본 분배 중...'), 3000)
+      const progressTimer2 = setTimeout(() => setAiProgress('효과 · 특이사항 생성 중...'), 6000)
+      const progressTimer3 = setTimeout(() => setAiProgress('최종 정리 중...'), 9000)
+
       const res = await fetch('/api/ai/script-distribute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -593,6 +605,12 @@ export default function PlanDetailPage() {
           sceneCount: scenes.length
         })
       })
+
+      clearTimeout(progressTimer)
+      clearTimeout(progressTimer2)
+      clearTimeout(progressTimer3)
+
+      setAiProgress('결과 적용 중...')
 
       const data = await res.json()
       if (!res.ok) {
@@ -619,6 +637,7 @@ export default function PlanDetailPage() {
       alert(`AI 처리 실패: ${error?.message || '알 수 없는 오류'}`)
     } finally {
       setAiLoading(false)
+      setAiProgress('')
     }
   }
 
@@ -1054,7 +1073,7 @@ export default function PlanDetailPage() {
                 {aiLoading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    AI 분석 중...
+                    {aiProgress || 'AI 분석 중...'}
                   </>
                 ) : (
                   <>
