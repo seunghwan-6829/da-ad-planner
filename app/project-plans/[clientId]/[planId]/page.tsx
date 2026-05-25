@@ -2,12 +2,13 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Save, Loader2, Plus, X, Upload, Image as ImageIcon, Trash2, ChevronUp, ChevronDown, GripVertical, FileUp, File, Download, FileSpreadsheet, Wand2, HelpCircle } from 'lucide-react'
+import { ArrowLeft, Save, Loader2, Plus, X, Upload, Image as ImageIcon, Trash2, ChevronUp, ChevronDown, GripVertical, FileUp, File, Download, FileSpreadsheet, Wand2, HelpCircle, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { useAuth } from '@/lib/auth-context'
 import { aiFetch } from '@/lib/ai-fetch'
+import { StorytellingModal } from '@/components/storytelling-modal'
 import {
   getClient,
   getProjectPlan,
@@ -95,6 +96,7 @@ export default function PlanDetailPage() {
   const [aiProgress, setAiProgress] = useState('')
   const [aiAutoFill, setAiAutoFill] = useState(true)
   const [aiExistingFootage, setAiExistingFootage] = useState(false)
+  const [showStoryModal, setShowStoryModal] = useState(false)
 
   const fileInputRefs = useRef<{ [key: number]: HTMLInputElement | null }>({})
 
@@ -719,6 +721,10 @@ export default function PlanDetailPage() {
             <Wand2 className="h-4 w-4 mr-1" />
             AI 대본 분배
           </Button>
+          <Button onClick={() => setShowStoryModal(true)} size="sm" variant="outline" className="border-pink-300 text-pink-600 hover:bg-pink-50 dark:border-pink-700 dark:text-pink-400 dark:hover:bg-pink-950">
+            <Sparkles className="h-4 w-4 mr-1" />
+            스토리텔링 베리
+          </Button>
           <Button onClick={exportToExcel} size="sm" variant="outline">
             <FileSpreadsheet className="h-4 w-4 mr-1" />
             내보내기
@@ -1131,6 +1137,9 @@ export default function PlanDetailPage() {
           </div>
         </div>
       )}
+
+      {/* 스토리텔링 베리에이션 모달 */}
+      <StorytellingModal isOpen={showStoryModal} onClose={() => setShowStoryModal(false)} />
     </div>
   )
 }

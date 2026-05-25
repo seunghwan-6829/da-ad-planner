@@ -3,12 +3,14 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import {
+  BarChart3,
   ChevronRight,
   Clapperboard,
   FileCode,
   Images,
   Image as ImageIcon,
   LayoutDashboard,
+  Lightbulb,
   LogOut,
   Settings,
   Shield,
@@ -24,12 +26,14 @@ const navigationTop = [
   { name: 'BP소재', href: '/templates', icon: FileCode },
   { name: '영상 보드', href: '/video-board', icon: Video },
   { name: '이미지 보드', href: '/image-board', icon: Images },
+  { name: '인스타 성과', href: '/instagram', icon: BarChart3 },
 ]
 
 const navigationBottom = [
   { name: '이미지 베리에이션', href: '/image-variation', icon: ImageIcon },
   { name: '영상 베리에이션', href: '/ai-variation', icon: Video },
   { name: '기획안 제작', href: '/project-plans', icon: Clapperboard },
+  { name: '기획안 아이디어', href: '/plan-ideas', icon: Lightbulb },
 ]
 
 export function Sidebar() {
