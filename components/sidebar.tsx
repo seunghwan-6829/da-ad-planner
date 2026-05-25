@@ -3,11 +3,9 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import {
-  BookOpen,
   ChevronRight,
   Clapperboard,
   FileCode,
-  FileText,
   Images,
   Image as ImageIcon,
   LayoutDashboard,
@@ -15,9 +13,7 @@ import {
   Settings,
   Shield,
   User,
-  Users,
   Video,
-  Wand2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/lib/auth-context'
@@ -25,8 +21,6 @@ import { Button } from '@/components/ui/button'
 
 const navigationTop = [
   { name: '대시보드', href: '/', icon: LayoutDashboard },
-  { name: 'AI 광고 기획서', href: '/plans', icon: FileText },
-  { name: '광고주 관리', href: '/advertisers', icon: Users },
   { name: 'BP소재', href: '/templates', icon: FileCode },
   { name: '영상 보드', href: '/video-board', icon: Video },
   { name: '이미지 보드', href: '/image-board', icon: Images },
@@ -35,9 +29,7 @@ const navigationTop = [
 const navigationBottom = [
   { name: '이미지 베리에이션', href: '/image-variation', icon: ImageIcon },
   { name: '영상 베리에이션', href: '/ai-variation', icon: Video },
-  { name: '영상 분석 및 제작', href: '/video-production', icon: Wand2 },
   { name: '기획안 제작', href: '/project-plans', icon: Clapperboard },
-  { name: 'AI 학습', href: '/ai-test', icon: BookOpen },
 ]
 
 export function Sidebar() {
