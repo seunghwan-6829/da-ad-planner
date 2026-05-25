@@ -583,6 +583,31 @@ export default function PlanDetailPage() {
     document.body.removeChild(link)
   }
 
+  // 클라이언트의 기존 특이사항/효과 스타일 가져오기
+  async function fetchExistingStyles(): Promise<{ notes: string[]; effects: string[] }> {
+    try {
+      const plans = await getProjectPlans(clientId)
+      const notes: string[] = []
+      const effects: string[] = []
+
+      for (const p of plans.slice(0, 5)) {
+        const planScenes = await getPlanScenes(p.id)
+        for (const s of planScenes) {
+          if (s.special_notes && s.special_notes.trim()) notes.push(s.special_notes.trim())
+          if (s.effect && s.effect.trim()) effects.push(s.effect.trim())
+        }
+      }
+
+      // 중복 제거, 최대 15개
+      return {
+        notes: [...new Set(notes)].slice(0, 15),
+        effects: [...new Set(effects)].slice(0, 15),
+      }
+    } catch {
+      return { notes: [], effects: [] }
+    }
+  }
+
   // AI 대본 분배
   async function handleAiScriptDistribute() {
     if (!aiScript.trim()) {
@@ -595,9 +620,13 @@ export default function PlanDetailPage() {
     }
 
     setAiLoading(true)
-    setAiProgress('대본 분석 중...')
+    setAiProgress('기존 스타일 분석 중...')
     try {
+      // 기존 특이사항/효과 스타일 가져오기
+      const existingStyles = aiAutoFill ? await fetchExistingStyles() : { notes: [], effects: [] }
+
       // 단계 시뮬레이션: 실제 API 호출 전 진행 상태 표시
+      setAiProgress('대본 분석 중...')
       const progressTimer = setTimeout(() => setAiProgress('씬별 대본 분배 중...'), 3000)
       const progressTimer2 = setTimeout(() => setAiProgress('효과 · 특이사항 생성 중...'), 6000)
       const progressTimer3 = setTimeout(() => setAiProgress('최종 정리 중...'), 9000)
@@ -608,7 +637,9 @@ export default function PlanDetailPage() {
           script: aiScript.trim(),
           sceneCount: scenes.length,
           autoFill: aiAutoFill,
-          existingFootage: aiExistingFootage
+          existingFootage: aiExistingFootage,
+          existingNotes: existingStyles.notes,
+          existingEffects: existingStyles.effects,
         })
       })
 

@@ -5,7 +5,7 @@ const MODEL = 'claude-sonnet-4-6'
 const MAX_TOKENS = 4096
 
 export async function POST(request: NextRequest) {
-  let body: { script: string; sceneCount: number; autoFill?: boolean; existingFootage?: boolean }
+  let body: { script: string; sceneCount: number; autoFill?: boolean; existingFootage?: boolean; existingNotes?: string[]; existingEffects?: string[] }
   try {
     body = await request.json()
   } catch {
@@ -15,7 +15,16 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  const { script, sceneCount, autoFill = true, existingFootage = false } = body
+  const { script, sceneCount, autoFill = true, existingFootage = false, existingNotes = [], existingEffects = [] } = body
+
+  // 기존 스타일 참고 컨텍스트 생성
+  const styleContext = (existingNotes.length > 0 || existingEffects.length > 0)
+    ? `\n\n## 이 브랜드에서 기존에 작성된 스타일 (반드시 이 톤과 길이감을 따라해서 작성할 것)
+${existingNotes.length > 0 ? `\n### 기존 특이사항 예시 (이런 느낌으로 작성):\n${existingNotes.map(n => `- "${n}"`).join('\n')}` : ''}
+${existingEffects.length > 0 ? `\n### 기존 효과 예시 (이런 느낌으로 작성):\n${existingEffects.map(e => `- "${e}"`).join('\n')}` : ''}
+
+위 기존 예시의 말투, 길이, 구체성 수준을 분석해서 새로 작성하는 effect와 special_notes에 동일한 스타일을 적용해라.`
+    : ''
   const apiKey = request.headers.get('x-user-api-key') || process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
     return NextResponse.json(
@@ -68,6 +77,7 @@ export async function POST(request: NextRequest) {
    좋은 예: "자막 타이밍 대사에 맞추기", "장면 너무 길지 않게 자르기", "음악 볼륨 대사보다 낮게", "앞뒤 장면 자연스럽게 연결"
    나쁜 예: "놀란 표정으로 리액션", "밝은 표정 유지" ← 촬영 지시 금지. 이미 찍은 영상이다.
 4. 반드시 정확히 ${sceneCount}개 씬.
+${styleContext}
 
 ## 응답 형식 (JSON만, 다른 텍스트 없이)
 {
@@ -92,6 +102,7 @@ export async function POST(request: NextRequest) {
    좋은 예: "밝은 분위기 유지", "제품 자연스럽게 보여주기", "표정 크게", "말투 편하게"
    나쁜 예: "공감 유도 오프닝", "후킹 톤 적용", "비포/애프터 대비 연출" ← 이런 기획서 용어 금지.
 4. 반드시 정확히 ${sceneCount}개 씬.
+${styleContext}
 
 ## 응답 형식 (JSON만, 다른 텍스트 없이)
 {
