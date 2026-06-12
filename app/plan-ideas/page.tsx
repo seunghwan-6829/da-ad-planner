@@ -113,6 +113,7 @@ export default function PlanIdeasPage() {
           prompt: prompt.trim(),
           existingScripts,
           clientName: selectedClient.name,
+          previousResults: ideas.map((i) => i.result).slice(0, 5),
         }),
       })
 

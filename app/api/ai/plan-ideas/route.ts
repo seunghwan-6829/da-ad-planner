@@ -9,6 +9,7 @@ export async function POST(request: NextRequest) {
     prompt: string
     existingScripts: string[]
     clientName: string
+    previousResults?: string[]
   }
   try {
     body = await request.json()
@@ -19,7 +20,7 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  const { prompt, existingScripts = [], clientName } = body
+  const { prompt, existingScripts = [], clientName, previousResults = [] } = body
   const apiKey =
     request.headers.get('x-user-api-key') || process.env.ANTHROPIC_API_KEY
 
@@ -44,6 +45,13 @@ export async function POST(request: NextRequest) {
     existingScripts.length > 0
       ? `\n\n## 브랜드 참고 자료 (기존 대본)\n아래는 "${clientName}" 브랜드의 기존 대본들이다. 2번 항목의 분석 기준에 따라 읽어라.\n\n${existingScripts
           .map((s, i) => `--- 대본 ${i + 1} ---\n${s}`)
+          .join('\n\n')}`
+      : ''
+
+  const previousContext =
+    previousResults.length > 0
+      ? `\n\n## ⛔ 이미 생성된 대본 (절대 반복 금지)\n아래는 이번 세션에서 이미 생성한 대본들이다. 이 대본들과 동일하거나 유사한 구조/훅/전개를 사용하지 마라.\n매번 완전히 다른 오프닝 훅, 다른 구조, 다른 톤 변화를 시도하라.\n\n${previousResults
+          .map((r, i) => `--- 이전 생성 ${i + 1} ---\n${r}`)
           .join('\n\n')}`
       : ''
 
@@ -108,14 +116,21 @@ export async function POST(request: NextRequest) {
 - **사용자가 의도적 톤 변형 요청**: 기존 톤 패턴을 명시한 뒤 변형안 제시. 거부하지 말 것.
 - **신규 브랜드(학습 데이터 없음)**: 일반 카테고리 모범 사례만 사용하고, "(브랜드 톤 가이드 반영 전 버전)"을 맨 끝에 한 줄 표기.
 
-## 6. 출력 포맷
+## 6. 다양성 원칙 (매우 중요)
+
+- 매번 다른 오프닝 훅을 사용하라. 질문형, 충격형, 공감형, 데이터형, 스토리형 중 이전에 쓰지 않은 것을 택해라.
+- 대본의 전체 구조(전개 순서)를 매번 바꿔라. 문제→해결, 비포→애프터, 상황→반전, 질문→답변, 스토리→교훈 등.
+- 같은 키워드나 표현이 이전 생성과 겹치면 반드시 다른 표현으로 대체하라.
+- 톤도 의도적으로 변주하라: 같은 브랜드라도 유머러스, 진지, 감성적, 직설적, 대화체 등 다양하게 시도.
+
+## 7. 출력 포맷
 
 - **기본**: 대본 본문만 출력. 영상에 바로 쓸 수 있는 순수 대본 텍스트.
 - **하단 1줄**: "톤: [분석 결과 요약] / 구조: [A·B·C 중 선택한 것]" 을 짧게 덧붙인다.
 - 제목, 라벨, 번호 매기기, "대본 시작" 같은 메타 텍스트는 쓰지 않는다.
 - 마크다운 서식(볼드, 헤딩 등)은 사용하지 않는다.
 ${hasData ? '' : '\n⚠️ 현재 이 브랜드의 기존 대본 데이터가 없습니다. 일반 카테고리 모범 사례를 기반으로 작성합니다.'}
-${existingContext}`
+${existingContext}${previousContext}`
 
   try {
     const res = await fetch(ANTHROPIC_BASE, {
@@ -128,6 +143,7 @@ ${existingContext}`
       body: JSON.stringify({
         model: MODEL,
         max_tokens: MAX_TOKENS,
+        temperature: 0.85,
         system: systemPrompt,
         messages: [
           {
