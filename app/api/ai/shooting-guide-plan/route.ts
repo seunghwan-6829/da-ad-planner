@@ -43,7 +43,9 @@ export async function POST(request: NextRequest) {
 - angle: 카메라 앵글 (예: "정면", "사선 위", "측면 살짝")
 - duration: 권장 길이 (예: "2~3초")
 - direction: 현장 촬영 디렉션 한 줄 (예: "표정 과하지 않게, 시선은 카메라로")
-- imagePrompt: English. A vertical 9:16 photographic reference shot describing exactly this cut (subject, action, framing, angle). Realistic, clean lighting, natural. End with: "No text, no logo, no watermark."
+- imagePrompt: English. A vertical 9:16 photographic reference shot describing exactly this cut (subject, action, framing, angle). Realistic, clean lighting, natural.
+  반드시 SFW(안전): 인물은 단정하게 옷을 갖춰 입은 상태로, 노출·속옷·수영복·선정적 포즈·신체 부각 표현을 절대 쓰지 마라. 얼굴/손 외 피부 노출 묘사 금지. 신체 부위(가슴, 허리, 다리, 엉덩이 등)나 몸매를 강조하는 단어를 쓰지 마라. 제품·표정·동작 중심으로 단정하고 광고용으로 묘사하라.
+  End with: "Professional, modest, fully-clothed, safe-for-work commercial photo. No text, no logo, no watermark."
 
 ## 전체 필드
 - title: 이 촬영 가이드의 짧은 제목 (브랜드/내용 반영, 예: "${clientName} 신제품 UGC 촬영 가이드")

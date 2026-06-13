@@ -26,6 +26,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: '이미지 프롬프트(prompt)를 보내주세요.' }, { status: 400 })
   }
 
+  // 안전 필터 오탐 방지: 모든 프롬프트에 SFW 가드레일을 강제로 부착
+  const SAFE_SUFFIX =
+    ' — Professional, modest, fully-clothed commercial advertising reference photo. ' +
+    'Strictly safe-for-work and tasteful. No nudity, no underwear, no swimwear, no cleavage, ' +
+    'no suggestive or sexual posing, no skin exposure beyond face and hands. Respectful, natural depiction.'
+  const finalPrompt = `${prompt}${SAFE_SUFFIX}`
+
   try {
     const res = await fetch(OPENAI_IMAGE_URL, {
       method: 'POST',
@@ -35,7 +42,7 @@ export async function POST(request: NextRequest) {
       },
       body: JSON.stringify({
         model: 'gpt-image-1',
-        prompt,
+        prompt: finalPrompt,
         size: '1024x1536',
         quality: 'medium',
         n: 1,
@@ -44,8 +51,13 @@ export async function POST(request: NextRequest) {
 
     const data = await res.json()
     if (!res.ok) {
+      const msg: string = data.error?.message ?? 'OpenAI 이미지 생성 오류'
+      const code: string = data.error?.code ?? ''
+      const isSafety =
+        code === 'moderation_blocked' ||
+        /safety system|safety_violations|content policy|moderation/i.test(msg)
       return NextResponse.json(
-        { error: data.error?.message ?? 'OpenAI 이미지 생성 오류', details: data },
+        { error: msg, code: isSafety ? 'safety' : 'error', details: data },
         { status: res.status }
       )
     }

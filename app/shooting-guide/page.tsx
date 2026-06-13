@@ -47,6 +47,28 @@ function b64ToFile(b64: string, name: string): File {
   return new File([bytes], name, { type: 'image/png' })
 }
 
+async function requestImage(
+  prompt: string
+): Promise<{ ok: boolean; b64?: string; code?: string; status: number; error?: string }> {
+  const res = await aiFetch('/api/ai/shooting-guide-image', {
+    method: 'POST',
+    body: JSON.stringify({ prompt }),
+  })
+  const data = await res.json()
+  return { ok: res.ok, b64: data.b64, code: data.code, status: res.status, error: data.error }
+}
+
+// 안전 필터에 막혔을 때 쓰는 완곡한 대체 프롬프트 (자유서술 설명 제거, 구도만)
+function safePrompt(shot: PlanShot, i: number): string {
+  const parts = [shot?.name, shot?.framing, shot?.angle].filter(Boolean).join(', ')
+  return (
+    `A clean, professional, fully-clothed commercial advertising reference photo. ` +
+    `Scene: ${parts || `cut ${i + 1}`}. Bright studio lighting, modest, strictly safe-for-work, ` +
+    `no skin exposure beyond face and hands, no suggestive posing. Product and expression focused. ` +
+    `No text, no logo, no watermark.`
+  )
+}
+
 export default function ShootingGuidePage() {
   const { user, isAdmin } = useAuth()
   const [clients, setClients] = useState<Client[]>([])
@@ -154,30 +176,46 @@ export default function ShootingGuidePage() {
       )
 
       // 3) 컷별 이미지 생성 → 스토리지 업로드 (순차)
+      //    안전 필터에 막히면 완곡 프롬프트로 1회 재시도, 그래도 실패하면 그 컷만 건너뛴다.
+      let failed = 0
       for (let i = 0; i < shotRows.length; i++) {
         setProgress({ step: '레퍼런스 컷 생성 중...', done: i, total: shotRows.length })
-        const prompt = shots[i]?.imagePrompt || shots[i]?.description || ''
-        if (!prompt) continue
+        const basePrompt = shots[i]?.imagePrompt || shots[i]?.description || ''
+        if (!basePrompt) {
+          failed++
+          continue
+        }
 
-        const imgRes = await aiFetch('/api/ai/shooting-guide-image', {
-          method: 'POST',
-          body: JSON.stringify({ prompt }),
-        })
-        const img = await imgRes.json()
-        if (!imgRes.ok) throw new Error(img.error || `${i + 1}번 컷 이미지 생성 실패`)
+        let r = await requestImage(basePrompt)
+        // 키 문제면 즉시 중단 (계속해봐야 모두 실패)
+        if (!r.ok && r.status === 401) throw new Error(r.error || 'OpenAI API 키 오류')
+        // 안전 필터면 완곡한 프롬프트로 1회 재시도
+        if (!r.ok && r.code === 'safety') {
+          r = await requestImage(safePrompt(shots[i], i))
+        }
+        if (!r.ok || !r.b64) {
+          failed++
+          continue
+        }
 
-        const file = b64ToFile(img.b64, `shot-${i + 1}.png`)
-        const path = `${user?.id || 'anon'}/${guide.id}/shot-${i + 1}.png`
-        const uploaded = await uploadShootingGuideImage(path, file)
-        if (uploaded) {
-          await updateShootingGuideShot(shotRows[i].id, {
-            image_url: uploaded.url,
-            image_path: uploaded.path,
-          })
+        try {
+          const file = b64ToFile(r.b64, `shot-${i + 1}.png`)
+          const path = `${user?.id || 'anon'}/${guide.id}/shot-${i + 1}.png`
+          const uploaded = await uploadShootingGuideImage(path, file)
+          if (uploaded) {
+            await updateShootingGuideShot(shotRows[i].id, {
+              image_url: uploaded.url,
+              image_path: uploaded.path,
+            })
+          } else {
+            failed++
+          }
+        } catch {
+          failed++
         }
       }
 
-      // 4) 발행
+      // 4) 발행 (일부 컷이 실패해도 발행 — 나머지는 정상 표시)
       setProgress({ step: '발행 중...', done: shotRows.length, total: shotRows.length })
       await publishGuide(guide.id)
 
@@ -188,6 +226,14 @@ export default function ShootingGuidePage() {
       setGuides(data)
       setProgress(null)
       window.open(`${window.location.origin}/guide/${shareId}`, '_blank')
+
+      if (failed > 0) {
+        alert(
+          `${shotRows.length}컷 중 ${failed}컷은 이미지 생성에 실패했습니다(주로 OpenAI 안전 필터). ` +
+            `가이드는 발행됐고 해당 컷은 이미지 없이 표시됩니다.\n` +
+            `해당 컷 설명을 더 완곡하게(신체·노출·포즈 표현 제거) 바꿔 다시 시도해 보세요.`
+        )
+      }
     } catch (err: any) {
       alert(`제작 실패: ${err?.message || '알 수 없는 오류'}`)
       setProgress(null)
