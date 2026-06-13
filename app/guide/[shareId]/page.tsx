@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Loader2, Camera, Ratio, Lightbulb, Clapperboard } from 'lucide-react'
+import { Loader2, Camera, Ratio, Lightbulb } from 'lucide-react'
 import { getPublicGuideByShareId, ShootingGuide } from '@/lib/api/shooting-guides'
 
 export default function PublicGuidePage({ params }: { params: Promise<{ shareId: string }> }) {
@@ -115,18 +115,10 @@ export default function PublicGuidePage({ params }: { params: Promise<{ shareId:
                   <p className="mb-2.5 text-sm font-semibold text-[#23262c]">{shot.description}</p>
                 )}
 
-                <div className="mb-2 flex flex-wrap gap-1.5">
-                  {shot.framing && <Badge k="구도" v={shot.framing} />}
+                <div className="flex flex-wrap gap-1.5">
                   {shot.angle && <Badge k="앵글" v={shot.angle} />}
                   {shot.duration && <Badge k="길이" v={shot.duration} />}
                 </div>
-
-                {shot.direction && (
-                  <p className="mt-auto flex items-start gap-1.5 border-t border-dashed border-[#e6e8ec] pt-2 text-[12.5px] text-gray-600">
-                    <Clapperboard className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                    <span>{shot.direction}</span>
-                  </p>
-                )}
               </div>
             </article>
           ))}

@@ -110,7 +110,7 @@ export function ShootingGuideEditor({
     const s = shots[idx]
     const prompt =
       `Vertical 9:16 photorealistic reference shot. ` +
-      [s.name, s.description, s.framing, s.angle].filter(Boolean).join('. ')
+      [s.name, s.description, s.angle].filter(Boolean).join('. ')
     setShot(idx, { regenBusy: true })
     try {
       const res = await aiFetch('/api/ai/shooting-guide-image', {
@@ -318,13 +318,11 @@ export function ShootingGuideEditor({
                     <Trash2 className="h-4 w-4" />
                   </button>
                 </div>
-                <Textarea value={s.description} onChange={(e) => setShot(idx, { description: e.target.value })} placeholder="화면 설명" className="min-h-[52px] dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200" />
-                <div className="grid grid-cols-3 gap-2">
-                  <Input value={s.framing} onChange={(e) => setShot(idx, { framing: e.target.value })} placeholder="구도" className="dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200" />
+                <Textarea value={s.description} onChange={(e) => setShot(idx, { description: e.target.value })} placeholder="촬영 방법 (간단히)" className="min-h-[52px] dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200" />
+                <div className="grid grid-cols-2 gap-2">
                   <Input value={s.angle} onChange={(e) => setShot(idx, { angle: e.target.value })} placeholder="앵글" className="dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200" />
                   <Input value={s.duration} onChange={(e) => setShot(idx, { duration: e.target.value })} placeholder="길이" className="dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200" />
                 </div>
-                <Input value={s.direction} onChange={(e) => setShot(idx, { direction: e.target.value })} placeholder="촬영 디렉션" className="dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200" />
               </div>
             </div>
           ))}

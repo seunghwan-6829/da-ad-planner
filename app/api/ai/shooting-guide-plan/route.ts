@@ -32,17 +32,16 @@ export async function POST(request: NextRequest) {
 
 ## 핵심 규칙
 1. 반드시 입력된 컷 개수(${cuts.length}개)와 동일한 수의 shot을 만든다. 순서도 동일하게 유지한다. (입력 컷 1개 = shot 1개)
-2. 대사/자막/스크립트는 절대 만들지 않는다. 오직 "화면에 무엇이 어떻게 보이는지(화면 설명)"만 작성한다.
+2. 대사/자막/스크립트는 절대 만들지 않는다.
 3. 모든 텍스트는 한국어. 편집/촬영 전문용어 대신 쉬운 말로.
-4. 각 shot의 imagePrompt만 영어로 작성한다 (이미지 생성용).
+4. **간단·함축**: 모델이 부담 없이 한눈에 보고 따라할 수 있게 짧게. 세세하게 지시하지 마라(모델이 지친다). 핵심만.
+5. 각 shot의 imagePrompt만 영어로 작성한다 (이미지 생성용).
 
 ## 각 shot 필드
 - name: 짧은 컷 이름 (예: "후킹 컷", "제품 클로즈업", "사용 시연")
-- description: 화면 설명. 모델의 동작·표정·구성이 무엇인지 한두 문장. (대사 없음)
-- framing: 구도 (예: "얼굴 타이트 클로즈업", "미디엄(가슴 위)", "손+제품 클로즈업")
+- description: 이 컷을 "어떻게 찍으면 되는지"를 친근하고 간단하게 1문장으로. 핵심 동작·표정·느낌만 담고, 과한 디테일/지시는 금지. (예: "제품 가볍게 들고 정면 보며 살짝 미소", "크림 바르는 손동작 자연스럽게 보여주기")
 - angle: 카메라 앵글 (예: "정면", "사선 위", "측면 살짝")
 - duration: 권장 길이 (예: "2~3초")
-- direction: 현장 촬영 디렉션 한 줄 (예: "표정 과하지 않게, 시선은 카메라로")
 - imagePrompt: English. A vertical 9:16 PHOTOREALISTIC reference shot describing exactly this cut (subject, action, framing, angle).
   사실성(중요): 실제 스마트폰/DSLR로 찍은 듯 자연스럽고 사실적인 사진. 자연광, 사실적인 피부 질감과 디테일, 과보정 없는 진짜 사진 느낌(authentic UGC). 스톡사진처럼 인위적/플라스틱하지 않게.
   인물(중요): 사람이 등장하는 컷에서 별도 지정이 없으면 반드시 '자연스러운 외모의 한국인 20대 여성(Korean woman in her 20s)'으로 묘사하라. 컷에 나이/성별/국적이 명시돼 있으면 그것을 따른다.
@@ -60,7 +59,7 @@ export async function POST(request: NextRequest) {
   "ratio": "9:16",
   "tips": "...",
   "shots": [
-    { "name": "...", "description": "...", "framing": "...", "angle": "...", "duration": "...", "direction": "...", "imagePrompt": "..." }
+    { "name": "...", "description": "...", "angle": "...", "duration": "...", "imagePrompt": "..." }
   ]
 }`
 
