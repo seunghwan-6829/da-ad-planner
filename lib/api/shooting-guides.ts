@@ -113,7 +113,7 @@ export async function createShootingGuideShots(
 
 export async function updateShootingGuideShot(
   id: string,
-  updates: Partial<Pick<ShootingGuideShot, 'image_url' | 'image_path'>>
+  updates: Partial<Omit<ShootingGuideShot, 'id' | 'guide_id' | 'created_at'>>
 ): Promise<void> {
   if (!supabase) return
 
@@ -122,7 +122,59 @@ export async function updateShootingGuideShot(
     .update(updates)
     .eq('id', id)
 
-  if (error) console.error('컷 업데이트 실패:', error)
+  if (error) {
+    console.error('컷 업데이트 실패:', error)
+    throw new Error(error.message)
+  }
+}
+
+export async function deleteShootingGuideShot(shot: ShootingGuideShot): Promise<void> {
+  if (!supabase) return
+
+  if (shot.image_path) {
+    await supabase.storage.from(BUCKET).remove([shot.image_path])
+  }
+  const { error } = await supabase.from('shooting_guide_shots').delete().eq('id', shot.id)
+  if (error) {
+    console.error('컷 삭제 실패:', error)
+    throw new Error(error.message)
+  }
+}
+
+// 수정용: 가이드 본문 필드 업데이트
+export async function updateShootingGuide(
+  id: string,
+  updates: Partial<Pick<ShootingGuide, 'title' | 'ratio' | 'tips'>>
+): Promise<void> {
+  if (!supabase) return
+
+  const { error } = await supabase
+    .from('shooting_guides')
+    .update({ ...updates, updated_at: new Date().toISOString() })
+    .eq('id', id)
+
+  if (error) {
+    console.error('가이드 업데이트 실패:', error)
+    throw new Error(error.message)
+  }
+}
+
+// 수정 화면용: 모든 컷 필드 포함 단건 조회 (인증)
+export async function getShootingGuideWithShots(id: string): Promise<ShootingGuide | null> {
+  if (!supabase) return null
+
+  const { data, error } = await supabase
+    .from('shooting_guides')
+    .select('*, shots:shooting_guide_shots(*)')
+    .eq('id', id)
+    .single()
+
+  if (error) {
+    console.error('가이드 단건 조회 실패:', error)
+    return null
+  }
+
+  return { ...data, shots: sortShots(data.shots) } as ShootingGuide
 }
 
 export async function publishGuide(id: string): Promise<void> {

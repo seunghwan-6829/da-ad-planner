@@ -13,6 +13,7 @@ import {
   Image as ImageIcon,
   FileText,
   Paperclip,
+  Pencil,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -21,6 +22,7 @@ import { aiFetch } from '@/lib/ai-fetch'
 import { getClients, getClientsForUser, Client } from '@/lib/api/clients'
 import {
   getShootingGuides,
+  getShootingGuideWithShots,
   createShootingGuide,
   createShootingGuideShots,
   updateShootingGuideShot,
@@ -30,6 +32,7 @@ import {
   createShareId,
   ShootingGuide,
 } from '@/lib/api/shooting-guides'
+import { ShootingGuideEditor } from '@/components/shooting-guide-editor'
 
 interface PlanShot {
   name?: string
@@ -92,6 +95,7 @@ export default function ShootingGuidePage() {
   const [progress, setProgress] = useState<{ step: string; done: number; total: number } | null>(null)
 
   const [copied, setCopied] = useState<string | null>(null)
+  const [editingGuide, setEditingGuide] = useState<ShootingGuide | null>(null)
 
   useEffect(() => {
     loadClients()
@@ -288,6 +292,20 @@ export default function ShootingGuidePage() {
     navigator.clipboard.writeText(url)
     setCopied(shareId)
     setTimeout(() => setCopied(null), 2000)
+  }
+
+  async function handleEditGuide(guide: ShootingGuide) {
+    const full = await getShootingGuideWithShots(guide.id)
+    if (full) setEditingGuide(full)
+    else alert('가이드를 불러오지 못했습니다.')
+  }
+
+  async function handleEditorSaved() {
+    setEditingGuide(null)
+    if (selectedClient) {
+      const data = await getShootingGuides(selectedClient.id)
+      setGuides(data)
+    }
   }
 
   async function handleDeleteGuide(guide: ShootingGuide) {
@@ -530,6 +548,15 @@ export default function ShootingGuidePage() {
                               size="sm"
                               variant="outline"
                               className="h-8 text-xs dark:border-gray-700 dark:text-gray-300"
+                              onClick={() => handleEditGuide(guide)}
+                            >
+                              <Pencil className="h-3.5 w-3.5 mr-1" />
+                              수정
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-8 text-xs dark:border-gray-700 dark:text-gray-300"
                               onClick={() => window.open(`${window.location.origin}/guide/${guide.share_id}`, '_blank')}
                             >
                               <ExternalLink className="h-3.5 w-3.5 mr-1" />
@@ -568,6 +595,14 @@ export default function ShootingGuidePage() {
           )}
         </div>
       </div>
+
+      {editingGuide && (
+        <ShootingGuideEditor
+          guide={editingGuide}
+          onClose={() => setEditingGuide(null)}
+          onSaved={handleEditorSaved}
+        />
+      )}
     </div>
   )
 }
