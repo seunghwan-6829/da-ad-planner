@@ -7,6 +7,7 @@ import { getPublicGuideByShareId, ShootingGuide } from '@/lib/api/shooting-guide
 export default function PublicGuidePage({ params }: { params: Promise<{ shareId: string }> }) {
   const [guide, setGuide] = useState<ShootingGuide | null>(null)
   const [loading, setLoading] = useState(true)
+  const [zoom, setZoom] = useState<string | null>(null)
 
   useEffect(() => {
     params.then(async ({ shareId }) => {
@@ -84,14 +85,19 @@ export default function PublicGuidePage({ params }: { params: Promise<{ shareId:
           {shots.map((shot, i) => (
             <article
               key={shot.id}
-              className="flex flex-row gap-3 rounded-2xl border border-[#e6e8ec] bg-white p-2.5 shadow-sm sm:flex-col sm:p-3"
+              className="flex flex-row items-start gap-3 rounded-2xl border border-[#e6e8ec] bg-white p-2.5 shadow-sm sm:flex-col sm:p-3"
             >
-              <div className="relative aspect-[2/3] w-28 flex-none overflow-hidden rounded-xl bg-[#eceef1] sm:w-full">
+              <div className="relative w-28 flex-none overflow-hidden rounded-xl bg-[#eceef1] sm:w-full">
                 {shot.image_url ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={shot.image_url} alt={shot.name || `컷 ${i + 1}`} className="h-full w-full object-cover" />
+                  <img
+                    src={shot.image_url}
+                    alt={shot.name || `컷 ${i + 1}`}
+                    onClick={() => setZoom(shot.image_url)}
+                    className="block w-full h-auto cursor-zoom-in"
+                  />
                 ) : (
-                  <div className="flex h-full w-full items-center justify-center">
+                  <div className="flex aspect-[2/3] w-full items-center justify-center">
                     <Camera className="h-6 w-6 text-gray-300" />
                   </div>
                 )}
@@ -128,6 +134,17 @@ export default function PublicGuidePage({ params }: { params: Promise<{ shareId:
 
         <p className="mt-6 text-center text-xs text-gray-400">레퍼런스 이미지는 AI 생성 예시 · 컨텐츠 디벨로퍼</p>
       </div>
+
+      {/* 이미지 확대 라이트박스 */}
+      {zoom && (
+        <div
+          className="fixed inset-0 z-50 flex cursor-zoom-out items-center justify-center bg-black/85 p-4"
+          onClick={() => setZoom(null)}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={zoom} alt="확대 이미지" className="max-h-[92vh] max-w-[92vw] rounded-lg object-contain" />
+        </div>
+      )}
     </div>
   )
 }

@@ -512,7 +512,7 @@ export default function ShootingGuidePage() {
                     </div>
                   </div>
                 ) : (
-                  <div className="space-y-2 max-w-3xl">
+                  <div className="space-y-2">
                     {guides.map((guide) => {
                       const thumb = thumbnailOf(guide)
                       return (
