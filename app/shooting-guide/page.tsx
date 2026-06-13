@@ -12,6 +12,7 @@ import {
   ExternalLink,
   Image as ImageIcon,
   FileText,
+  Paperclip,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -40,11 +41,27 @@ interface PlanShot {
   imagePrompt?: string
 }
 
+// 컷 = 텍스트 + (선택) 붙여넣은 레퍼런스 이미지
+interface CutItem {
+  text: string
+  imageDataUrl?: string
+}
+
 function b64ToFile(b64: string, name: string): File {
   const bin = atob(b64)
   const bytes = new Uint8Array(bin.length)
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
   return new File([bytes], name, { type: 'image/png' })
+}
+
+function dataUrlToFile(dataUrl: string, baseName: string): File {
+  const [head, b64] = dataUrl.split(',')
+  const mime = /data:(.*?);/.exec(head)?.[1] || 'image/png'
+  const ext = mime.includes('jpeg') ? 'jpg' : mime.includes('webp') ? 'webp' : 'png'
+  const bin = atob(b64)
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  return new File([bytes], `${baseName}.${ext}`, { type: mime })
 }
 
 async function requestImage(
@@ -58,17 +75,6 @@ async function requestImage(
   return { ok: res.ok, b64: data.b64, code: data.code, status: res.status, error: data.error }
 }
 
-// 안전 필터에 막혔을 때 쓰는 완곡한 대체 프롬프트 (자유서술 설명 제거, 구도만)
-function safePrompt(shot: PlanShot, i: number): string {
-  const parts = [shot?.name, shot?.framing, shot?.angle].filter(Boolean).join(', ')
-  return (
-    `A clean, professional, fully-clothed commercial advertising reference photo. ` +
-    `Scene: ${parts || `cut ${i + 1}`}. Bright studio lighting, modest, strictly safe-for-work, ` +
-    `no skin exposure beyond face and hands, no suggestive posing. Product and expression focused. ` +
-    `No text, no logo, no watermark.`
-  )
-}
-
 export default function ShootingGuidePage() {
   const { user, isAdmin } = useAuth()
   const [clients, setClients] = useState<Client[]>([])
@@ -80,7 +86,8 @@ export default function ShootingGuidePage() {
 
   // 제작기
   const [cutInput, setCutInput] = useState('')
-  const [cuts, setCuts] = useState<string[]>([])
+  const [cuts, setCuts] = useState<CutItem[]>([])
+  const [pendingImage, setPendingImage] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState<{ step: string; done: number; total: number } | null>(null)
 
@@ -106,6 +113,7 @@ export default function ShootingGuidePage() {
     setSelectedClient(client)
     setCuts([])
     setCutInput('')
+    setPendingImage(null)
     setProgress(null)
     setGuidesLoading(true)
     try {
@@ -119,11 +127,30 @@ export default function ShootingGuidePage() {
     }
   }
 
+  function handlePaste(e: React.ClipboardEvent<HTMLInputElement>) {
+    const items = e.clipboardData?.items
+    if (!items) return
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i]
+      if (it.type.startsWith('image/')) {
+        const file = it.getAsFile()
+        if (file) {
+          e.preventDefault()
+          const reader = new FileReader()
+          reader.onload = () => setPendingImage(reader.result as string)
+          reader.readAsDataURL(file)
+        }
+        return
+      }
+    }
+  }
+
   function addCut() {
     const v = cutInput.trim()
-    if (!v) return
-    setCuts((prev) => [...prev, v])
+    if (!v && !pendingImage) return
+    setCuts((prev) => [...prev, { text: v, imageDataUrl: pendingImage || undefined }])
     setCutInput('')
+    setPendingImage(null)
   }
 
   function removeCut(index: number) {
@@ -137,10 +164,13 @@ export default function ShootingGuidePage() {
     setProgress({ step: 'AI가 컷을 설계하는 중...', done: 0, total: cuts.length })
 
     try {
-      // 1) 텍스트 기획 (제목 + 컷 설명)
+      // 1) 텍스트 기획 (제목 + 컷 설명) — 붙여넣은 이미지 컷도 설명/구도는 AI가 작성
       const planRes = await aiFetch('/api/ai/shooting-guide-plan', {
         method: 'POST',
-        body: JSON.stringify({ clientName: selectedClient.name, cuts }),
+        body: JSON.stringify({
+          clientName: selectedClient.name,
+          cuts: cuts.map((c) => c.text || '레퍼런스 이미지 컷'),
+        }),
       })
       const plan = await planRes.json()
       if (!planRes.ok) throw new Error(plan.error || '컷 설계 실패')
@@ -175,32 +205,40 @@ export default function ShootingGuidePage() {
         }))
       )
 
-      // 3) 컷별 이미지 생성 → 스토리지 업로드 (순차)
-      //    안전 필터에 막히면 완곡 프롬프트로 1회 재시도, 그래도 실패하면 그 컷만 건너뛴다.
+      // 3) 컷별 이미지: 붙여넣은 레퍼런스가 있으면 그걸 업로드, 없으면 AI 생성
       let failed = 0
+      let safetyBlocked = false
       for (let i = 0; i < shotRows.length; i++) {
-        setProgress({ step: '레퍼런스 컷 생성 중...', done: i, total: shotRows.length })
-        const basePrompt = shots[i]?.imagePrompt || shots[i]?.description || ''
-        if (!basePrompt) {
-          failed++
-          continue
-        }
+        const pasted = cuts[i]?.imageDataUrl
+        setProgress({
+          step: pasted ? '레퍼런스 이미지 업로드 중...' : '레퍼런스 컷 생성 중...',
+          done: i,
+          total: shotRows.length,
+        })
 
-        let r = await requestImage(basePrompt)
-        // 키 문제면 즉시 중단 (계속해봐야 모두 실패)
-        if (!r.ok && r.status === 401) throw new Error(r.error || 'OpenAI API 키 오류')
-        // 안전 필터면 완곡한 프롬프트로 1회 재시도
-        if (!r.ok && r.code === 'safety') {
-          r = await requestImage(safePrompt(shots[i], i))
-        }
-        if (!r.ok || !r.b64) {
-          failed++
-          continue
+        let file: File | null = null
+
+        if (pasted) {
+          // 붙여넣은 이미지 사용 (AI 생성 안 함)
+          file = dataUrlToFile(pasted, `shot-${i + 1}`)
+        } else {
+          const prompt = shots[i]?.imagePrompt || shots[i]?.description || ''
+          if (!prompt) {
+            failed++
+            continue
+          }
+          const r = await requestImage(prompt)
+          if (!r.ok && r.status === 401) throw new Error(r.error || 'OpenAI API 키 오류')
+          if (!r.ok || !r.b64) {
+            if (r.code === 'safety') safetyBlocked = true
+            failed++
+            continue // 막힌 컷은 건너뛰고 진행 (전체 중단 X, 재시도 X)
+          }
+          file = b64ToFile(r.b64, `shot-${i + 1}.png`)
         }
 
         try {
-          const file = b64ToFile(r.b64, `shot-${i + 1}.png`)
-          const path = `${user?.id || 'anon'}/${guide.id}/shot-${i + 1}.png`
+          const path = `${user?.id || 'anon'}/${guide.id}/${file.name}`
           const uploaded = await uploadShootingGuideImage(path, file)
           if (uploaded) {
             await updateShootingGuideShot(shotRows[i].id, {
@@ -215,13 +253,14 @@ export default function ShootingGuidePage() {
         }
       }
 
-      // 4) 발행 (일부 컷이 실패해도 발행 — 나머지는 정상 표시)
+      // 4) 발행 (일부 컷이 실패해도 발행)
       setProgress({ step: '발행 중...', done: shotRows.length, total: shotRows.length })
       await publishGuide(guide.id)
 
       // 5) 정리 + 뷰어 열기
       setCuts([])
       setCutInput('')
+      setPendingImage(null)
       const data = await getShootingGuides(selectedClient.id)
       setGuides(data)
       setProgress(null)
@@ -229,9 +268,11 @@ export default function ShootingGuidePage() {
 
       if (failed > 0) {
         alert(
-          `${shotRows.length}컷 중 ${failed}컷은 이미지 생성에 실패했습니다(주로 OpenAI 안전 필터). ` +
-            `가이드는 발행됐고 해당 컷은 이미지 없이 표시됩니다.\n` +
-            `해당 컷 설명을 더 완곡하게(신체·노출·포즈 표현 제거) 바꿔 다시 시도해 보세요.`
+          `${shotRows.length}컷 중 ${failed}컷은 이미지 생성에 실패했습니다.\n` +
+            `가이드는 발행됐고 해당 컷은 이미지 없이 표시됩니다.` +
+            (safetyBlocked
+              ? `\n\nOpenAI 안전 필터에 막힌 컷이 있습니다. 해당 컷 설명을 더 완곡하게(신체·노출·포즈 표현 제거) 바꾸거나, 직접 레퍼런스 이미지를 붙여넣어(Ctrl+V) 다시 시도해 보세요.`
+              : '')
         )
       }
     } catch (err: any) {
@@ -343,13 +384,14 @@ export default function ShootingGuidePage() {
                   <Input
                     value={cutInput}
                     onChange={(e) => setCutInput(e.target.value)}
+                    onPaste={handlePaste}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
                         e.preventDefault()
                         addCut()
                       }
                     }}
-                    placeholder="찍을 컷을 적고 Enter (예: 제품을 들고 놀란 표정 클로즈업)"
+                    placeholder="찍을 컷을 적고 Enter · 이미지는 Ctrl+V로 붙여넣기"
                     disabled={busy}
                     className="flex-1 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200"
                   />
@@ -362,16 +404,50 @@ export default function ShootingGuidePage() {
                   </Button>
                 </div>
 
+                {/* 붙여넣은 이미지 대기 미리보기 */}
+                {pendingImage && (
+                  <div className="mt-2 flex items-center gap-2.5">
+                    <div className="relative shrink-0">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={pendingImage} alt="첨부 이미지" className="h-12 w-12 rounded-md object-cover border dark:border-gray-700" />
+                      <button
+                        type="button"
+                        onClick={() => setPendingImage(null)}
+                        className="absolute -top-2 -right-2 flex h-5 w-5 items-center justify-center rounded-full bg-gray-700 text-white shadow hover:bg-red-500"
+                        aria-label="이미지 제거"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                      레퍼런스 이미지 첨부됨 — 설명을 입력하고 Enter (이 컷은 AI 생성 대신 이 이미지를 사용합니다)
+                    </span>
+                  </div>
+                )}
+
                 {/* 칩 목록 (클릭 비활성, hover 시 ✕) */}
                 {cuts.length > 0 && (
                   <div className="flex flex-wrap gap-2 mt-3">
                     {cuts.map((cut, i) => (
                       <div
                         key={i}
-                        className="group relative select-none cursor-default rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 pl-3 pr-7 py-2 text-sm text-gray-700 dark:text-gray-200 max-w-xs"
+                        className={`group relative flex items-center gap-2 select-none cursor-default rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 ${
+                          cut.imageDataUrl ? 'pl-1.5' : 'pl-3'
+                        } pr-7 py-1.5 text-sm text-gray-700 dark:text-gray-200 max-w-xs`}
                       >
-                        <span className="text-gray-400 mr-1">{i + 1}.</span>
-                        {cut}
+                        {cut.imageDataUrl && (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={cut.imageDataUrl} alt="" className="h-8 w-8 rounded object-cover shrink-0" />
+                        )}
+                        <span className="truncate">
+                          <span className="text-gray-400 mr-1">{i + 1}.</span>
+                          {cut.text || (
+                            <span className="inline-flex items-center gap-1 text-gray-500">
+                              <Paperclip className="h-3 w-3" />
+                              레퍼런스 컷
+                            </span>
+                          )}
+                        </span>
                         <button
                           type="button"
                           onClick={() => removeCut(i)}
@@ -386,7 +462,7 @@ export default function ShootingGuidePage() {
                   </div>
                 )}
 
-                {/* 진행률 */}
+                {/* 진행률 / 안내 */}
                 {progress && (
                   <div className="mt-3 flex items-center gap-2 text-sm text-primary">
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -398,12 +474,13 @@ export default function ShootingGuidePage() {
                 )}
                 {!progress && cuts.length === 0 && (
                   <p className="mt-3 text-xs text-gray-400 dark:text-gray-500">
-                    컷을 1개 이상 추가한 뒤 "리스트 제작"을 누르세요. 컷 1개당 레퍼런스 이미지 1장이 생성됩니다.
+                    컷을 1개 이상 추가한 뒤 "리스트 제작"을 누르세요. 컷 1개당 레퍼런스 이미지 1장이 생성되며,
+                    이미지를 직접 붙여넣은(Ctrl+V) 컷은 그 이미지를 그대로 사용합니다.
                   </p>
                 )}
               </div>
 
-              {/* 기존 가이드 목록 */}
+              {/* 기존 가이드 목록 (컴팩트) */}
               <div className="flex-1 overflow-y-auto p-6">
                 {guidesLoading ? (
                   <div className="flex items-center justify-center h-40">
@@ -417,68 +494,69 @@ export default function ShootingGuidePage() {
                     </div>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <div className="space-y-2 max-w-3xl">
                     {guides.map((guide) => {
                       const thumb = thumbnailOf(guide)
                       return (
                         <div
                           key={guide.id}
-                          className="bg-white dark:bg-gray-900 rounded-xl border dark:border-gray-800 overflow-hidden flex flex-col"
+                          className="flex items-center gap-3 bg-white dark:bg-gray-900 border dark:border-gray-800 rounded-xl p-2.5"
                         >
-                          <div className="aspect-[2/3] bg-gray-100 dark:bg-gray-800 relative">
+                          <div className="h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
                             {thumb ? (
                               // eslint-disable-next-line @next/next/no-img-element
-                              <img src={thumb} alt={guide.title} className="w-full h-full object-cover" />
+                              <img src={thumb} alt={guide.title} className="h-full w-full object-cover" />
                             ) : (
-                              <div className="w-full h-full flex items-center justify-center">
-                                <ImageIcon className="h-8 w-8 text-gray-300 dark:text-gray-600" />
-                              </div>
-                            )}
-                            <span className="absolute top-2 left-2 text-[11px] font-bold px-2 py-0.5 rounded-full bg-black/70 text-white">
-                              {guide.shots?.length || 0}컷
-                            </span>
-                            {guide.status !== 'ready' && (
-                              <span className="absolute top-2 right-2 text-[11px] font-bold px-2 py-0.5 rounded-full bg-yellow-500 text-white">
-                                {guide.status === 'generating' ? '생성중' : '임시'}
-                              </span>
+                              <ImageIcon className="h-5 w-5 text-gray-300 dark:text-gray-600" />
                             )}
                           </div>
-                          <div className="p-3 flex flex-col gap-2 flex-1">
-                            <p className="text-sm font-bold dark:text-gray-100 line-clamp-2">{guide.title}</p>
-                            <p className="text-xs text-gray-400">
-                              {new Date(guide.created_at).toLocaleDateString('ko-KR')}
+
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-bold dark:text-gray-100">{guide.title}</p>
+                            <p className="text-xs text-gray-400 flex items-center gap-1.5">
+                              <span>{new Date(guide.created_at).toLocaleDateString('ko-KR')}</span>
+                              <span>·</span>
+                              <span>{guide.shots?.length || 0}컷</span>
+                              {guide.status !== 'ready' && (
+                                <span className="rounded-full bg-yellow-100 dark:bg-yellow-900/40 text-yellow-700 dark:text-yellow-400 px-1.5 py-0.5 text-[10px] font-bold">
+                                  {guide.status === 'generating' ? '생성중' : '임시'}
+                                </span>
+                              )}
                             </p>
-                            <div className="mt-auto flex items-center gap-1">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="flex-1 h-8 text-xs dark:border-gray-700 dark:text-gray-300"
-                                onClick={() => window.open(`${window.location.origin}/guide/${guide.share_id}`, '_blank')}
-                              >
-                                <ExternalLink className="h-3.5 w-3.5 mr-1" />
-                                뷰어
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-8 px-2 dark:border-gray-700 dark:text-gray-300"
-                                onClick={() => copyLink(guide.share_id)}
-                              >
-                                {copied === guide.share_id ? (
-                                  <Check className="h-3.5 w-3.5 text-green-500" />
-                                ) : (
-                                  <Copy className="h-3.5 w-3.5" />
-                                )}
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-8 px-2 dark:border-gray-700"
-                                onClick={() => handleDeleteGuide(guide)}
-                              >
-                                <Trash2 className="h-3.5 w-3.5 text-gray-400 hover:text-red-500" />
-                              </Button>
-                            </div>
+                          </div>
+
+                          <div className="flex shrink-0 items-center gap-1">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-8 text-xs dark:border-gray-700 dark:text-gray-300"
+                              onClick={() => window.open(`${window.location.origin}/guide/${guide.share_id}`, '_blank')}
+                            >
+                              <ExternalLink className="h-3.5 w-3.5 mr-1" />
+                              뷰어
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-8 px-2 dark:border-gray-700 dark:text-gray-300"
+                              onClick={() => copyLink(guide.share_id)}
+                              title="링크 복사"
+                            >
+                              {copied === guide.share_id ? (
+                                <Check className="h-3.5 w-3.5 text-green-500" />
+                              ) : (
+                                <Copy className="h-3.5 w-3.5" />
+                              )}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-8 px-2 dark:border-gray-700"
+                              onClick={() => handleDeleteGuide(guide)}
+                              title="삭제"
+                            >
+                              <Trash2 className="h-3.5 w-3.5 text-gray-400 hover:text-red-500" />
+                            </Button>
                           </div>
                         </div>
                       )

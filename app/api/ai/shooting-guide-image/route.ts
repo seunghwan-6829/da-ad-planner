@@ -26,11 +26,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: '이미지 프롬프트(prompt)를 보내주세요.' }, { status: 400 })
   }
 
-  // 안전 필터 오탐 방지: 모든 프롬프트에 SFW 가드레일을 강제로 부착
+  // 사실성 + 안전 필터 오탐 방지 가드레일을 모든 프롬프트에 강제로 부착
   const SAFE_SUFFIX =
-    ' — Professional, modest, fully-clothed commercial advertising reference photo. ' +
-    'Strictly safe-for-work and tasteful. No nudity, no underwear, no swimwear, no cleavage, ' +
-    'no suggestive or sexual posing, no skin exposure beyond face and hands. Respectful, natural depiction.'
+    ' — Photorealistic, candid photo with natural lighting and realistic skin texture; ' +
+    'authentic UGC style, not an over-polished or artificial stock photo. ' +
+    'If a person appears and no demographic is specified, depict a natural-looking Korean woman in her 20s. ' +
+    'Professional, modest, fully-clothed commercial advertising reference. Strictly safe-for-work and tasteful. ' +
+    'No nudity, no underwear, no swimwear, no cleavage, no suggestive or sexual posing, no skin exposure beyond face and hands.'
   const finalPrompt = `${prompt}${SAFE_SUFFIX}`
 
   try {

@@ -43,9 +43,11 @@ export async function POST(request: NextRequest) {
 - angle: 카메라 앵글 (예: "정면", "사선 위", "측면 살짝")
 - duration: 권장 길이 (예: "2~3초")
 - direction: 현장 촬영 디렉션 한 줄 (예: "표정 과하지 않게, 시선은 카메라로")
-- imagePrompt: English. A vertical 9:16 photographic reference shot describing exactly this cut (subject, action, framing, angle). Realistic, clean lighting, natural.
-  반드시 SFW(안전): 인물은 단정하게 옷을 갖춰 입은 상태로, 노출·속옷·수영복·선정적 포즈·신체 부각 표현을 절대 쓰지 마라. 얼굴/손 외 피부 노출 묘사 금지. 신체 부위(가슴, 허리, 다리, 엉덩이 등)나 몸매를 강조하는 단어를 쓰지 마라. 제품·표정·동작 중심으로 단정하고 광고용으로 묘사하라.
-  End with: "Professional, modest, fully-clothed, safe-for-work commercial photo. No text, no logo, no watermark."
+- imagePrompt: English. A vertical 9:16 PHOTOREALISTIC reference shot describing exactly this cut (subject, action, framing, angle).
+  사실성(중요): 실제 스마트폰/DSLR로 찍은 듯 자연스럽고 사실적인 사진. 자연광, 사실적인 피부 질감과 디테일, 과보정 없는 진짜 사진 느낌(authentic UGC). 스톡사진처럼 인위적/플라스틱하지 않게.
+  인물(중요): 사람이 등장하는 컷에서 별도 지정이 없으면 반드시 '자연스러운 외모의 한국인 20대 여성(Korean woman in her 20s)'으로 묘사하라. 컷에 나이/성별/국적이 명시돼 있으면 그것을 따른다.
+  반드시 SFW(안전): 단정하게 옷을 갖춰 입은 상태. 노출·속옷·수영복·선정적 포즈·신체 부각/몸매 강조 표현 금지. 얼굴/손 외 피부 노출 묘사 금지. 제품·표정·동작 중심으로 묘사하라.
+  End with: "Photorealistic candid photo, natural lighting, realistic skin texture, authentic UGC style, not an over-polished stock photo. Professional, modest, fully-clothed, safe-for-work. No text, no logo, no watermark."
 
 ## 전체 필드
 - title: 이 촬영 가이드의 짧은 제목 (브랜드/내용 반영, 예: "${clientName} 신제품 UGC 촬영 가이드")
