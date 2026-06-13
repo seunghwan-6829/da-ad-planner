@@ -27,6 +27,14 @@ yarn-error.log*
 # local env files
 .env*.local
 
+# api keys / secrets (never commit)
+api key.txt
+*api*key*.txt
+
+# local editor/agent config & standalone prototype (not part of deploy)
+/.claude/
+/shot-list-mvp/
+
 # vercel
 .vercel
 

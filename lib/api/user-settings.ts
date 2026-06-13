@@ -4,6 +4,7 @@ export interface UserSettings {
   id: string
   user_id: string
   anthropic_api_key: string | null
+  openai_api_key: string | null
   theme: 'light' | 'dark'
   created_at: string
   updated_at: string

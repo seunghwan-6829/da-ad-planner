@@ -19,6 +19,11 @@ export default function MyPage() {
   const [saved, setSaved] = useState(false)
   const [loading, setLoading] = useState(true)
 
+  const [openaiKey, setOpenaiKey] = useState('')
+  const [showOpenaiKey, setShowOpenaiKey] = useState(false)
+  const [savingOpenai, setSavingOpenai] = useState(false)
+  const [savedOpenai, setSavedOpenai] = useState(false)
+
   useEffect(() => {
     if (user) loadSettings()
   }, [user])
@@ -29,6 +34,7 @@ export default function MyPage() {
       const settings = await getUserSettings(user.id)
       if (settings) {
         setApiKey(settings.anthropic_api_key || '')
+        setOpenaiKey(settings.openai_api_key || '')
         if (settings.theme) {
           setTheme(settings.theme)
         }
@@ -52,6 +58,21 @@ export default function MyPage() {
       alert('저장에 실패했습니다.')
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function handleSaveOpenaiKey() {
+    if (!user) return
+    setSavingOpenai(true)
+    try {
+      await upsertUserSettings(user.id, { openai_api_key: openaiKey || null })
+      setSavedOpenai(true)
+      setTimeout(() => setSavedOpenai(false), 2000)
+    } catch (error) {
+      console.error('OpenAI API 키 저장 실패:', error)
+      alert('저장에 실패했습니다.')
+    } finally {
+      setSavingOpenai(false)
     }
   }
 
@@ -158,6 +179,46 @@ export default function MyPage() {
             </div>
             <p className="mt-2 text-xs text-gray-500 dark:text-gray-500">
               API 키가 없으면 AI 기능을 사용할 수 없습니다. <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" className="text-primary underline">Anthropic Console</a>에서 발급받을 수 있습니다.
+            </p>
+          </div>
+
+          <div className="pt-2 border-t dark:border-gray-800">
+            <label className="text-sm font-medium dark:text-gray-300">OpenAI API Key</label>
+            <div className="mt-1 flex gap-2">
+              <div className="relative flex-1">
+                <Input
+                  type={showOpenaiKey ? 'text' : 'password'}
+                  value={openaiKey}
+                  onChange={(e) => setOpenaiKey(e.target.value)}
+                  placeholder="sk-proj-..."
+                  className="pr-10 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowOpenaiKey(!showOpenaiKey)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                  {showOpenaiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+              <Button onClick={handleSaveOpenaiKey} disabled={savingOpenai} className="min-w-[80px]">
+                {savingOpenai ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : savedOpenai ? (
+                  <>
+                    <Check className="h-4 w-4 mr-1" />
+                    완료
+                  </>
+                ) : (
+                  <>
+                    <Save className="h-4 w-4 mr-1" />
+                    저장
+                  </>
+                )}
+              </Button>
+            </div>
+            <p className="mt-2 text-xs text-gray-500 dark:text-gray-500">
+              촬영 가이드의 레퍼런스 컷 이미지 생성에 사용됩니다. <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-primary underline">OpenAI Platform</a>에서 발급받을 수 있습니다.
             </p>
           </div>
         </CardContent>
