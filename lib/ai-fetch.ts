@@ -16,9 +16,11 @@ export async function getAiKeysForUser(): Promise<UserAiKeys> {
     return cachedKeys
   }
 
+  // select('*') 로 조회해야 openai_api_key 컬럼이 아직 없는(마이그레이션 전) 환경에서도
+  // 에러 없이 기존 anthropic 키가 정상 동작한다.
   const { data } = await supabase
     .from('user_settings')
-    .select('anthropic_api_key, openai_api_key')
+    .select('*')
     .eq('user_id', user.id)
     .single()
 
