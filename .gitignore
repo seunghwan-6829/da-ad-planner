@@ -35,6 +35,10 @@ api key.txt
 /.claude/
 /shot-list-mvp/
 
+# python crawler cache
+__pycache__/
+*.pyc
+
 # vercel
 .vercel
 

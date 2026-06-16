@@ -1,0 +1,161 @@
+/* 메타 광고 크롤러 대시보드 전용 스타일.
+   모든 규칙을 .mac 로 스코프해 앱 전역 스타일(body/input/button 등)을 오염시키지 않는다. */
+
+.mac {
+  background: #0f1115;
+  color: #e8eaed;
+  min-height: calc(100vh - 4rem);
+  border-radius: 12px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+}
+.mac * {
+  box-sizing: border-box;
+}
+.mac a {
+  color: #6ea8fe;
+}
+
+.mac .container {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px;
+}
+.mac h1 {
+  font-size: 22px;
+  margin: 0 0 4px;
+}
+.mac .muted {
+  color: #9aa0a6;
+  font-size: 13px;
+}
+.mac .card {
+  background: #1a1d23;
+  border: 1px solid #2a2e36;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.mac .row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.mac input,
+.mac select,
+.mac button {
+  background: #0f1115;
+  color: #e8eaed;
+  border: 1px solid #2a2e36;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 14px;
+}
+.mac button {
+  cursor: pointer;
+  background: #2563eb;
+  border-color: #2563eb;
+}
+.mac button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.mac button.secondary {
+  background: transparent;
+  border-color: #2a2e36;
+}
+.mac button.danger {
+  background: transparent;
+  border-color: #5b2a2a;
+  color: #ff8a8a;
+}
+
+/* 카테고리 그룹 */
+.mac .cat-title {
+  font-size: 13px;
+  color: #9aa0a6;
+  margin: 14px 0 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.mac .brand-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid #2a2e36;
+  border-radius: 8px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+.mac .brand-row.active {
+  border-color: #2563eb;
+  background: #16223f;
+}
+.mac .brand-name {
+  cursor: pointer;
+  flex: 1 1 auto;
+  min-width: 120px;
+}
+.mac .count-badge {
+  font-size: 11px;
+  background: #222732;
+  border: 1px solid #2a2e36;
+  border-radius: 999px;
+  padding: 1px 8px;
+  color: #b8c0cc;
+}
+
+/* 광고 그리드 */
+.mac .ads-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+}
+.mac .ad {
+  background: #1a1d23;
+  border: 1px solid #2a2e36;
+  border-radius: 10px;
+  overflow: hidden;
+  position: relative;
+}
+.mac .ad img,
+.mac .ad video {
+  width: 100%;
+  height: 180px;
+  object-fit: cover;
+  background: #000;
+}
+.mac .ad .body {
+  padding: 10px;
+  font-size: 12px;
+}
+.mac .ad .meta {
+  color: #9aa0a6;
+  margin-bottom: 6px;
+}
+.mac .ad .text {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.mac .badge {
+  position: absolute;
+  top: 8px;
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+.mac .badge.new {
+  left: 8px;
+  background: #16a34a;
+  color: #fff;
+}
+.mac .badge.kind {
+  right: 8px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+}

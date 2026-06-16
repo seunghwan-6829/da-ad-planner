@@ -13,6 +13,7 @@ import {
   LayoutDashboard,
   Lightbulb,
   LogOut,
+  Megaphone,
   Settings,
   Shield,
   User,
@@ -28,6 +29,7 @@ const navigationTop = [
   { name: '영상 보드', href: '/video-board', icon: Video },
   { name: '이미지 보드', href: '/image-board', icon: Images },
   { name: '인스타 성과', href: '/instagram', icon: BarChart3 },
+  { name: '메타 광고 크롤러', href: '/meta-ad-crawler', icon: Megaphone },
 ]
 
 const navigationBottom = [

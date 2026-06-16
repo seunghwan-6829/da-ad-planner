@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "updated_at": "2026-06-16",
+  "note": "메타 DOM은 클래스명이 난독화돼 자주 바뀝니다. 깨지면 heal 로 갱신됩니다. card_selector 는 라이브 페이지에 맞춰 최초 1회 튜닝 필요.",
+
+  "card_selector": "div[role='article'], div.x1plvlek, div.xh8yej3 > div",
+
+  "fields": {
+    "library_id": {
+      "regex": "Library ID:?\\s*([0-9]{6,})",
+      "korean_regex": "라이브러리 ID:?\\s*([0-9]{6,})"
+    },
+    "started_on": {
+      "regex": "Started running on (.+?)(?:\\s*[·•\\n]|$)",
+      "korean_regex": "게재 시작일:?\\s*(.+?)(?:\\s*[·•\\n]|$)"
+    }
+  },
+
+  "media": {
+    "image_selector": "img[src*='scontent']",
+    "video_selector": "video[src]"
+  }
+}

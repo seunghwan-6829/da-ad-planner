@@ -1,0 +1,36 @@
+name: Crawl Meta Ad Library
+
+on:
+  schedule:
+    # 매일 UTC 18:00 = 한국시간(KST) 새벽 03:00
+    - cron: "0 18 * * *"
+  workflow_dispatch: {} # 깃허브에서 수동 실행 버튼
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # 파이썬 크롤러(src/, config/, requirements.txt)는 meta-ad-monitor/ 에 그대로 둔다.
+    defaults:
+      run:
+        working-directory: meta-ad-monitor
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: meta-ad-monitor/requirements.txt
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run crawler
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python -m src.run_cloud

@@ -1,0 +1,8 @@
+.venv/
+.env
+__pycache__/
+*.pyc
+data/
+snapshots/
+media/
+config/selectors.backup.*.json
