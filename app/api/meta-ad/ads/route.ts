@@ -11,17 +11,18 @@ export async function GET(req: Request) {
 
   // 무겁게 누적되는 ai_analysis(JSON)·frames(배열)는 목록에서 제외 → 카드 클릭 시 따로 받는다.
   // (ad_text/memo 는 CSV 내보내기에 필요해 유지)
-  let q = supabaseAdmin
-    .from('am_ads')
-    .select(
-      'library_id, target_id, page_name, started_on, ad_text, media_type, media_url, media_urls, poster_url, landing_url, memo, saved, status, ended_at, first_seen_at, last_seen_at'
-    )
-    .order('first_seen_at', { ascending: false })
-    .limit(limit)
+  // saved 컬럼은 마이그레이션 후 존재. 아직 없으면 빼고 재조회.
+  const baseCols =
+    'library_id, target_id, page_name, started_on, ad_text, media_type, media_url, media_urls, poster_url, landing_url, memo, status, ended_at, first_seen_at, last_seen_at'
 
-  if (targetId) q = q.eq('target_id', targetId)
+  const run = (cols: string) => {
+    let q = supabaseAdmin.from('am_ads').select(cols).order('first_seen_at', { ascending: false }).limit(limit)
+    if (targetId) q = q.eq('target_id', targetId)
+    return q
+  }
 
-  const { data, error } = await q
+  let { data, error } = await run(`${baseCols}, saved`)
+  if (error) ({ data, error } = await run(baseCols))
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json(data)
 }

@@ -38,7 +38,7 @@ export async function PATCH(
     .from('am_ads')
     .update(patch)
     .eq('library_id', libraryId)
-    .select('library_id, memo, ai_analysis, saved')
+    .select('library_id, memo, ai_analysis')
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
