@@ -164,6 +164,7 @@ function MediaView({ ad, rounded }: { ad: Ad; rounded?: string }) {
         poster={ad.poster_url || undefined}
         controls
         playsInline
+        preload="none"
         onClick={(e) => e.stopPropagation()}
         className={`h-full w-full bg-black object-cover ${r}`}
       />
@@ -179,7 +180,7 @@ function MediaView({ ad, rounded }: { ad: Ad; rounded?: string }) {
   return (
     <div className={`relative h-full w-full overflow-hidden bg-gray-100 dark:bg-gray-800 ${r}`}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={urls[idx]} alt="" className="h-full w-full object-cover" />
+      <img src={urls[idx]} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
       {urls.length > 1 && (
         <>
           <button
