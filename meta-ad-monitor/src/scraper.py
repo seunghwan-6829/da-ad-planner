@@ -75,12 +75,22 @@ _EXTRACT_JS = r"""
     }
     const uniqueImgs = Array.from(new Set(imgs));
 
-    // 랜딩 페이지: 카드 내 외부(페이스북 외) 첫 링크
+    // 랜딩 페이지: 카드 내 링크에서 목적지 추출.
+    //  · l.facebook.com/l.php?u=<encoded> (메타 링크 시밍) → u 파라미터를 디코드해 실제 목적지
+    //  · 그 외엔 페이스북 외부 직접 링크
     let landing = null;
     if (container.querySelectorAll) {
       for (const an of container.querySelectorAll('a[href]')) {
         const href = an.getAttribute('href') || '';
-        if (/^https?:\/\//.test(href) && !/facebook\.com/.test(href)) { landing = href; break; }
+        if (!/^https?:\/\//.test(href)) continue;
+        const um = href.match(/[?&]u=([^&]+)/);
+        if (/facebook\.com\/l\.php/.test(href) && um) {
+          try { landing = decodeURIComponent(um[1]); } catch (e) { landing = um[1]; }
+          // 중첩 인코딩 대비 한 번 더
+          if (landing && /%3A%2F%2F/i.test(landing)) { try { landing = decodeURIComponent(landing); } catch (e) {} }
+          break;
+        }
+        if (!/facebook\.com/.test(href)) { landing = href; break; }
       }
     }
 
