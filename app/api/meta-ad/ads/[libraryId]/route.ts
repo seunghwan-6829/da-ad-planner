@@ -28,6 +28,7 @@ export async function PATCH(
   const patch: Record<string, unknown> = {}
   if (typeof body.memo === 'string') patch.memo = body.memo
   if (typeof body.ai_analysis === 'string') patch.ai_analysis = body.ai_analysis
+  if (typeof body.saved === 'boolean') patch.saved = body.saved
 
   if (Object.keys(patch).length === 0) {
     return NextResponse.json({ error: '갱신할 필드가 없습니다.' }, { status: 400 })
@@ -37,7 +38,7 @@ export async function PATCH(
     .from('am_ads')
     .update(patch)
     .eq('library_id', libraryId)
-    .select('library_id, memo, ai_analysis')
+    .select('library_id, memo, ai_analysis, saved')
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })

@@ -97,9 +97,31 @@ export default function ShootingGuidePage() {
   const [copied, setCopied] = useState<string | null>(null)
   const [editingGuide, setEditingGuide] = useState<ShootingGuide | null>(null)
 
+  // 메타 광고 크롤러에서 넘어온 시드(경쟁 소재 → 컷 칩)
+  const [pendingSeedCuts, setPendingSeedCuts] = useState<string[] | null>(null)
+
   useEffect(() => {
     loadClients()
   }, [user, isAdmin])
+
+  useEffect(() => {
+    try {
+      const s = sessionStorage.getItem('shooting-guide-seed')
+      if (s) {
+        const arr = JSON.parse(s)
+        if (Array.isArray(arr) && arr.length) setPendingSeedCuts(arr.filter((x) => typeof x === 'string'))
+        sessionStorage.removeItem('shooting-guide-seed')
+      }
+    } catch {}
+  }, [])
+
+  // 시드가 있고 브랜드가 선택되면 컷 칩으로 자동 채움
+  useEffect(() => {
+    if (pendingSeedCuts && selectedClient) {
+      setCuts(pendingSeedCuts.map((t) => ({ text: t })))
+      setPendingSeedCuts(null)
+    }
+  }, [pendingSeedCuts, selectedClient])
 
   async function loadClients() {
     if (!user) return
@@ -385,6 +407,11 @@ export default function ShootingGuidePage() {
                   <br />
                   모델이 받는 촬영 가이드 페이지로 발행합니다
                 </p>
+                {pendingSeedCuts && (
+                  <div className="mt-4 inline-flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2 text-xs font-medium text-primary">
+                    <Camera className="h-3.5 w-3.5" /> 경쟁사 광고 시드({pendingSeedCuts.length}컷)가 준비됨 — 브랜드를 선택하면 자동 입력됩니다
+                  </div>
+                )}
               </div>
             </div>
           ) : (

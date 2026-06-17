@@ -1,9 +1,11 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import {
   BarChart3,
+  Bell,
   Camera,
   ChevronRight,
   Clapperboard,
@@ -18,6 +20,7 @@ import {
   Shield,
   User,
   Video,
+  X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/lib/auth-context'
@@ -40,10 +43,43 @@ const navigationBottom = [
   { name: '촬영 가이드', href: '/shooting-guide', icon: Camera },
 ]
 
+type MetaChange = { newCount: number; endedCount: number; latest: string | null }
+
 export function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
   const { user, profile, isAdmin, signOut } = useAuth()
+
+  // #6 메타 광고 5일 알림: 신규/종료 변화가 있으면 하단 배지. 닫으면 그 시그니처는 다시 안 뜸(새 변화 시 재등장).
+  const [change, setChange] = useState<MetaChange | null>(null)
+  const [dismissed, setDismissed] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!user) return
+    try {
+      setDismissed(localStorage.getItem('ma-alert-seen'))
+    } catch {}
+    fetch('/api/meta-ad/changes')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => j && setChange(j))
+      .catch(() => {})
+  }, [user])
+
+  const showAlert =
+    !!change &&
+    change.newCount + change.endedCount > 0 &&
+    change.latest != null &&
+    dismissed !== change.latest &&
+    !pathname.startsWith('/meta-ad-crawler')
+
+  function dismissAlert() {
+    if (change?.latest) {
+      try {
+        localStorage.setItem('ma-alert-seen', change.latest)
+      } catch {}
+      setDismissed(change.latest)
+    }
+  }
 
   function handleSignOut() {
     signOut()
@@ -113,6 +149,34 @@ export function Sidebar() {
           </Link>
         )}
       </nav>
+
+      {showAlert && change && (
+        <div className="px-4 pt-3">
+          <div className="relative rounded-xl border border-primary/30 bg-primary/5 dark:bg-primary/10 p-3">
+            <button
+              onClick={dismissAlert}
+              className="absolute right-1.5 top-1.5 rounded p-0.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+              aria-label="알림 닫기"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+            <Link href="/meta-ad-crawler" className="block pr-4">
+              <div className="mb-1 flex items-center gap-1.5 text-xs font-bold text-primary">
+                <Bell className="h-3.5 w-3.5" /> 경쟁사 광고 변화
+              </div>
+              <p className="text-xs text-gray-600 dark:text-gray-300">
+                최근 5일
+                {change.newCount > 0 && (
+                  <> · 신규 <b className="text-green-600">{change.newCount}</b></>
+                )}
+                {change.endedCount > 0 && (
+                  <> · 종료 <b className="text-gray-500">{change.endedCount}</b></>
+                )}
+              </p>
+            </Link>
+          </div>
+        </div>
+      )}
 
       <div className="space-y-3 border-t dark:border-gray-800 p-4">
         {user && profile ? (

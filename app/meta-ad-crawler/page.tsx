@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { useRouter } from "next/navigation";
 import {
   Megaphone,
   Settings,
@@ -18,6 +19,13 @@ import {
   ExternalLink,
   Save,
   Check,
+  Star,
+  Activity,
+  TrendingUp,
+  Layers,
+  Lightbulb,
+  Camera,
+  ArrowUpRight,
 } from "lucide-react";
 
 type Target = {
@@ -49,6 +57,7 @@ type Ad = {
   status?: string | null;
   ended_at?: string | null;
   memo?: string | null;
+  saved?: boolean | null;
   ai_analysis?: string | null;
   first_seen_at: string;
   last_seen_at?: string | null;
@@ -96,6 +105,11 @@ function mediaListOf(ad: Ad): string[] {
   if (Array.isArray(ad.media_urls) && ad.media_urls.length) return ad.media_urls.filter(Boolean) as string[];
   if (ad.media_url) return [ad.media_url];
   return [];
+}
+
+// 클릭 가능한 작은 썸네일용 정적 이미지 URL(영상은 poster). 비디오/캐러셀 컨트롤이 클릭을 가로채지 않게.
+function posterThumb(ad: Ad): string | null {
+  return ad.poster_url || (Array.isArray(ad.media_urls) && ad.media_urls[0]) || ad.media_url || null;
 }
 
 function activeDays(ad: Ad): number {
@@ -211,6 +225,7 @@ function MediaView({ ad, rounded }: { ad: Ad; rounded?: string }) {
 }
 
 export default function MetaAdCrawlerPage() {
+  const router = useRouter();
   const [targets, setTargets] = useState<Target[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [ads, setAds] = useState<Ad[]>([]);
@@ -221,6 +236,8 @@ export default function MetaAdCrawlerPage() {
   const [selectedBrand, setSelectedBrand] = useState<string>("all");
   const [mediaFilter, setMediaFilter] = useState<"all" | "image" | "carousel" | "video">("all");
   const [sortBy, setSortBy] = useState<"recent" | "longevity">("recent");
+  const [savedOnly, setSavedOnly] = useState(false);
+  const [showFeed, setShowFeed] = useState(false);
   const [page, setPage] = useState(1);
   const [detail, setDetail] = useState<Ad | null>(null);
 
@@ -336,6 +353,7 @@ export default function MetaAdCrawlerPage() {
   const filteredAds = useMemo(() => {
     const q = search.trim().toLowerCase();
     const list = ads.filter((ad) => {
+      if (savedOnly && !ad.saved) return false;
       const cat = ad.target_id ? (targetMap[ad.target_id]?.category || "").trim() || "미분류" : "미분류";
       if (activeCategory !== "all" && cat !== activeCategory) return false;
       if (selectedBrand !== "all" && ad.target_id !== selectedBrand) return false;
@@ -352,7 +370,99 @@ export default function MetaAdCrawlerPage() {
     // recent: API가 first_seen_at desc 로 주므로 그대로 유지(최신순)
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ads, search, activeCategory, selectedBrand, mediaFilter, sortBy, targetMap]);
+  }, [ads, search, activeCategory, selectedBrand, mediaFilter, sortBy, savedOnly, targetMap]);
+
+  const savedCount = useMemo(() => ads.filter((a) => a.saved).length, [ads]);
+
+  // #3 카테고리 벤치마크: 대분류별 활성일수 분포를 한 번 계산해두고, 소재별 위치(상위 %)를 구한다.
+  const categoryDays = useMemo(() => {
+    const m: Record<string, number[]> = {};
+    for (const ad of ads) {
+      const cat = ad.target_id ? (targetMap[ad.target_id]?.category || "").trim() || "미분류" : "미분류";
+      (m[cat] ||= []).push(activeDays(ad));
+    }
+    for (const k in m) m[k].sort((a, b) => a - b);
+    return m;
+  }, [ads, targetMap]);
+
+  function benchmarkOf(ad: Ad): { category: string; avg: number; topPct: number; n: number } | null {
+    const cat = ad.target_id ? (targetMap[ad.target_id]?.category || "").trim() || "미분류" : "미분류";
+    const arr = categoryDays[cat];
+    if (!arr || arr.length < 3) return null; // 표본이 너무 적으면 의미 없음
+    const d = activeDays(ad);
+    const avg = arr.reduce((s, v) => s + v, 0) / arr.length;
+    const below = arr.filter((v) => v < d).length; // 이 소재보다 짧게 산 소재 수
+    const topPct = Math.max(1, Math.round((1 - below / arr.length) * 100)); // 상위 %
+    return { category: cat, avg: Math.round(avg), topPct, n: arr.length };
+  }
+
+  // #4 변주 그룹핑(추정): 같은 브랜드 + (같은 랜딩 URL 또는 카피 토큰 유사도 높음)
+  function tokensOf(s: string | null | undefined): Set<string> {
+    return new Set(
+      (s || "")
+        .toLowerCase()
+        .replace(/[^0-9a-z가-힣\s]/g, " ")
+        .split(/\s+/)
+        .filter((w) => w.length >= 2)
+    );
+  }
+  function variationsOf(ad: Ad): Ad[] {
+    if (!ad.target_id) return [];
+    const myTokens = tokensOf(ad.ad_text);
+    const sims = ads.filter((o) => {
+      if (o.library_id === ad.library_id) return false;
+      if (o.target_id !== ad.target_id) return false;
+      if (ad.landing_url && o.landing_url && ad.landing_url === o.landing_url) return true;
+      if (myTokens.size < 3) return false;
+      const ot = tokensOf(o.ad_text);
+      if (ot.size < 3) return false;
+      let inter = 0;
+      for (const t of myTokens) if (ot.has(t)) inter++;
+      const jac = inter / (myTokens.size + ot.size - inter);
+      return jac >= 0.35;
+    });
+    return sims.slice(0, 8);
+  }
+
+  // #9 시드: 경쟁 소재 → 기획안 아이디어 / 촬영 가이드 입력값으로 넘김
+  function seedTo(ad: Ad, dest: "plan" | "guide") {
+    const brand = brandNameOfAd(ad);
+    const caption = cleanCaption(ad.ad_text, brand).replace(/\n+/g, " ").slice(0, 240);
+    const parsed = parseAnalysis(ad.ai_analysis ?? null);
+    const offer = parsed?.offer || "";
+    const strengths = parsed?.strengths || [];
+    const phases = parsed?.phases || [];
+
+    if (dest === "plan") {
+      const lines = [
+        `경쟁사 "${brand}" 광고를 참고해, 우리 브랜드에 맞는 새 숏폼/릴스 대본 아이디어를 만들어줘.`,
+        ``,
+        `[참고 광고 핵심]`,
+        offer ? `- 소구점/오퍼: ${offer}` : "",
+        caption && caption !== "—" ? `- 카피: ${caption}` : "",
+        ...strengths.slice(0, 4).map((s) => `- 잘된 점: ${s}`),
+        ``,
+        `위 장점은 살리되 그대로 베끼지 말고 우리만의 차별화 포인트로 변주해줘.`,
+      ].filter(Boolean);
+      try {
+        sessionStorage.setItem("plan-idea-seed", lines.join("\n"));
+      } catch {}
+      router.push("/plan-ideas");
+      return;
+    }
+
+    // guide: 컷 칩 시드 (구간이 있으면 구간별 컷, 없으면 카피 기반 1컷)
+    const cuts =
+      phases.length > 0
+        ? phases.map((p) => `${p.name}${p.desc ? ` — ${p.desc}` : ""}`)
+        : caption && caption !== "—"
+        ? [`${brand} 레퍼런스 컷: ${caption.slice(0, 80)}`]
+        : [`${brand} 스타일 레퍼런스 컷`];
+    try {
+      sessionStorage.setItem("shooting-guide-seed", JSON.stringify(cuts));
+    } catch {}
+    router.push("/shooting-guide");
+  }
 
   const pageCount = Math.max(1, Math.ceil(filteredAds.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount);
@@ -482,6 +592,25 @@ export default function MetaAdCrawlerPage() {
     setDetail((d) => (d && d.library_id === libraryId ? { ...d, ai_analysis } : d));
   }
 
+  // #7 스와이프 파일: 즐겨찾기 토글(낙관적 갱신 후 PATCH)
+  async function toggleSaved(ad: Ad) {
+    const next = !ad.saved;
+    setAds((prev) => prev.map((a) => (a.library_id === ad.library_id ? { ...a, saved: next } : a)));
+    setDetail((d) => (d && d.library_id === ad.library_id ? { ...d, saved: next } : d));
+    try {
+      const res = await fetch(`/api/meta-ad/ads/${ad.library_id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ saved: next }),
+      });
+      if (!res.ok) throw new Error();
+    } catch {
+      // 실패 시 롤백
+      setAds((prev) => prev.map((a) => (a.library_id === ad.library_id ? { ...a, saved: !next } : a)));
+      setDetail((d) => (d && d.library_id === ad.library_id ? { ...d, saved: !next } : d));
+    }
+  }
+
   // 카드 클릭: 모달을 즉시 열고(목록 데이터), 무거운 상세(본문/메모/AI분석/랜딩)는 그 광고만 따로 받아 채움
   async function openDetail(ad: Ad) {
     setDetail(ad);
@@ -607,6 +736,29 @@ export default function MetaAdCrawlerPage() {
               </button>
             ))}
           </div>
+          {/* #5 변화 피드 */}
+          <button
+            onClick={() => setShowFeed(true)}
+            className="flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-1.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800"
+          >
+            <Activity className="h-4 w-4" />
+            변화 피드
+          </button>
+          {/* #7 스와이프 파일 */}
+          <button
+            onClick={() => {
+              setSavedOnly((v) => !v);
+              resetToFirst();
+            }}
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium ${
+              savedOnly
+                ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+                : "border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800"
+            }`}
+          >
+            <Star className={`h-4 w-4 ${savedOnly ? "fill-amber-400 text-amber-400" : ""}`} />
+            스와이프 {savedCount > 0 && `(${savedCount})`}
+          </button>
           <button
             onClick={exportCsv}
             disabled={filteredAds.length === 0}
@@ -677,6 +829,16 @@ export default function MetaAdCrawlerPage() {
                     ) : days >= 7 ? (
                       <span className="absolute right-1.5 top-1.5 z-10 rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-bold text-white">🔥 {days}일</span>
                     ) : null}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleSaved(ad);
+                      }}
+                      title={ad.saved ? "스와이프 파일에서 제거" : "스와이프 파일에 저장"}
+                      className="absolute bottom-1.5 right-1.5 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-black/45 text-white hover:bg-black/65"
+                    >
+                      <Star className={`h-3.5 w-3.5 ${ad.saved ? "fill-amber-400 text-amber-400" : "text-white"}`} />
+                    </button>
                   </div>
                 </div>
               );
@@ -712,9 +874,28 @@ export default function MetaAdCrawlerPage() {
           brandName={brandNameOfAd(detail)}
           brandImage={brandImageOfAd(detail)}
           country={detail.target_id ? targetMap[detail.target_id]?.country ?? null : null}
+          benchmark={benchmarkOf(detail)}
+          variations={variationsOf(detail)}
+          brandNameOf={brandNameOfAd}
           onClose={() => setDetail(null)}
           onMemoSaved={onMemoSaved}
           onAnalyzed={onAdAnalyzed}
+          onToggleSaved={toggleSaved}
+          onOpenVariation={openDetail}
+          onSeed={seedTo}
+        />
+      )}
+
+      {/* #5 변화 피드 모달 */}
+      {showFeed && (
+        <ChangeFeedModal
+          ads={ads}
+          brandNameOf={brandNameOfAd}
+          onClose={() => setShowFeed(false)}
+          onOpen={(ad) => {
+            setShowFeed(false);
+            openDetail(ad);
+          }}
         />
       )}
 
@@ -1042,22 +1223,124 @@ function AnalysisViz({ data }: { data: AnalysisData }) {
   );
 }
 
+/* ── #5 변화 피드: 최근 신규 / 종료 소재 타임라인 ── */
+function ChangeFeedModal({
+  ads,
+  brandNameOf,
+  onClose,
+  onOpen,
+}: {
+  ads: Ad[];
+  brandNameOf: (ad: Ad) => string;
+  onClose: () => void;
+  onOpen: (ad: Ad) => void;
+}) {
+  const WINDOW_MS = 14 * 24 * 3600 * 1000;
+  const now = Date.now();
+  const fresh = [...ads]
+    .filter((a) => a.first_seen_at && now - new Date(a.first_seen_at).getTime() < WINDOW_MS)
+    .sort((a, b) => new Date(b.first_seen_at).getTime() - new Date(a.first_seen_at).getTime())
+    .slice(0, 60);
+  const ended = ads
+    .filter((a) => a.status === "ended" && a.ended_at)
+    .sort((a, b) => new Date(b.ended_at!).getTime() - new Date(a.ended_at!).getTime())
+    .slice(0, 60);
+
+  const typeLabel = (ad: Ad) =>
+    ad.media_type === "video" ? "영상" : ad.media_type === "carousel" || (ad.media_urls && ad.media_urls.length > 1) ? "슬라이드" : "이미지";
+
+  const Row = ({ ad, when }: { ad: Ad; when: string | null | undefined }) => (
+    <button
+      onClick={() => onOpen(ad)}
+      className="flex w-full items-center gap-2.5 rounded-lg border border-gray-100 dark:border-gray-800 p-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800"
+    >
+      <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-md bg-gray-100 dark:bg-gray-800">
+        {posterThumb(ad) ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={posterThumb(ad)!} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
+        ) : (
+          <Megaphone className="h-4 w-4 text-gray-300 dark:text-gray-600" />
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-xs font-bold dark:text-gray-100">{brandNameOf(ad)}</div>
+        <div className="truncate text-[11px] text-gray-400">
+          {typeLabel(ad)} · {fmtDate(when)}
+        </div>
+      </div>
+    </button>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4" onClick={onClose}>
+      <div className="my-8 w-full max-w-3xl rounded-2xl bg-white dark:bg-gray-900 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b dark:border-gray-800 px-5 py-3.5">
+          <h2 className="flex items-center gap-2 text-base font-bold dark:text-white">
+            <Activity className="h-4 w-4 text-primary" /> 변화 피드 <span className="text-xs font-normal text-gray-400">최근 14일</span>
+          </h2>
+          <button onClick={onClose} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="grid max-h-[75vh] gap-4 overflow-y-auto p-5 sm:grid-cols-2">
+          <div>
+            <div className="mb-2 flex items-center gap-1.5 text-sm font-bold text-green-600">
+              <span className="h-2 w-2 rounded-full bg-green-500" /> 신규 등장 ({fresh.length})
+            </div>
+            <div className="space-y-1.5">
+              {fresh.length === 0 ? (
+                <p className="text-sm text-gray-400">최근 신규 소재가 없습니다.</p>
+              ) : (
+                fresh.map((ad) => <Row key={ad.library_id} ad={ad} when={ad.first_seen_at} />)
+              )}
+            </div>
+          </div>
+          <div>
+            <div className="mb-2 flex items-center gap-1.5 text-sm font-bold text-gray-500">
+              <span className="h-2 w-2 rounded-full bg-gray-400" /> 내려간 소재 ({ended.length})
+            </div>
+            <div className="space-y-1.5">
+              {ended.length === 0 ? (
+                <p className="text-sm text-gray-400">최근 종료된 소재가 없습니다.</p>
+              ) : (
+                ended.map((ad) => <Row key={ad.library_id} ad={ad} when={ad.ended_at} />)
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AdDetailModal({
   ad,
   brandName,
   brandImage,
   country,
+  benchmark,
+  variations,
+  brandNameOf,
   onClose,
   onMemoSaved,
   onAnalyzed,
+  onToggleSaved,
+  onOpenVariation,
+  onSeed,
 }: {
   ad: Ad;
   brandName: string;
   brandImage: string | null;
   country: string | null;
+  benchmark: { category: string; avg: number; topPct: number; n: number } | null;
+  variations: Ad[];
+  brandNameOf: (ad: Ad) => string;
   onClose: () => void;
   onMemoSaved: (libraryId: string, memo: string) => void;
   onAnalyzed: (libraryId: string, analysis: string) => void;
+  onToggleSaved: (ad: Ad) => void;
+  onOpenVariation: (ad: Ad) => void;
+  onSeed: (ad: Ad, dest: "plan" | "guide") => void;
 }) {
   const [memo, setMemo] = useState(ad.memo ?? "");
   const [saving, setSaving] = useState(false);
@@ -1173,6 +1456,18 @@ function AdDetailModal({
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => onToggleSaved(ad)}
+              title={ad.saved ? "스와이프 파일에서 제거" : "스와이프 파일에 저장"}
+              className={`flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium ${
+                ad.saved
+                  ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+                  : "border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
+              }`}
+            >
+              <Star className={`h-3.5 w-3.5 ${ad.saved ? "fill-amber-400 text-amber-400" : ""}`} />
+              {ad.saved ? "저장됨" : "스와이프"}
+            </button>
             <a href={sourceLink(ad)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 rounded-lg border border-gray-200 dark:border-gray-700 px-2.5 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800">
               <ExternalLink className="h-3.5 w-3.5" /> 광고 라이브러리
             </a>
@@ -1208,6 +1503,24 @@ function AdDetailModal({
                 <Meta k="Library ID" v={ad.library_id} />
               </dl>
             </div>
+
+            {/* #3 카테고리 벤치마크 */}
+            {benchmark && (
+              <div className="rounded-xl border border-sky-200 dark:border-sky-900/50 bg-sky-50 dark:bg-sky-950/20 p-3">
+                <div className="mb-1.5 flex items-center gap-1 text-xs font-bold text-sky-700 dark:text-sky-300">
+                  <TrendingUp className="h-3.5 w-3.5" /> 카테고리 벤치마크
+                </div>
+                <p className="text-sm text-gray-700 dark:text-gray-200">
+                  <b>{benchmark.category}</b> 내 상위{" "}
+                  <b className={benchmark.topPct <= 30 ? "text-rose-500" : "text-sky-600 dark:text-sky-300"}>{benchmark.topPct}%</b>{" "}
+                  롱런 소재 ({benchmark.n}개 중)
+                </p>
+                <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  이 소재 {days}일 · 카테고리 평균 {benchmark.avg}일
+                  {days >= benchmark.avg ? " · 평균 이상으로 오래 살아남는 중" : ""}
+                </p>
+              </div>
+            )}
 
             {/* 링크 */}
             <div className="space-y-1.5 text-sm">
@@ -1297,6 +1610,59 @@ function AdDetailModal({
                   )}
                 </button>
               )}
+            </div>
+
+            {/* #4 변주 추정 (같은 브랜드 · 유사 카피/같은 랜딩) */}
+            {variations.length > 0 && (
+              <div>
+                <div className="mb-1.5 flex items-center gap-1 text-xs font-bold uppercase tracking-wide text-gray-400">
+                  <Layers className="h-3.5 w-3.5" /> 변주 추정 ({variations.length})
+                </div>
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {variations.map((v) => (
+                    <button
+                      key={v.library_id}
+                      onClick={() => onOpenVariation(v)}
+                      title={cleanCaption(v.ad_text, brandNameOf(v)).slice(0, 80)}
+                      className="group relative flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800"
+                    >
+                      {posterThumb(v) ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={posterThumb(v)!} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
+                      ) : (
+                        <Megaphone className="h-5 w-5 text-gray-300 dark:text-gray-600" />
+                      )}
+                      {v.media_type === "video" && (
+                        <span className="absolute left-1 top-1 rounded bg-black/55 px-1 text-[8px] font-bold text-white">▶</span>
+                      )}
+                      {v.status === "ended" && (
+                        <span className="absolute bottom-0 left-0 right-0 bg-gray-900/70 py-0.5 text-center text-[9px] font-bold text-white">종료</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-1 text-[11px] text-gray-400">같은 브랜드에서 비슷한 카피·랜딩으로 돌리는 변주로 추정됩니다.</p>
+              </div>
+            )}
+
+            {/* #9 이 소재로 제작 시드 */}
+            <div className="rounded-xl border border-gray-200 dark:border-gray-800 p-3">
+              <div className="mb-2 text-xs font-bold uppercase tracking-wide text-gray-400">이 소재로 만들기</div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => onSeed(ad, "plan")}
+                  className="flex items-center gap-1.5 rounded-lg border border-yellow-300 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-900/20 px-3 py-2 text-sm font-medium text-yellow-700 dark:text-yellow-300 hover:bg-yellow-100 dark:hover:bg-yellow-900/40"
+                >
+                  <Lightbulb className="h-4 w-4" /> 기획안 아이디어 <ArrowUpRight className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={() => onSeed(ad, "guide")}
+                  className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/10"
+                >
+                  <Camera className="h-4 w-4" /> 촬영 가이드 <ArrowUpRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              <p className="mt-1.5 text-[11px] text-gray-400">이 광고의 소구점·카피(분석 시 구간)를 입력값으로 채워 해당 페이지로 이동합니다.</p>
             </div>
           </div>
         </div>

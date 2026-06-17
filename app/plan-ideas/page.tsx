@@ -51,9 +51,30 @@ export default function PlanIdeasPage() {
   const [ideas, setIdeas] = useState<GeneratedIdea[]>([])
   const [copied, setCopied] = useState<Record<string, boolean>>({})
 
+  // 메타 광고 크롤러에서 넘어온 시드(경쟁 소재 참고 프롬프트)
+  const [pendingSeed, setPendingSeed] = useState<string | null>(null)
+
   useEffect(() => {
     loadClients()
   }, [user, isAdmin])
+
+  useEffect(() => {
+    try {
+      const s = sessionStorage.getItem('plan-idea-seed')
+      if (s) {
+        setPendingSeed(s)
+        sessionStorage.removeItem('plan-idea-seed')
+      }
+    } catch {}
+  }, [])
+
+  // 시드가 있고 브랜드가 선택되면 입력창에 자동 채움
+  useEffect(() => {
+    if (pendingSeed && selectedClient) {
+      setPrompt(pendingSeed)
+      setPendingSeed(null)
+    }
+  }, [pendingSeed, selectedClient])
 
   async function loadClients() {
     if (!user) return
@@ -218,6 +239,11 @@ export default function PlanIdeasPage() {
                   <br />
                   AI가 새로운 대본 아이디어를 만들어줍니다
                 </p>
+                {pendingSeed && (
+                  <div className="mt-4 inline-flex items-center gap-1.5 rounded-lg border border-yellow-300 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-900/20 px-3 py-2 text-xs font-medium text-yellow-700 dark:text-yellow-300">
+                    <Sparkles className="h-3.5 w-3.5" /> 경쟁사 광고 시드가 준비됨 — 브랜드를 선택하면 자동 입력됩니다
+                  </div>
+                )}
               </div>
             </div>
           ) : (

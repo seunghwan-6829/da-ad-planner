@@ -14,7 +14,7 @@ export async function GET(req: Request) {
   let q = supabaseAdmin
     .from('am_ads')
     .select(
-      'library_id, target_id, page_name, started_on, ad_text, media_type, media_url, media_urls, poster_url, landing_url, memo, status, ended_at, first_seen_at, last_seen_at'
+      'library_id, target_id, page_name, started_on, ad_text, media_type, media_url, media_urls, poster_url, landing_url, memo, saved, status, ended_at, first_seen_at, last_seen_at'
     )
     .order('first_seen_at', { ascending: false })
     .limit(limit)
