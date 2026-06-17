@@ -20,36 +20,49 @@ export async function POST(req: Request) {
 
   const { data: ad, error } = await supabaseAdmin
     .from('am_ads')
-    .select('library_id, page_name, started_on, ad_text, media_type, media_url, media_urls')
+    .select('library_id, page_name, started_on, ad_text, media_type, media_url, media_urls, poster_url, frames')
     .eq('library_id', libraryId)
     .single()
   if (error || !ad) return NextResponse.json({ error: '광고를 찾을 수 없습니다.' }, { status: 404 })
 
   const isVideo = ad.media_type === 'video'
-  const firstImage = !isVideo
-    ? ad.media_url || (Array.isArray(ad.media_urls) && ad.media_urls.length ? ad.media_urls[0] : null)
-    : null
+  // 비전에 첨부할 이미지: 영상=추출 프레임(최대 4, 시간순), 그 외=크리에이티브 이미지 1장
+  const frames: string[] = Array.isArray(ad.frames) ? (ad.frames as string[]).filter(Boolean) : []
+  const imageUrls: string[] = (
+    isVideo
+      ? frames.slice(0, 4)
+      : [ad.media_url || (Array.isArray(ad.media_urls) && ad.media_urls.length ? ad.media_urls[0] : null)]
+  ).filter(Boolean) as string[]
 
-  const prompt = `너는 퍼포먼스 마케팅 소재 분석가다. 아래 경쟁사 메타(페이스북/인스타그램) 광고 소재를 분석해, 마케터가 바로 참고할 수 있게 한국어로 정리해줘.
+  const mediaNote = imageUrls.length
+    ? isVideo
+      ? `- 영상에서 추출한 실제 프레임 ${imageUrls.length}장이 시간 순서대로 첨부됨. 프레임을 보고 분석에 반영할 것.`
+      : '- 크리에이티브 이미지가 첨부됨(분석에 반영).'
+    : isVideo
+      ? '- 영상이지만 프레임이 없어 자막/카피 기반 "추정"으로 작성.'
+      : ''
+
+  const prompt = `너는 퍼포먼스 마케팅 소재 분석가다. 아래 경쟁사 메타(페이스북/인스타그램) 광고 소재를 분석해서, 마케터가 한눈에 보는 "시각화용 구조 데이터"를 JSON으로만 출력해줘.
 
 [소재 정보]
 - 유형: ${isVideo ? '영상' : ad.media_type === 'carousel' ? '슬라이드(캐러셀)' : '이미지'}
 - 게재 시작일: ${ad.started_on ?? '미상'}
 - 본문/자막 텍스트(광고에서 추출): """${(ad.ad_text ?? '').slice(0, 1500)}"""
-${firstImage ? '- 크리에이티브 이미지가 함께 첨부됨(분석에 반영).' : isVideo ? '- 영상 소재라 화면 프레임은 직접 보지 못함. 본문/자막 텍스트 기반으로 추정 분석할 것.' : ''}
+${mediaNote}
 
-아래 항목으로 간결하게(불릿) 분석해줘:
-1. 소재 구조 (후킹 → 전개 → CTA 흐름. 영상이면 추정 대본 흐름)
-2. 후킹 포인트 (첫 3초/첫 문장에서 시선을 잡는 요소)
-3. 핵심 소구점 · 오퍼 (혜택, 할인, 이벤트 등)
-4. 추정 타겟 고객
-5. 잘된 점 (이 소재가 왜 효과적일 가능성이 큰지)
-6. 우리가 바로 써먹을 실행 인사이트 1~2개`
+규칙:
+- phases: 소재를 흐름 구간으로 나눔. 영상이면 시간 흐름(예: 후킹→문제 제기→해결/원리→근거→CTA), 이미지면 시선·정보 흐름. 각 weight는 대략적 비중(전부 합쳐 100).
+- engagement: 시청자 몰입/감정 흐름 추정 곡선. 포인트 6~10개. t(0~100, 진행률), v(0~100, 몰입도).
+- markers: 특히 잘된 지점(강한 후킹/매력적 오퍼/사회적 증거/반전 등). t(0~100), 짧은 label, note(왜 좋은지).
+- 모든 한국어. 수치는 추정이어도 좋음.
+
+아래 JSON만 출력(다른 텍스트 절대 금지):
+{"summary":"한 줄 총평","phases":[{"name":"후킹","weight":15,"desc":"이 구간 설명"}],"engagement":[{"t":0,"v":60},{"t":15,"v":88}],"markers":[{"t":12,"label":"강한 후킹","note":"설명"}],"target":"추정 타겟","offer":"핵심 오퍼/소구점","strengths":["잘된 점1","잘된 점2"]}`
 
   type Block = { type: 'text'; text: string } | { type: 'image'; source: { type: 'url'; url: string } }
   const baseContent: Block[] = [{ type: 'text', text: prompt }]
-  const withImage: Block[] = firstImage
-    ? [...baseContent, { type: 'image', source: { type: 'url', url: firstImage } }]
+  const withImage: Block[] = imageUrls.length
+    ? [...baseContent, ...imageUrls.map((u) => ({ type: 'image' as const, source: { type: 'url' as const, url: u } }))]
     : baseContent
 
   async function callClaude(content: Block[]) {
@@ -67,15 +80,18 @@ ${firstImage ? '- 크리에이티브 이미지가 함께 첨부됨(분석에 반
   try {
     let res = await callClaude(withImage)
     // 이미지(외부 URL) 로딩 실패 시 텍스트만으로 재시도
-    if (!res.ok && firstImage) {
+    if (!res.ok && imageUrls.length) {
       res = await callClaude(baseContent)
     }
     const data = await res.json()
     if (!res.ok) {
       return NextResponse.json({ error: data.error?.message ?? 'Anthropic API 오류' }, { status: res.status })
     }
-    const analysis =
+    const text =
       data.content?.find((b: { type: string }) => b.type === 'text')?.text?.trim() ?? ''
+    // 시각화용 JSON 문자열만 추출(파싱 실패 시 원문 그대로 — 프론트가 텍스트로 폴백 표시)
+    const m = text.match(/\{[\s\S]*\}/)
+    const analysis = m ? m[0] : text
 
     // 저장하지 않음 — 사용자가 모달에서 '저장'을 눌러야만 DB에 남는다.
     return NextResponse.json({ analysis })

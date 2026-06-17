@@ -1,16 +1,13 @@
-name: Crawl Meta Ad Library
+name: Backfill Meta Ad Media
 
+# 기존에 URL로만 저장된 소재를 우리 스토리지로 일괄 다운로드 보관(수동 실행 전용).
 on:
-  schedule:
-    # 5일마다 UTC 18:00(KST 새벽 03:00) — 매월 1,6,11,16,21,26,31일에 실행
-    - cron: "0 18 */5 * *"
-  workflow_dispatch: {} # 깃허브에서 수동 실행 버튼
+  workflow_dispatch: {}
 
 jobs:
-  crawl:
+  backfill:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # 파이썬 크롤러(src/, config/, requirements.txt)는 meta-ad-monitor/ 에 그대로 둔다.
     defaults:
       run:
         working-directory: meta-ad-monitor
@@ -26,14 +23,11 @@ jobs:
       - name: Install deps
         run: pip install -r requirements.txt
 
-      - name: Install Playwright Chromium
-        run: python -m playwright install --with-deps chromium
-
       - name: Ensure ffmpeg (영상 프레임 추출용)
         run: ffmpeg -version || (sudo apt-get update && sudo apt-get install -y ffmpeg)
 
-      - name: Run crawler
+      - name: Backfill media
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: python -m src.run_cloud
+        run: python -m src.backfill_media

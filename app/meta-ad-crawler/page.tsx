@@ -43,6 +43,8 @@ type Ad = {
   media_type: string | null;
   media_url: string | null;
   media_urls?: string[] | null;
+  poster_url?: string | null;
+  frames?: string[] | null;
   landing_url?: string | null;
   status?: string | null;
   ended_at?: string | null;
@@ -159,6 +161,7 @@ function MediaView({ ad, rounded }: { ad: Ad; rounded?: string }) {
     return (
       <video
         src={ad.media_url}
+        poster={ad.poster_url || undefined}
         controls
         playsInline
         onClick={(e) => e.stopPropagation()}
@@ -215,6 +218,8 @@ export default function MetaAdCrawlerPage() {
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState<string>("all");
   const [selectedBrand, setSelectedBrand] = useState<string>("all");
+  const [mediaFilter, setMediaFilter] = useState<"all" | "image" | "carousel" | "video">("all");
+  const [sortBy, setSortBy] = useState<"recent" | "longevity">("recent");
   const [page, setPage] = useState(1);
   const [detail, setDetail] = useState<Ad | null>(null);
 
@@ -314,15 +319,24 @@ export default function MetaAdCrawlerPage() {
 
   const filteredAds = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return ads.filter((ad) => {
+    const list = ads.filter((ad) => {
       const cat = ad.target_id ? (targetMap[ad.target_id]?.category || "").trim() || "미분류" : "미분류";
       if (activeCategory !== "all" && cat !== activeCategory) return false;
       if (selectedBrand !== "all" && ad.target_id !== selectedBrand) return false;
       if (q && !brandNameOfAd(ad).toLowerCase().includes(q)) return false;
+      if (mediaFilter !== "all") {
+        const carousel = ad.media_type === "carousel" || (Array.isArray(ad.media_urls) && ad.media_urls.length > 1);
+        if (mediaFilter === "video" && ad.media_type !== "video") return false;
+        if (mediaFilter === "carousel" && !carousel) return false;
+        if (mediaFilter === "image" && (ad.media_type === "video" || carousel)) return false;
+      }
       return true;
     });
+    if (sortBy === "longevity") list.sort((a, b) => activeDays(b) - activeDays(a));
+    // recent: API가 first_seen_at desc 로 주므로 그대로 유지(최신순)
+    return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ads, search, activeCategory, selectedBrand, targetMap]);
+  }, [ads, search, activeCategory, selectedBrand, mediaFilter, sortBy, targetMap]);
 
   const pageCount = Math.max(1, Math.ceil(filteredAds.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount);
@@ -525,16 +539,55 @@ export default function MetaAdCrawlerPage() {
       </div>
 
       {/* 툴바 */}
-      <div className="flex items-center justify-between mb-3">
-        <strong className="text-sm dark:text-gray-200">{loading ? "불러오는 중..." : `광고 ${filteredAds.length}건`}</strong>
-        <button
-          onClick={exportCsv}
-          disabled={filteredAds.length === 0}
-          className="flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-1.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40"
-        >
-          <FileDown className="h-4 w-4" />
-          CSV
-        </button>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <strong className="text-sm dark:text-gray-200">{loading ? "불러오는 중..." : `광고 ${filteredAds.length}건`}</strong>
+          <select
+            value={sortBy}
+            onChange={(e) => {
+              setSortBy(e.target.value as "recent" | "longevity");
+              resetToFirst();
+            }}
+            className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1.5 text-xs dark:text-gray-200"
+          >
+            <option value="recent">최신순</option>
+            <option value="longevity">롱런순 (오래 살아남은)</option>
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
+          {/* 보기 형식 */}
+          <div className="flex items-center overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700 text-xs">
+            {([
+              ["all", "전체"],
+              ["image", "이미지"],
+              ["carousel", "캐러셀"],
+              ["video", "동영상"],
+            ] as const).map(([v, label], i) => (
+              <button
+                key={v}
+                onClick={() => {
+                  setMediaFilter(v);
+                  resetToFirst();
+                }}
+                className={`px-2.5 py-1.5 font-medium ${i > 0 ? "border-l border-gray-200 dark:border-gray-700" : ""} ${
+                  mediaFilter === v
+                    ? "bg-primary text-white"
+                    : "bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={exportCsv}
+            disabled={filteredAds.length === 0}
+            className="flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-1.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40"
+          >
+            <FileDown className="h-4 w-4" />
+            CSV
+          </button>
+        </div>
       </div>
 
       {/* 광고 그리드 (5열 / 15개) */}
@@ -778,6 +831,164 @@ function Chip({ active, onClick, children }: { active: boolean; onClick: () => v
   );
 }
 
+type AnalysisData = {
+  summary?: string;
+  phases?: { name: string; weight: number; desc?: string }[];
+  engagement?: { t: number; v: number }[];
+  markers?: { t: number; label: string; note?: string }[];
+  target?: string;
+  offer?: string;
+  strengths?: string[];
+};
+
+const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
+
+function parseAnalysis(raw: string | null): AnalysisData | null {
+  if (!raw) return null;
+  try {
+    const o = JSON.parse(raw);
+    if (o && typeof o === "object" && (Array.isArray(o.phases) || Array.isArray(o.engagement))) return o;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+const PHASE_COLORS = ["#ff5a7a", "#ff9f43", "#5b8def", "#22c55e", "#a855f7", "#14b8a6"];
+
+function AnalysisViz({ data }: { data: AnalysisData }) {
+  const phases = (data.phases || []).filter((p) => p && p.name);
+  const totalWeight = phases.reduce((s, p) => s + (Number(p.weight) || 0), 0) || 1;
+  const pts = (data.engagement || [])
+    .map((p) => ({ t: clamp(Number(p.t) || 0, 0, 100), v: clamp(Number(p.v) || 0, 0, 100) }))
+    .sort((a, b) => a.t - b.t);
+  const markers = (data.markers || []).map((m) => ({
+    t: clamp(Number(m.t) || 0, 0, 100),
+    label: m.label || "",
+    note: m.note || "",
+  }));
+  const [hover, setHover] = useState<{ x: number; label: string; note: string } | null>(null);
+
+  const yTop = (v: number) => 88 - (v / 100) * 76; // v 0~100 → top% 88..12
+  function interpV(t: number) {
+    if (!pts.length) return 50;
+    if (t <= pts[0].t) return pts[0].v;
+    if (t >= pts[pts.length - 1].t) return pts[pts.length - 1].v;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1];
+      if (t >= a.t && t <= b.t) return a.v + ((b.v - a.v) * (t - a.t)) / ((b.t - a.t) || 1);
+    }
+    return 50;
+  }
+  const linePath = pts.length ? pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.t} ${yTop(p.v)}`).join(" ") : "";
+  const areaPath = pts.length ? `${linePath} L ${pts[pts.length - 1].t} 100 L ${pts[0].t} 100 Z` : "";
+
+  return (
+    <div className="space-y-3">
+      {data.summary && <p className="text-sm font-medium text-gray-800 dark:text-gray-200">{data.summary}</p>}
+
+      {phases.length > 0 && (
+        <div>
+          <div className="mb-1 text-[11px] font-bold text-gray-400">구간 흐름</div>
+          <div className="flex h-7 w-full overflow-hidden rounded-lg">
+            {phases.map((p, i) => (
+              <div
+                key={i}
+                title={p.desc || p.name}
+                style={{ width: `${((Number(p.weight) || 0) / totalWeight) * 100}%`, backgroundColor: PHASE_COLORS[i % PHASE_COLORS.length] }}
+                className="flex items-center justify-center truncate px-1 text-[10px] font-bold text-white"
+              >
+                {p.name}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {pts.length > 0 && (
+        <div>
+          <div className="mb-1 text-[11px] font-bold text-gray-400">시청자 몰입 흐름 (추정)</div>
+          <div
+            className="relative h-28 w-full rounded-lg border border-gray-100 dark:border-gray-800 bg-gradient-to-b from-rose-50/70 to-transparent dark:from-rose-950/20"
+            onMouseMove={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              const x = clamp(((e.clientX - r.left) / r.width) * 100, 0, 100);
+              let near: { t: number; label: string; note: string } | null = null;
+              for (const m of markers) if (!near || Math.abs(m.t - x) < Math.abs(near.t - x)) near = m;
+              if (near && Math.abs(near.t - x) <= 6) setHover({ x: near.t, label: near.label, note: near.note });
+              else setHover({ x, label: `몰입도 ${Math.round(interpV(x))}`, note: "" });
+            }}
+            onMouseLeave={() => setHover(null)}
+          >
+            <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 h-full w-full">
+              <path d={areaPath} fill="rgba(255,90,122,0.15)" />
+              <path d={linePath} fill="none" stroke="#ff5a7a" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+            </svg>
+            {markers.map((m, i) => (
+              <div
+                key={i}
+                style={{ left: `${m.t}%`, top: `${yTop(interpV(m.t))}%` }}
+                className="absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-rose-500 ring-2 ring-white dark:ring-gray-900"
+              />
+            ))}
+            {hover && (
+              <>
+                <div style={{ left: `${hover.x}%` }} className="absolute bottom-0 top-0 w-px bg-rose-400/60" />
+                <div
+                  style={{ left: `${clamp(hover.x, 8, 92)}%` }}
+                  className="absolute top-1 max-w-[220px] -translate-x-1/2 truncate rounded-md bg-gray-900 px-2 py-1 text-[10px] text-white"
+                >
+                  {hover.label}
+                  {hover.note ? ` · ${hover.note}` : ""}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {markers.length > 0 && (
+        <div className="space-y-1">
+          {markers.map((m, i) => (
+            <div key={i} className="text-[12px] leading-snug">
+              <span className="font-bold text-rose-500">✦ {m.label}</span>
+              {m.note && <span className="text-gray-500 dark:text-gray-400"> — {m.note}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {(data.target || data.offer) && (
+        <div className="grid grid-cols-2 gap-2 text-[12px]">
+          {data.target && (
+            <div>
+              <div className="text-gray-400">타겟</div>
+              <div className="font-medium dark:text-gray-200">{data.target}</div>
+            </div>
+          )}
+          {data.offer && (
+            <div>
+              <div className="text-gray-400">오퍼</div>
+              <div className="font-medium dark:text-gray-200">{data.offer}</div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {data.strengths && data.strengths.length > 0 && (
+        <div>
+          <div className="mb-1 text-[11px] font-bold text-gray-400">잘된 점</div>
+          <ul className="list-disc space-y-0.5 pl-4 text-[12px] text-gray-600 dark:text-gray-300">
+            {data.strengths.map((s, i) => (
+              <li key={i}>{s}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AdDetailModal({
   ad,
   brandName,
@@ -999,7 +1210,14 @@ function AdDetailModal({
                       </button>
                     </div>
                   </div>
-                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700 dark:text-gray-200">{analysis}</p>
+                  {(() => {
+                    const parsed = parseAnalysis(analysis);
+                    return parsed ? (
+                      <AnalysisViz data={parsed} />
+                    ) : (
+                      <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700 dark:text-gray-200">{analysis}</p>
+                    );
+                  })()}
                   {!analysisSaved && (
                     <p className="mt-2 text-[11px] text-gray-400">저장하지 않으면 이 분석은 창을 닫을 때 사라집니다.</p>
                   )}

@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 
 from supabase import Client, create_client
 
+from . import media
+
 
 def get_client() -> Client:
     url = os.environ.get("SUPABASE_URL")
@@ -35,35 +37,59 @@ def save_ads(client: Client, target: dict, ads: list[dict]) -> tuple[int, int]:
     if not scraped_ids:
         return 0, 0
 
-    existing: set[str] = set()
+    # 기존 행(이미 보관된 미디어 보존 + 중복 다운로드 방지)
     res = (
         client.table("am_ads")
-        .select("library_id")
+        .select("library_id, media_url, media_urls, poster_url, frames, media_path, downloaded")
         .in_("library_id", scraped_ids)
         .execute()
     )
-    existing = {r["library_id"] for r in (res.data or [])}
+    existing_map = {r["library_id"]: r for r in (res.data or [])}
+    existing = set(existing_map.keys())
 
     now = datetime.now(timezone.utc).isoformat()
-    payload = [
-        {
-            "library_id": a["library_id"],
-            "target_id": target.get("id"),
-            "page_name": a.get("page_name"),
-            "started_on": a.get("started_on"),
-            "ad_text": a.get("ad_text"),
-            "media_type": a.get("media_type"),
-            "media_url": a.get("media_url"),
-            "media_urls": a.get("media_urls"),
-            "landing_url": a.get("landing_url"),
-            # 이번에 보였으니 활성으로 갱신(이전에 종료 처리됐어도 부활)
-            "status": "active",
-            "ended_at": None,
-            "last_seen_at": now,
-        }
-        for a in ads
-        if a.get("library_id")
-    ]
+    payload = []
+    for a in ads:
+        lib = a.get("library_id")
+        if not lib:
+            continue
+        ex = existing_map.get(lib)
+        if ex and ex.get("downloaded"):
+            # 이미 우리 스토리지에 보관됨 → 재다운로드 X, 저장된 영구 미디어 그대로 유지
+            media_fields = {
+                "media_url": ex.get("media_url"),
+                "media_urls": ex.get("media_urls"),
+                "poster_url": ex.get("poster_url"),
+                "frames": ex.get("frames"),
+                "media_path": ex.get("media_path"),
+                "downloaded": True,
+            }
+        else:
+            # 신규(또는 아직 미보관) → 파일 다운로드해 스토리지에 보관(실패 시 CDN URL 유지)
+            media.ensure_media(client, a)
+            media_fields = {
+                "media_url": a.get("media_url"),
+                "media_urls": a.get("media_urls"),
+                "poster_url": a.get("poster_url"),
+                "frames": a.get("frames"),
+                "media_path": a.get("media_path"),
+                "downloaded": bool(a.get("downloaded")),
+            }
+        payload.append(
+            {
+                "library_id": lib,
+                "target_id": target.get("id"),
+                "page_name": a.get("page_name"),
+                "started_on": a.get("started_on"),
+                "ad_text": a.get("ad_text"),
+                "media_type": a.get("media_type"),
+                "landing_url": a.get("landing_url"),
+                "status": "active",
+                "ended_at": None,
+                "last_seen_at": now,
+                **media_fields,
+            }
+        )
     client.table("am_ads").upsert(payload, on_conflict="library_id").execute()
 
     # 이번 크롤에서 안 보인(사라진) 이 브랜드의 광고 → '종료'로 표기만(삭제 X).
