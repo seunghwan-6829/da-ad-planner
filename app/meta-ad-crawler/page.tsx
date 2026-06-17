@@ -45,6 +45,7 @@ type Ad = {
   status?: string | null;
   ended_at?: string | null;
   memo?: string | null;
+  ai_analysis?: string | null;
   first_seen_at: string;
   last_seen_at?: string | null;
 };
@@ -102,6 +103,34 @@ function activeDays(ad: Ad): number {
 
 function sourceLink(ad: Ad): string {
   return `https://www.facebook.com/ads/library/?id=${ad.library_id}`;
+}
+
+// 스크랩된 ad_text 에서 보일러플레이트(활성/라이브러리ID/게재시작/플랫폼/광고 라벨/CTA 등)를 제거하고
+// 실제 제목·캡션만 남긴다. (우측 메타데이터와 중복되는 정보 제거)
+const CAPTION_DROP = [
+  /^활성$/, /^비활성$/, /게재\s*중단/,
+  /^라이브러리\s*ID/i, /^library\s*id/i,
+  /게재\s*시작(함|일)/, /^started running/i,
+  /^플랫폼$/, /^platforms?$/i,
+  /^드롭다운/, /드롭다운\s*열기/, /^see ad details$/i, /광고\s*상세\s*정보\s*보기/,
+  /여러\s*버전이\s*있는\s*광고/i, /multiple versions/i,
+  /^광고$/, /^sponsored$/i,
+  /^(learn more|shop now|sign up|book now|order now|get offer|download|더\s*알아보기|자세히\s*알아보기|지금\s*구매하기|구매하기|신청하기|문의하기|예약하기|주문하기|앱\s*설치하기|지금\s*받기|쇼핑하기)$/i,
+];
+
+function cleanCaption(text: string | null | undefined, brandName: string): string {
+  if (!text) return "—";
+  const lines = text.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+  const kept: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (l === brandName) continue;
+    if (CAPTION_DROP.some((re) => re.test(l))) continue;
+    // 광고주명 라인(바로 다음 줄이 '광고'/'Sponsored') 제거
+    if (i + 1 < lines.length && /^(광고|sponsored)$/i.test(lines[i + 1])) continue;
+    kept.push(l);
+  }
+  return kept.join("\n").trim() || "—";
 }
 
 function pageItems(current: number, total: number): (number | "…")[] {
@@ -406,6 +435,11 @@ export default function MetaAdCrawlerPage() {
     setDetail((d) => (d && d.library_id === libraryId ? { ...d, memo } : d));
   }
 
+  function onAdAnalyzed(libraryId: string, ai_analysis: string) {
+    setAds((prev) => prev.map((a) => (a.library_id === libraryId ? { ...a, ai_analysis } : a)));
+    setDetail((d) => (d && d.library_id === libraryId ? { ...d, ai_analysis } : d));
+  }
+
   const groups: Record<string, Target[]> = {};
   for (const t of targets) {
     const key = (t.category || "").trim() || "미분류";
@@ -583,6 +617,7 @@ export default function MetaAdCrawlerPage() {
           country={detail.target_id ? targetMap[detail.target_id]?.country ?? null : null}
           onClose={() => setDetail(null)}
           onMemoSaved={onMemoSaved}
+          onAnalyzed={onAdAnalyzed}
         />
       )}
 
@@ -717,6 +752,7 @@ function AdDetailModal({
   country,
   onClose,
   onMemoSaved,
+  onAnalyzed,
 }: {
   ad: Ad;
   brandName: string;
@@ -724,12 +760,35 @@ function AdDetailModal({
   country: string | null;
   onClose: () => void;
   onMemoSaved: (libraryId: string, memo: string) => void;
+  onAnalyzed: (libraryId: string, analysis: string) => void;
 }) {
   const [memo, setMemo] = useState(ad.memo ?? "");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [analysis, setAnalysis] = useState<string | null>(ad.ai_analysis ?? null);
+  const [analyzing, setAnalyzing] = useState(false);
   const ended = ad.status === "ended";
   const days = activeDays(ad);
+
+  async function runAnalyze() {
+    setAnalyzing(true);
+    try {
+      const res = await fetch("/api/meta-ad/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ library_id: ad.library_id }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert("AI 분석 실패: " + (j.error ?? res.status));
+        return;
+      }
+      setAnalysis(j.analysis || "분석 결과가 없습니다.");
+      onAnalyzed(ad.library_id, j.analysis || "");
+    } finally {
+      setAnalyzing(false);
+    }
+  }
 
   async function saveMemo() {
     setSaving(true);
@@ -791,7 +850,7 @@ function AdDetailModal({
             </div>
             <div>
               <div className="mb-1 text-xs font-bold uppercase tracking-wide text-gray-400">제목 · 캡션 (T&D)</div>
-              <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700 dark:text-gray-200">{ad.ad_text || "—"}</p>
+              <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700 dark:text-gray-200">{cleanCaption(ad.ad_text, brandName)}</p>
             </div>
           </div>
 
@@ -835,6 +894,30 @@ function AdDetailModal({
                 </button>
               </div>
               <textarea value={memo} onChange={(e) => setMemo(e.target.value)} placeholder="이 소재에 대한 메모를 남기세요 (팀 공유)" className="min-h-[90px] w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-2.5 text-sm dark:text-gray-200" />
+            </div>
+
+            {/* AI 분석 (메모 아래) */}
+            <div>
+              {analysis ? (
+                <div className="rounded-xl border border-violet-200 dark:border-violet-900/50 bg-violet-50 dark:bg-violet-950/20 p-3">
+                  <div className="mb-1.5 flex items-center gap-1 text-xs font-bold text-violet-700 dark:text-violet-300">
+                    <Sparkles className="h-3.5 w-3.5" /> AI 분석
+                  </div>
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700 dark:text-gray-200">{analysis}</p>
+                </div>
+              ) : (
+                <button
+                  onClick={runAnalyze}
+                  disabled={analyzing}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-violet-300 dark:border-violet-800 bg-violet-50 dark:bg-violet-950/20 px-3 py-2.5 text-sm font-medium text-violet-700 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-900/30 disabled:opacity-50"
+                >
+                  {analyzing ? (
+                    <><Loader2 className="h-4 w-4 animate-spin" /> 분석 중...</>
+                  ) : (
+                    <><Sparkles className="h-4 w-4" /> AI 분석</>
+                  )}
+                </button>
+              )}
             </div>
           </div>
         </div>
