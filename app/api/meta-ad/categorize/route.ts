@@ -26,7 +26,14 @@ export async function POST(req: Request) {
   const targetId: string | null = body.target_id ?? null
   if (!targetId) return NextResponse.json({ error: 'target_id 필요' }, { status: 400 })
 
-  // 최근 광고 텍스트 최대 8개
+  // 현재 대분류(수동 지정 보존용) + 최근 광고 텍스트 최대 8개
+  const { data: target } = await supabaseAdmin
+    .from('am_targets')
+    .select('category')
+    .eq('id', targetId)
+    .single()
+  const currentCategory = (target?.category || '').trim()
+
   const { data: ads } = await supabaseAdmin
     .from('am_ads')
     .select('ad_text, page_name')
@@ -45,9 +52,12 @@ export async function POST(req: Request) {
     .map((a, i) => `[${i + 1}] ${(a.ad_text ?? '').replace(/\s+/g, ' ').slice(0, 300)}`)
     .join('\n')
 
-  const prompt = `아래는 한 광고주의 최근 메타 광고 소재 텍스트야. 이 브랜드가 무엇을 파는지 보고, 아래 대분류 중 가장 알맞은 하나만 골라줘.
+  const prompt = `아래는 한 광고주의 최근 메타 광고 소재 텍스트야. 이 브랜드가 무엇을 파는지 파악해서:
+1) 아래 대분류 중 가장 알맞은 하나
+2) 이 브랜드가 무엇을 주로 광고하는지 한 줄 요약(20자 내외, 명사형)
+을 정해줘.
 대분류 후보: ${CATEGORIES.join(', ')}
-반드시 JSON만: {"category":"후보 중 하나"}
+반드시 JSON만: {"category":"후보 중 하나","summary":"한 줄 요약"}
 
 --- 광고 텍스트 ---
 ${sample}`
@@ -62,7 +72,7 @@ ${sample}`
       },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: 200,
+        max_tokens: 300,
         messages: [{ role: 'user', content: prompt }],
       }),
     })
@@ -72,16 +82,22 @@ ${sample}`
     }
     const text = data.content?.find((b: { type: string }) => b.type === 'text')?.text ?? ''
     const m = text.match(/\{[\s\S]*\}/)
-    let category = '기타'
+    let aiCategory = '기타'
+    let summary = ''
     if (m) {
       try {
-        const c = (JSON.parse(m[0]).category || '').toString().trim()
-        category = CATEGORIES.includes(c) ? c : '기타'
+        const parsed = JSON.parse(m[0])
+        const c = (parsed.category || '').toString().trim()
+        aiCategory = CATEGORIES.includes(c) ? c : '기타'
+        summary = (parsed.summary || '').toString().trim().slice(0, 80)
       } catch {}
     }
 
-    await supabaseAdmin.from('am_targets').update({ category }).eq('id', targetId)
-    return NextResponse.json({ category })
+    // 사용자가 이미 대분류를 지정해 둔 경우(미분류 아님)는 보존, 아니면 AI 결과 사용
+    const category = currentCategory && currentCategory !== '미분류' ? currentCategory : aiCategory
+
+    await supabaseAdmin.from('am_targets').update({ category, summary }).eq('id', targetId)
+    return NextResponse.json({ category, summary })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     return NextResponse.json({ error: msg }, { status: 500 })

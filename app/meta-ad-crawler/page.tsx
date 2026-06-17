@@ -30,6 +30,7 @@ type Target = {
   enabled: boolean;
   profile_image?: string | null;
   profile_name?: string | null;
+  summary?: string | null;
 };
 
 type Ad = {
@@ -212,8 +213,9 @@ export default function MetaAdCrawlerPage() {
   const [page, setPage] = useState(1);
   const [detail, setDetail] = useState<Ad | null>(null);
 
-  // 설정 모달
+  // 브랜드 관리 모달
   const [showSettings, setShowSettings] = useState(false);
+  const [brandMgmtSearch, setBrandMgmtSearch] = useState("");
 
   // 추가 폼
   const [label, setLabel] = useState("");
@@ -248,12 +250,17 @@ export default function MetaAdCrawlerPage() {
     loadAll();
   }, [loadAll]);
 
-  // 백엔드 자동 대분류: 광고가 쌓인 '미분류' 브랜드를 광고 텍스트로 분류 (1회)
+  // 백엔드 자동 대분류 + 한 줄 요약: 광고가 쌓였는데 대분류가 '미분류'거나 요약이 없는 브랜드 처리.
+  // 비용/부하 방지를 위해 방문당 최대 12개씩만 채우고, 다음 방문에 이어서 채운다.
   useEffect(() => {
     if (categorizedRef.current || loading) return;
-    const todo = targets.filter(
-      (t) => (!(t.category || "").trim() || t.category === "미분류") && (counts[t.id] || 0) > 0
-    );
+    const todo = targets
+      .filter(
+        (t) =>
+          (counts[t.id] || 0) > 0 &&
+          (!(t.category || "").trim() || t.category === "미분류" || !(t.summary || "").trim())
+      )
+      .slice(0, 12);
     if (todo.length === 0) return;
     categorizedRef.current = true;
     (async () => {
@@ -440,8 +447,12 @@ export default function MetaAdCrawlerPage() {
     setDetail((d) => (d && d.library_id === libraryId ? { ...d, ai_analysis } : d));
   }
 
+  // 브랜드 관리 모달: 검색어로 거른 뒤 대분류별 그룹핑 (브랜드 50~100개 관리용)
+  const mgmtQuery = brandMgmtSearch.trim().toLowerCase();
   const groups: Record<string, Target[]> = {};
   for (const t of targets) {
+    const name = (t.profile_name || t.label || "").toLowerCase();
+    if (mgmtQuery && !name.includes(mgmtQuery)) continue;
     const key = (t.category || "").trim() || "미분류";
     (groups[key] ||= []).push(t);
   }
@@ -464,7 +475,7 @@ export default function MetaAdCrawlerPage() {
           className="flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800"
         >
           <Settings className="h-4 w-4" />
-          설정
+          브랜드 관리
         </button>
       </div>
 
@@ -626,7 +637,7 @@ export default function MetaAdCrawlerPage() {
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4">
           <div className="my-8 w-full max-w-3xl rounded-2xl bg-white dark:bg-gray-900 shadow-xl">
             <div className="flex items-center justify-between border-b dark:border-gray-800 px-5 py-3.5">
-              <h2 className="text-base font-bold dark:text-white">브랜드 관리 · 설정</h2>
+              <h2 className="text-base font-bold dark:text-white">브랜드 관리</h2>
               <button onClick={() => setShowSettings(false)} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800">
                 <X className="h-5 w-5" />
               </button>
@@ -686,8 +697,22 @@ export default function MetaAdCrawlerPage() {
               </form>
 
               <div>
-                <div className="mb-2 text-sm font-bold dark:text-gray-200">추적 중인 브랜드 {targets.length > 0 && `(${targets.length})`}</div>
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div className="text-sm font-bold dark:text-gray-200">추적 중인 브랜드 {targets.length > 0 && `(${targets.length})`}</div>
+                  <div className="relative w-48">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+                    <input
+                      value={brandMgmtSearch}
+                      onChange={(e) => setBrandMgmtSearch(e.target.value)}
+                      placeholder="브랜드 검색"
+                      className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 py-1.5 pl-8 pr-2 text-xs dark:text-gray-200"
+                    />
+                  </div>
+                </div>
                 {targets.length === 0 && <p className="text-sm text-gray-400">아직 없음 — 위에서 추가하세요.</p>}
+                {targets.length > 0 && Object.keys(groups).length === 0 && (
+                  <p className="text-sm text-gray-400">검색 결과가 없습니다.</p>
+                )}
                 {Object.keys(groups).sort().map((cat) => (
                   <div key={cat} className="mb-3">
                     <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-gray-400">{cat}</div>
@@ -718,8 +743,11 @@ export default function MetaAdCrawlerPage() {
                             // eslint-disable-next-line @next/next/no-img-element
                             <img src={t.profile_image} alt="" className="h-6 w-6 rounded-full object-cover" />
                           ) : null}
-                          <span className="flex-1 min-w-0 truncate text-sm dark:text-gray-200">{t.enabled ? "🟢" : "⚪"} {t.profile_name || t.label}</span>
-                          <span className="rounded-full bg-gray-100 dark:bg-gray-800 px-2 py-0.5 text-[11px] text-gray-600 dark:text-gray-300">{counts[t.id] ?? 0}건</span>
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-sm dark:text-gray-200">{t.enabled ? "🟢" : "⚪"} {t.profile_name || t.label}</div>
+                            {t.summary && <div className="truncate text-[11px] text-violet-600 dark:text-violet-300">✨ {t.summary}</div>}
+                          </div>
+                          <span className="shrink-0 rounded-full bg-gray-100 dark:bg-gray-800 px-2 py-0.5 text-[11px] text-gray-600 dark:text-gray-300">{counts[t.id] ?? 0}건</span>
                           <button onClick={() => startEdit(t)} className="rounded p-1.5 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800" title="편집"><Pencil className="h-4 w-4" /></button>
                           <button onClick={() => patchTarget(t.id, { enabled: !t.enabled })} className={`rounded p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 ${t.enabled ? "text-green-600" : "text-gray-400"}`} title={t.enabled ? "끄기" : "켜기"}><Power className="h-4 w-4" /></button>
                           <button onClick={() => remove(t)} className="rounded p-1.5 text-gray-400 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-gray-800" title="삭제"><Trash2 className="h-4 w-4" /></button>
