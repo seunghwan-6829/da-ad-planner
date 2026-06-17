@@ -41,6 +41,18 @@ type Ad = {
 
 const PAGE_SIZE = 12;
 
+const CATEGORIES = [
+  "뷰티 & 에어케어",
+  "패션 & 의류",
+  "음식 & 음료",
+  "리빙 & 인테리어",
+  "육아 & 동물",
+  "의료 & 건강",
+  "교육 & 강의",
+  "IT & 전자기기",
+  "기타",
+];
+
 function parsePageId(input: string): string {
   const m = input.match(/view_all_page_id=(\d+)/);
   if (m) return m[1];
@@ -102,6 +114,8 @@ export default function MetaAdCrawlerPage() {
   const [pageInput, setPageInput] = useState("");
   const [query, setQuery] = useState("");
   const [country, setCountry] = useState("KR");
+  const [previewing, setPreviewing] = useState(false);
+  const [previewFocus, setPreviewFocus] = useState<string | null>(null);
 
   // 편집 상태
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -178,6 +192,33 @@ export default function MetaAdCrawlerPage() {
   }
 
   // ── 관리(설정) 동작 ──
+  async function handlePreview() {
+    const name = label.trim();
+    const url = pageInput.trim();
+    if (!name && !url) {
+      alert("브랜드 이름이나 광고 라이브러리 URL을 입력해주세요.");
+      return;
+    }
+    setPreviewing(true);
+    setPreviewFocus(null);
+    try {
+      const res = await fetch("/api/meta-ad/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, url }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert("분석 실패: " + (j.error ?? res.status));
+        return;
+      }
+      setPreviewFocus(j.focus || "분석 결과가 없습니다.");
+      if (j.category) setCategory(j.category);
+    } finally {
+      setPreviewing(false);
+    }
+  }
+
   async function addTarget(e: React.FormEvent) {
     e.preventDefault();
     const body =
@@ -198,6 +239,7 @@ export default function MetaAdCrawlerPage() {
     setCategory("");
     setPageInput("");
     setQuery("");
+    setPreviewFocus(null);
     loadAll();
   }
 
@@ -535,7 +577,7 @@ export default function MetaAdCrawlerPage() {
       {/* 설정 모달 */}
       {showSettings && (
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4">
-          <div className="my-8 w-full max-w-2xl rounded-2xl bg-white dark:bg-gray-900 shadow-xl">
+          <div className="my-8 w-full max-w-3xl rounded-2xl bg-white dark:bg-gray-900 shadow-xl">
             <div className="flex items-center justify-between border-b dark:border-gray-800 px-5 py-3.5">
               <h2 className="text-base font-bold dark:text-white">브랜드 관리 · 설정</h2>
               <button
@@ -548,58 +590,123 @@ export default function MetaAdCrawlerPage() {
 
             <div className="max-h-[75vh] overflow-y-auto p-5 space-y-5">
               {/* 추가 폼 */}
-              <form onSubmit={addTarget} className="rounded-xl border dark:border-gray-800 p-4">
-                <div className="mb-2 text-sm font-bold dark:text-gray-200 flex items-center gap-1.5">
+              <form onSubmit={addTarget} className="rounded-xl border dark:border-gray-800 p-5">
+                <div className="mb-3 text-sm font-bold dark:text-gray-200 flex items-center gap-1.5">
                   <Plus className="h-4 w-4" /> 브랜드 추가
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  <input
-                    placeholder="브랜드 이름"
-                    value={label}
-                    onChange={(e) => setLabel(e.target.value)}
-                    className="flex-1 min-w-[140px] rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm dark:text-gray-200"
-                  />
-                  <input
-                    placeholder="대분류 (예: 화장품)"
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value)}
-                    className="w-36 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm dark:text-gray-200"
-                  />
-                  <select
-                    value={type}
-                    onChange={(e) => setType(e.target.value as "page" | "keyword")}
-                    className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 py-2 text-sm dark:text-gray-200"
-                  >
-                    <option value="page">페이지</option>
-                    <option value="keyword">키워드</option>
-                  </select>
-                  {type === "page" ? (
+                <p className="mb-3 text-xs text-gray-400">
+                  이름과 광고 라이브러리 URL만 넣고 <b>미리보기·분석</b>을 누르면, AI가 이 브랜드가
+                  무엇을 중점적으로 광고하는지 요약하고 대분류를 자동 추천합니다.
+                </p>
+
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                      브랜드 이름
+                    </label>
                     <input
-                      placeholder="광고 라이브러리 URL 또는 page_id"
-                      value={pageInput}
-                      onChange={(e) => setPageInput(e.target.value)}
-                      className="flex-[2] min-w-[200px] rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm dark:text-gray-200"
+                      placeholder="예: 미니드"
+                      value={label}
+                      onChange={(e) => setLabel(e.target.value)}
+                      className="mt-1 w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2.5 text-sm dark:text-gray-200"
                     />
-                  ) : (
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                      {type === "page" ? "광고 라이브러리 URL 또는 page_id" : "검색어"}
+                    </label>
+                    {type === "page" ? (
+                      <input
+                        placeholder="https://www.facebook.com/ads/library/?...view_all_page_id=..."
+                        value={pageInput}
+                        onChange={(e) => setPageInput(e.target.value)}
+                        className="mt-1 w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2.5 text-sm dark:text-gray-200"
+                      />
+                    ) : (
+                      <input
+                        placeholder="검색어"
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        className="mt-1 w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2.5 text-sm dark:text-gray-200"
+                      />
+                    )}
+                  </div>
+
+                  {/* 미리보기 버튼 + 보조 옵션 */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handlePreview}
+                      disabled={previewing}
+                      className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/10 disabled:opacity-50"
+                    >
+                      {previewing ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Sparkles className="h-4 w-4" />
+                      )}
+                      미리보기·분석
+                    </button>
+                    <span className="text-xs text-gray-400">유형</span>
+                    <select
+                      value={type}
+                      onChange={(e) => setType(e.target.value as "page" | "keyword")}
+                      className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 py-2 text-sm dark:text-gray-200"
+                    >
+                      <option value="page">페이지</option>
+                      <option value="keyword">키워드</option>
+                    </select>
+                    <span className="text-xs text-gray-400">국가</span>
                     <input
-                      placeholder="검색어"
-                      value={query}
-                      onChange={(e) => setQuery(e.target.value)}
-                      className="flex-[2] min-w-[200px] rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm dark:text-gray-200"
+                      value={country}
+                      onChange={(e) => setCountry(e.target.value)}
+                      title="국가코드"
+                      className="w-14 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 py-2 text-sm dark:text-gray-200"
                     />
+                  </div>
+
+                  {/* 분석 미리보기 */}
+                  {previewFocus && (
+                    <div className="rounded-lg border border-indigo-200 dark:border-indigo-900/50 bg-indigo-50 dark:bg-indigo-950/30 p-3">
+                      <div className="mb-1 flex items-center gap-1 text-xs font-bold text-indigo-700 dark:text-indigo-300">
+                        <Sparkles className="h-3.5 w-3.5" /> 분석 미리보기
+                      </div>
+                      <p className="text-sm text-gray-700 dark:text-gray-200">{previewFocus}</p>
+                    </div>
                   )}
-                  <input
-                    value={country}
-                    onChange={(e) => setCountry(e.target.value)}
-                    title="국가코드"
-                    className="w-16 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 py-2 text-sm dark:text-gray-200"
-                  />
-                  <button
-                    type="submit"
-                    className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:opacity-90"
-                  >
-                    추가
-                  </button>
+
+                  {/* 대분류 (미리보기로 자동 추천, 수정 가능) */}
+                  <div>
+                    <label className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                      대분류 {previewFocus && <span className="text-indigo-500">· AI 추천됨 (수정 가능)</span>}
+                    </label>
+                    <select
+                      value={category}
+                      onChange={(e) => setCategory(e.target.value)}
+                      className="mt-1 w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2.5 text-sm dark:text-gray-200"
+                    >
+                      <option value="">대분류 선택 (미리보기로 자동 추천)</option>
+                      {CATEGORIES.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="flex justify-end pt-1">
+                    <button
+                      type="submit"
+                      disabled={
+                        !label.trim() ||
+                        (type === "page" ? !pageInput.trim() : !query.trim())
+                      }
+                      className="rounded-lg bg-primary px-6 py-2.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
+                    >
+                      추가
+                    </button>
+                  </div>
                 </div>
               </form>
 
