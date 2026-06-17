@@ -169,7 +169,17 @@ function pageItems(current: number, total: number): (number | "…")[] {
 
 /* ── 미디어 뷰: 영상 재생 / 캐러셀 슬라이드 / 이미지 ──
    card=true(그리드 카드): 영상은 컨트롤 없는 '미리보기'로 렌더하고 클릭이 카드로 전달되게(=클릭하면 모달 열림). */
-function MediaView({ ad, rounded, card }: { ad: Ad; rounded?: string; card?: boolean }) {
+function MediaView({
+  ad,
+  rounded,
+  card,
+  videoRef,
+}: {
+  ad: Ad;
+  rounded?: string;
+  card?: boolean;
+  videoRef?: React.RefObject<HTMLVideoElement | null>;
+}) {
   const urls = mediaListOf(ad);
   const [idx, setIdx] = useState(0);
   const r = rounded ?? "";
@@ -197,11 +207,12 @@ function MediaView({ ad, rounded, card }: { ad: Ad; rounded?: string; card?: boo
     }
     return (
       <video
+        ref={videoRef}
         src={ad.media_url}
         poster={ad.poster_url || undefined}
         controls
         playsInline
-        preload="none"
+        preload="metadata"
         onClick={(e) => e.stopPropagation()}
         className={`h-full w-full bg-black object-cover ${r}`}
       />
@@ -1124,24 +1135,34 @@ function fmtClock(sec: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-// 구간 프레임: 영상의 t(0~100) 지점 정지화면
-function SegFrame({ src, t }: { src: string; t: number }) {
+// 구간 프레임: 영상의 t(0~100) 지점 정지화면. 클릭하면 메인 영상이 그 지점으로 이동+재생.
+function SegFrame({ src, t, onSeek }: { src: string; t: number; onSeek?: (t: number) => void }) {
   return (
-    <video
-      src={src}
-      muted
-      playsInline
-      preload="metadata"
-      onLoadedMetadata={(e) => {
-        const d = e.currentTarget.duration;
-        if (isFinite(d) && d > 0) {
-          try {
-            e.currentTarget.currentTime = Math.min(d - 0.05, (t / 100) * d);
-          } catch {}
-        }
-      }}
-      className="h-16 w-12 rounded object-cover bg-black"
-    />
+    <button
+      type="button"
+      onClick={() => onSeek?.(t)}
+      title="이 지점부터 재생"
+      className="group relative block overflow-hidden rounded"
+    >
+      <video
+        src={src}
+        muted
+        playsInline
+        preload="metadata"
+        onLoadedMetadata={(e) => {
+          const d = e.currentTarget.duration;
+          if (isFinite(d) && d > 0) {
+            try {
+              e.currentTarget.currentTime = Math.min(d - 0.05, (t / 100) * d);
+            } catch {}
+          }
+        }}
+        className="h-16 w-12 object-cover bg-black"
+      />
+      <span className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/30">
+        <Play className="h-4 w-4 fill-white text-white opacity-0 group-hover:opacity-100" />
+      </span>
+    </button>
   );
 }
 
@@ -1149,10 +1170,12 @@ function AnalysisViz({
   data,
   videoUrl,
   onMarkersChange,
+  onSeek,
 }: {
   data: AnalysisData;
   videoUrl?: string | null;
   onMarkersChange?: (markers: { t: number; note: string }[]) => void;
+  onSeek?: (t: number) => void;
 }) {
   const phases = (data.phases || []).filter((p) => p && p.name);
   const totalWeight = phases.reduce((s, p) => s + (Number(p.weight) || 0), 0) || 1;
@@ -1199,8 +1222,11 @@ function AnalysisViz({
   const timeLabel = (t: number) => (videoUrl && vidDur > 0 ? fmtClock((t / 100) * vidDur) : `${Math.round(t)}%`);
 
   // 사용자 마커(메모) — 부모가 분석 JSON(userMarkers)에 합쳐 '저장' 버튼으로 영구화
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
   function addMarker(t: number) {
-    onMarkersChange?.([...userMarkers, { t: Math.round(t), note: "" }].sort((a, b) => a.t - b.t));
+    const next = [...userMarkers, { t: Math.round(t), note: "" }];
+    onMarkersChange?.(next);
+    setEditingIdx(next.length - 1); // 새 마커 입력에 바로 포커스
   }
   function updateMarker(i: number, note: string) {
     onMarkersChange?.(userMarkers.map((m, j) => (j === i ? { ...m, note } : m)));
@@ -1272,6 +1298,7 @@ function AnalysisViz({
               const x = clamp(((e.clientX - r.left) / r.width) * 100, 0, 100);
               setPinned(x);
               if (videoUrl) seekPreview(x);
+              onSeek?.(x); // 메인 영상을 그 지점으로 이동 + 재생
             }}
           >
             <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 h-full w-full">
@@ -1357,11 +1384,21 @@ function AnalysisViz({
               {userMarkers.map((m, i) => (
                 <div key={i} className="flex items-center gap-1.5">
                   <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-sm bg-amber-500 text-[9px] font-bold text-white">{i + 1}</span>
-                  <span className="w-10 shrink-0 text-[10px] text-gray-400">{timeLabel(m.t)}</span>
+                  <button onClick={() => onSeek?.(m.t)} title="이 지점부터 재생" className="w-10 shrink-0 text-left text-[10px] text-blue-600 hover:underline">
+                    {timeLabel(m.t)}
+                  </button>
                   <input
+                    autoFocus={editingIdx === i}
                     value={m.note}
                     onChange={(e) => updateMarker(i, e.target.value)}
-                    placeholder="이 지점 메모..."
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        setEditingIdx(null);
+                        (e.target as HTMLInputElement).blur(); // 엔터 → 마커 확정
+                      }
+                    }}
+                    placeholder="이 지점 메모 후 Enter"
                     className="flex-1 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 py-1 text-[11px] dark:text-gray-200"
                   />
                   <button onClick={() => removeMarker(i)} className="shrink-0 rounded p-0.5 text-gray-400 hover:text-red-500">
@@ -1413,7 +1450,7 @@ function AnalysisViz({
                   </span>
                   {videoUrl && (
                     <div className="w-12 shrink-0">
-                      <SegFrame src={videoUrl} t={t} />
+                      <SegFrame src={videoUrl} t={t} onSeek={onSeek} />
                     </div>
                   )}
                   <div className="flex-1 leading-snug text-green-700 dark:text-green-400">{s.good || "—"}</div>
@@ -1585,6 +1622,24 @@ function AdDetailModal({
   const ended = ad.status === "ended";
   const days = activeDays(ad);
 
+  // 메인 영상: 그래프/프레임 클릭 시 해당 지점으로 이동 + 재생
+  const mainVideoRef = useRef<HTMLVideoElement | null>(null);
+  function seekMainVideo(t: number) {
+    const v = mainVideoRef.current;
+    if (!v) return;
+    const apply = () => {
+      const d = v.duration;
+      if (isFinite(d) && d > 0) {
+        try {
+          v.currentTime = Math.min(d - 0.05, (t / 100) * d);
+        } catch {}
+      }
+    };
+    if (isFinite(v.duration) && v.duration > 0) apply();
+    else v.addEventListener("loadedmetadata", apply, { once: true });
+    v.play?.().catch(() => {});
+  }
+
   // 상세 지연 로딩으로 ad.memo / ad.ai_analysis 가 나중에 채워지면 동기화
   useEffect(() => {
     setMemo(ad.memo ?? "");
@@ -1712,7 +1767,7 @@ function AdDetailModal({
           {/* 좌: 미디어 + T&D (소재 바로 밑) */}
           <div className="space-y-4 overflow-y-auto border-b p-4 dark:border-gray-800 md:border-b-0 md:border-r">
             <div className="relative mx-auto aspect-[4/5] w-full max-w-md overflow-hidden rounded-xl bg-black/[0.03] dark:bg-black/30">
-              <MediaView ad={ad} rounded="rounded-xl" />
+              <MediaView ad={ad} rounded="rounded-xl" videoRef={mainVideoRef} />
             </div>
             <div>
               <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-gray-400">제목 · 캡션 (T&D)</div>
@@ -1828,6 +1883,7 @@ function AdDetailModal({
                       <AnalysisViz
                         data={parsed}
                         videoUrl={ad.media_type === "video" ? ad.media_url : null}
+                        onSeek={ad.media_type === "video" ? seekMainVideo : undefined}
                         onMarkersChange={(markers) => {
                           const base = parseAnalysis(analysis) || {};
                           setAnalysis(JSON.stringify({ ...base, userMarkers: markers }));
