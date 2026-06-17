@@ -54,12 +54,33 @@ def save_ads(client: Client, target: dict, ads: list[dict]) -> tuple[int, int]:
             "ad_text": a.get("ad_text"),
             "media_type": a.get("media_type"),
             "media_url": a.get("media_url"),
+            "media_urls": a.get("media_urls"),
+            "landing_url": a.get("landing_url"),
+            # 이번에 보였으니 활성으로 갱신(이전에 종료 처리됐어도 부활)
+            "status": "active",
+            "ended_at": None,
             "last_seen_at": now,
         }
         for a in ads
         if a.get("library_id")
     ]
     client.table("am_ads").upsert(payload, on_conflict="library_id").execute()
+
+    # 이번 크롤에서 안 보인(사라진) 이 브랜드의 광고 → '종료'로 표기만(삭제 X).
+    # 중복 수집은 upsert(library_id PK)로 자연 방지되고, 남아있으면 last_seen_at 만 갱신됨.
+    target_id = target.get("id")
+    if target_id and scraped_ids:
+        try:
+            (
+                client.table("am_ads")
+                .update({"status": "ended", "ended_at": now})
+                .eq("target_id", target_id)
+                .eq("status", "active")
+                .not_.in_("library_id", scraped_ids)
+                .execute()
+            )
+        except Exception as e:  # 종료 표기는 실패해도 수집 자체는 성공 처리
+            print(f"  종료 표기 건너뜀: {e}")
 
     new = len(set(scraped_ids) - existing)
     return new, len(scraped_ids)

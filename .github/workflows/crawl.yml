@@ -2,8 +2,8 @@ name: Crawl Meta Ad Library
 
 on:
   schedule:
-    # 매일 UTC 18:00 = 한국시간(KST) 새벽 03:00
-    - cron: "0 18 * * *"
+    # 5일마다 UTC 18:00(KST 새벽 03:00) — 매월 1,6,11,16,21,26,31일에 실행
+    - cron: "0 18 */5 * *"
   workflow_dispatch: {} # 깃허브에서 수동 실행 버튼
 
 jobs:

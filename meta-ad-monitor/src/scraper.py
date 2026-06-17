@@ -60,15 +60,40 @@ _EXTRACT_JS = r"""
     }
     const ctext = container.innerText || '';
     const vid = container.querySelector ? container.querySelector(vidSel) : null;
-    const img = container.querySelector ? container.querySelector(imgSel) : null;
-    let media_url = null, media_type = null;
-    if (vid && vid.getAttribute('src')) { media_url = vid.getAttribute('src'); media_type = 'video'; }
-    else if (img && img.getAttribute('src')) { media_url = img.getAttribute('src'); media_type = 'image'; }
+
+    // 캐러셀: 카드 안의 모든 후보 이미지 src 수집(중복 제거)
+    let imgs = [];
+    if (container.querySelectorAll) {
+      imgs = Array.from(container.querySelectorAll(imgSel))
+        .map(e => e.getAttribute('src'))
+        .filter(s => s && /^https?:/.test(s));
+    }
+    const uniqueImgs = Array.from(new Set(imgs));
+
+    // 랜딩 페이지: 카드 내 외부(페이스북 외) 첫 링크
+    let landing = null;
+    if (container.querySelectorAll) {
+      for (const an of container.querySelectorAll('a[href]')) {
+        const href = an.getAttribute('href') || '';
+        if (/^https?:\/\//.test(href) && !/facebook\.com/.test(href)) { landing = href; break; }
+      }
+    }
+
+    let media_url = null, media_type = null, media_urls = null;
+    if (vid && vid.getAttribute('src')) {
+      media_url = vid.getAttribute('src'); media_type = 'video';
+    } else if (uniqueImgs.length > 1) {
+      media_urls = uniqueImgs.slice(0, 10); media_url = uniqueImgs[0]; media_type = 'carousel';
+    } else if (uniqueImgs.length === 1) {
+      media_url = uniqueImgs[0]; media_type = 'image';
+    }
+
     results[a.libId] = {
       library_id: a.libId,
       started_on: firstMatch(ctext, startRes),
       ad_text: ctext.slice(0, 1000),
-      media_url, media_type,
+      media_url, media_type, media_urls,
+      landing_url: landing,
     };
   }
   return Object.values(results);
