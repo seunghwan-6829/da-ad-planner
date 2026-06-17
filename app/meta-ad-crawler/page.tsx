@@ -753,7 +753,7 @@ function AdDetailModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4" onClick={onClose}>
-      <div className="my-6 w-full max-w-4xl rounded-2xl bg-white dark:bg-gray-900 shadow-xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+      <div className="my-4 flex max-h-[92vh] w-[94vw] max-w-6xl flex-col overflow-hidden rounded-2xl bg-white dark:bg-gray-900 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b dark:border-gray-800 px-5 py-3">
           <div className="flex items-center gap-2.5 min-w-0">
             {brandImage ? (
@@ -783,22 +783,20 @@ function AdDetailModal({
           </div>
         </div>
 
-        <div className="grid md:grid-cols-2">
-          {/* 미디어 */}
-          <div className="bg-black/[0.03] dark:bg-black/30 p-4">
-            <div className="relative mx-auto aspect-[4/5] w-full max-w-sm overflow-hidden rounded-xl">
+        <div className="grid flex-1 overflow-hidden md:grid-cols-2">
+          {/* 좌: 미디어 + T&D (소재 바로 밑) */}
+          <div className="space-y-4 overflow-y-auto border-b p-4 dark:border-gray-800 md:border-b-0 md:border-r">
+            <div className="relative mx-auto aspect-[4/5] w-full max-w-md overflow-hidden rounded-xl bg-black/[0.03] dark:bg-black/30">
               <MediaView ad={ad} rounded="rounded-xl" />
             </div>
-          </div>
-
-          {/* 상세 */}
-          <div className="max-h-[70vh] overflow-y-auto p-5 space-y-4">
-            {/* T&D */}
             <div>
               <div className="mb-1 text-xs font-bold uppercase tracking-wide text-gray-400">제목 · 캡션 (T&D)</div>
               <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700 dark:text-gray-200">{ad.ad_text || "—"}</p>
             </div>
+          </div>
 
+          {/* 우: 메타데이터 + 링크 + 메모 */}
+          <div className="overflow-y-auto p-5 space-y-4">
             {/* 메타데이터 */}
             <div className="rounded-xl border dark:border-gray-800 p-3">
               <div className="mb-2 text-xs font-bold uppercase tracking-wide text-gray-400">메타데이터</div>

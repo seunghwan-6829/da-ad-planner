@@ -61,12 +61,17 @@ _EXTRACT_JS = r"""
     const ctext = container.innerText || '';
     const vid = container.querySelector ? container.querySelector(vidSel) : null;
 
-    // 캐러셀: 카드 안의 모든 후보 이미지 src 수집(중복 제거)
+    // 캐러셀 후보 이미지 수집. 단, 로고/프로필 같은 "작게 렌더된" 이미지는 제외한다.
+    // (단일 이미지 광고가 로고+크리에이티브로 2장이 되어 슬라이드로 오인되는 문제 방지)
     let imgs = [];
     if (container.querySelectorAll) {
-      imgs = Array.from(container.querySelectorAll(imgSel))
-        .map(e => e.getAttribute('src'))
-        .filter(s => s && /^https?:/.test(s));
+      const cands = Array.from(container.querySelectorAll(imgSel));
+      const big = cands.filter(e => {
+        const r = e.getBoundingClientRect();
+        return r.width >= 100 && r.height >= 100;   // 광고 크리에이티브만(아바타/로고 제외)
+      });
+      const chosen = big.length ? big : cands;       // 큰 이미지가 하나도 없으면 폴백
+      imgs = chosen.map(e => e.getAttribute('src')).filter(s => s && /^https?:/.test(s));
     }
     const uniqueImgs = Array.from(new Set(imgs));
 
