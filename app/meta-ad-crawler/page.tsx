@@ -467,6 +467,18 @@ export default function MetaAdCrawlerPage() {
     setDetail((d) => (d && d.library_id === libraryId ? { ...d, ai_analysis } : d));
   }
 
+  // 카드 클릭: 모달을 즉시 열고(목록 데이터), 무거운 상세(본문/메모/AI분석/랜딩)는 그 광고만 따로 받아 채움
+  async function openDetail(ad: Ad) {
+    setDetail(ad);
+    try {
+      const res = await fetch(`/api/meta-ad/ads/${ad.library_id}`);
+      if (res.ok) {
+        const full = await res.json();
+        setDetail((d) => (d && d.library_id === ad.library_id ? { ...d, ...full } : d));
+      }
+    } catch {}
+  }
+
   // 브랜드 관리 모달: 검색어로 거른 뒤 대분류별 그룹핑 (브랜드 50~100개 관리용)
   const mgmtQuery = brandMgmtSearch.trim().toLowerCase();
   const groups: Record<string, Target[]> = {};
@@ -615,7 +627,7 @@ export default function MetaAdCrawlerPage() {
               return (
                 <div
                   key={ad.library_id}
-                  onClick={() => setDetail(ad)}
+                  onClick={() => openDetail(ad)}
                   className="cursor-pointer rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 overflow-hidden flex flex-col hover:shadow-md transition-shadow"
                 >
                   <div className="p-2.5">
@@ -1016,6 +1028,15 @@ function AdDetailModal({
   const [savingAnalysis, setSavingAnalysis] = useState(false);
   const ended = ad.status === "ended";
   const days = activeDays(ad);
+
+  // 상세 지연 로딩으로 ad.memo / ad.ai_analysis 가 나중에 채워지면 동기화
+  useEffect(() => {
+    setMemo(ad.memo ?? "");
+  }, [ad.memo]);
+  useEffect(() => {
+    setAnalysis(ad.ai_analysis ?? null);
+    setAnalysisSaved(!!ad.ai_analysis);
+  }, [ad.ai_analysis]);
 
   // 메모 세로 자동 확장 (내용 길어져도 잘리지 않게)
   const memoRef = useRef<HTMLTextAreaElement>(null);
