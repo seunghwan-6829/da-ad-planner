@@ -245,19 +245,34 @@ export default function MetaAdCrawlerPage() {
   const categorizedRef = useRef(false);
 
   const loadAll = useCallback(async () => {
-    setLoading(true);
-    const [tRes, sRes, aRes] = await Promise.all([
-      fetch("/api/meta-ad/targets"),
-      fetch("/api/meta-ad/stats"),
-      fetch("/api/meta-ad/ads?limit=500"),
-    ]);
-    if (tRes.ok) setTargets(await tRes.json());
-    if (sRes.ok) setCounts((await sRes.json()).counts ?? {});
-    if (aRes.ok) setAds(await aRes.json());
-    setLoading(false);
+    try {
+      const res = await fetch("/api/meta-ad/bootstrap");
+      if (res.ok) {
+        const j = await res.json();
+        setTargets(j.targets ?? []);
+        setAds(j.ads ?? []);
+        setCounts(j.counts ?? {});
+        try {
+          sessionStorage.setItem("meta-ad-cache", JSON.stringify(j));
+        } catch {}
+      }
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
+    // 재진입 시 세션 캐시를 즉시 표시(진입 순간 기다림 제거) → 뒤에서 최신으로 갱신
+    try {
+      const c = sessionStorage.getItem("meta-ad-cache");
+      if (c) {
+        const j = JSON.parse(c);
+        setTargets(j.targets ?? []);
+        setAds(j.ads ?? []);
+        setCounts(j.counts ?? {});
+        setLoading(false);
+      }
+    } catch {}
     loadAll();
   }, [loadAll]);
 
@@ -858,13 +873,38 @@ const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
 
 function parseAnalysis(raw: string | null): AnalysisData | null {
   if (!raw) return null;
+  const ok = (o: any): AnalysisData | null =>
+    o && typeof o === "object" && (Array.isArray(o.phases) || Array.isArray(o.engagement)) ? o : null;
   try {
-    const o = JSON.parse(raw);
-    if (o && typeof o === "object" && (Array.isArray(o.phases) || Array.isArray(o.engagement))) return o;
-    return null;
-  } catch {
-    return null;
+    const o = ok(JSON.parse(raw));
+    if (o) return o;
+  } catch {}
+  // 앞뒤에 텍스트가 섞인 경우: 첫 '{' 부터 균형 맞는 '}' 까지만 추출해 파싱
+  const s = raw.indexOf("{");
+  if (s < 0) return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let i = s; i < raw.length; i++) {
+    const ch = raw[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        try {
+          return ok(JSON.parse(raw.slice(s, i + 1)));
+        } catch {
+          return null;
+        }
+      }
+    }
   }
+  return null;
 }
 
 const PHASE_COLORS = ["#ff5a7a", "#ff9f43", "#5b8def", "#22c55e", "#a855f7", "#14b8a6"];

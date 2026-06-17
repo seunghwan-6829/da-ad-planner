@@ -51,10 +51,11 @@ export async function POST(req: Request) {
 ${mediaNote}
 
 규칙:
-- phases: 소재를 흐름 구간으로 나눔. 영상이면 시간 흐름(예: 후킹→문제 제기→해결/원리→근거→CTA), 이미지면 시선·정보 흐름. 각 weight는 대략적 비중(전부 합쳐 100).
-- engagement: 시청자 몰입/감정 흐름 추정 곡선. 포인트 6~10개. t(0~100, 진행률), v(0~100, 몰입도).
-- markers: 특히 잘된 지점(강한 후킹/매력적 오퍼/사회적 증거/반전 등). t(0~100), 짧은 label, note(왜 좋은지).
+- phases: 소재를 흐름 구간으로 나눔(4~6개). 영상이면 시간 흐름(예: 후킹→문제 제기→해결/원리→근거→CTA), 이미지면 시선·정보 흐름. 각 weight는 대략적 비중(전부 합쳐 100). desc는 25자 이내.
+- engagement: 시청자 몰입/감정 흐름 추정 곡선(7~9개 포인트). t(0~100, 진행률), v(0~100, 몰입도).
+- markers: 특히 잘된 지점(3~5개). t(0~100), 짧은 label, note(왜 좋은지, 35자 이내).
 - 모든 한국어. 수치는 추정이어도 좋음.
+- ⚠️ 반드시 끝까지 "완결된 JSON" 하나만 출력(잘리지 않게 간결히). 마크다운/설명 금지.
 
 아래 JSON만 출력(다른 텍스트 절대 금지):
 {"summary":"한 줄 총평","phases":[{"name":"후킹","weight":15,"desc":"이 구간 설명"}],"engagement":[{"t":0,"v":60},{"t":15,"v":88}],"markers":[{"t":12,"label":"강한 후킹","note":"설명"}],"target":"추정 타겟","offer":"핵심 오퍼/소구점","strengths":["잘된 점1","잘된 점2"]}`
@@ -73,7 +74,7 @@ ${mediaNote}
         'x-api-key': apiKey as string,
         'anthropic-version': '2023-06-01',
       },
-      body: JSON.stringify({ model: MODEL, max_tokens: 1500, messages: [{ role: 'user', content }] }),
+      body: JSON.stringify({ model: MODEL, max_tokens: 4000, messages: [{ role: 'user', content }] }),
     })
   }
 
