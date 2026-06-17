@@ -26,6 +26,7 @@ import {
   Lightbulb,
   Camera,
   ArrowUpRight,
+  Play,
 } from "lucide-react";
 
 type Target = {
@@ -165,13 +166,34 @@ function pageItems(current: number, total: number): (number | "…")[] {
   return items;
 }
 
-/* ── 미디어 뷰: 영상 재생 / 캐러셀 슬라이드 / 이미지 ── */
-function MediaView({ ad, rounded }: { ad: Ad; rounded?: string }) {
+/* ── 미디어 뷰: 영상 재생 / 캐러셀 슬라이드 / 이미지 ──
+   card=true(그리드 카드): 영상은 컨트롤 없는 '미리보기'로 렌더하고 클릭이 카드로 전달되게(=클릭하면 모달 열림). */
+function MediaView({ ad, rounded, card }: { ad: Ad; rounded?: string; card?: boolean }) {
   const urls = mediaListOf(ad);
   const [idx, setIdx] = useState(0);
   const r = rounded ?? "";
 
   if (ad.media_type === "video" && ad.media_url) {
+    if (card) {
+      // 카드: 클릭을 가로채지 않도록 컨트롤 없는 프리뷰(포스터/첫 프레임) + 가운데 ▶
+      return (
+        <div className="pointer-events-none relative h-full w-full bg-black">
+          <video
+            src={ad.media_url}
+            poster={ad.poster_url || undefined}
+            muted
+            playsInline
+            preload="metadata"
+            className={`h-full w-full object-cover ${r}`}
+          />
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-black/45">
+              <Play className="h-4 w-4 fill-white text-white" />
+            </div>
+          </div>
+        </div>
+      );
+    }
     return (
       <video
         src={ad.media_url}
@@ -820,7 +842,7 @@ export default function MetaAdCrawlerPage() {
                   </div>
 
                   <div className="relative aspect-square">
-                    <MediaView ad={ad} />
+                    <MediaView ad={ad} card />
                     {!ended && isNew(ad.first_seen_at) && (
                       <span className="absolute left-1.5 top-1.5 z-10 rounded-full bg-green-600 px-2 py-0.5 text-[10px] font-bold text-white">신규</span>
                     )}
@@ -1045,6 +1067,7 @@ type AnalysisData = {
   phases?: { name: string; weight: number; desc?: string }[];
   engagement?: { t: number; v: number }[];
   markers?: { t: number; label: string; note?: string }[];
+  segments?: { name: string; t?: number; good?: string; bad?: string }[];
   target?: string;
   offer?: string;
   strengths?: string[];
@@ -1090,7 +1113,9 @@ function parseAnalysis(raw: string | null): AnalysisData | null {
 
 const PHASE_COLORS = ["#ff5a7a", "#ff9f43", "#5b8def", "#22c55e", "#a855f7", "#14b8a6"];
 
-function AnalysisViz({ data }: { data: AnalysisData }) {
+const SEG_COLORS = ["#ff5a7a", "#ff9f43", "#5b8def", "#22c55e", "#a855f7", "#14b8a6", "#ec4899"];
+
+function AnalysisViz({ data, videoUrl }: { data: AnalysisData; videoUrl?: string | null }) {
   const phases = (data.phases || []).filter((p) => p && p.name);
   const totalWeight = phases.reduce((s, p) => s + (Number(p.weight) || 0), 0) || 1;
   const pts = (data.engagement || [])
@@ -1102,6 +1127,19 @@ function AnalysisViz({ data }: { data: AnalysisData }) {
     note: m.note || "",
   }));
   const [hover, setHover] = useState<{ x: number; label: string; note: string } | null>(null);
+  const segments = (data.segments || []).filter((s) => s && s.name);
+
+  // 호버 시 해당 시점 영상 프리뷰
+  const previewRef = useRef<HTMLVideoElement>(null);
+  const [vidDur, setVidDur] = useState(0);
+  function seekPreview(x: number) {
+    const v = previewRef.current;
+    if (v && vidDur > 0 && isFinite(vidDur)) {
+      try {
+        v.currentTime = Math.min(vidDur - 0.05, (x / 100) * vidDur);
+      } catch {}
+    }
+  }
 
   const yTop = (v: number) => 88 - (v / 100) * 76; // v 0~100 → top% 88..12
   function interpV(t: number) {
@@ -1151,6 +1189,7 @@ function AnalysisViz({ data }: { data: AnalysisData }) {
               for (const m of markers) if (!near || Math.abs(m.t - x) < Math.abs(near.t - x)) near = m;
               if (near && Math.abs(near.t - x) <= 6) setHover({ x: near.t, label: near.label, note: near.note });
               else setHover({ x, label: `몰입도 ${Math.round(interpV(x))}`, note: "" });
+              if (videoUrl) seekPreview(x);
             }}
             onMouseLeave={() => setHover(null)}
           >
@@ -1168,6 +1207,23 @@ function AnalysisViz({ data }: { data: AnalysisData }) {
             {hover && (
               <>
                 <div style={{ left: `${hover.x}%` }} className="absolute bottom-0 top-0 w-px bg-rose-400/60" />
+                {/* 영상 소재면 해당 시점 프리뷰 */}
+                {videoUrl && (
+                  <div
+                    style={{ left: `${clamp(hover.x, 10, 90)}%` }}
+                    className="pointer-events-none absolute bottom-[105%] z-20 w-20 -translate-x-1/2 overflow-hidden rounded-md border-2 border-rose-400 bg-black shadow-lg"
+                  >
+                    <video
+                      ref={previewRef}
+                      src={videoUrl}
+                      muted
+                      playsInline
+                      preload="metadata"
+                      onLoadedMetadata={(e) => setVidDur(e.currentTarget.duration)}
+                      className="h-28 w-full object-cover"
+                    />
+                  </div>
+                )}
                 <div
                   style={{ left: `${clamp(hover.x, 8, 92)}%` }}
                   className="absolute top-1 max-w-[220px] -translate-x-1/2 truncate rounded-md bg-gray-900 px-2 py-1 text-[10px] text-white"
@@ -1192,6 +1248,40 @@ function AnalysisViz({ data }: { data: AnalysisData }) {
         </div>
       )}
 
+      {/* 구간별 잘한 점 · 아쉬운 점 (시간 흐름) */}
+      {segments.length > 0 && (
+        <div>
+          <div className="mb-1.5 text-[11px] font-bold text-gray-400">구간별 잘한 점 · 아쉬운 점</div>
+          <div className="space-y-1.5">
+            {segments.map((s, i) => (
+              <div key={i} className="rounded-lg border border-gray-100 dark:border-gray-800 p-2">
+                <div className="mb-1 flex items-center gap-1.5">
+                  <span
+                    className="rounded px-1.5 py-0.5 text-[10px] font-bold text-white"
+                    style={{ backgroundColor: SEG_COLORS[i % SEG_COLORS.length] }}
+                  >
+                    {s.name}
+                  </span>
+                  {typeof s.t === "number" && <span className="text-[10px] text-gray-400">{Math.round(s.t)}% 지점</span>}
+                </div>
+                {s.good && (
+                  <div className="flex gap-1.5 text-[12px] leading-snug">
+                    <span className="shrink-0 font-bold text-green-600">잘함</span>
+                    <span className="text-gray-600 dark:text-gray-300">{s.good}</span>
+                  </div>
+                )}
+                {s.bad && (
+                  <div className="flex gap-1.5 text-[12px] leading-snug">
+                    <span className="shrink-0 font-bold text-amber-600">아쉬움</span>
+                    <span className="text-gray-600 dark:text-gray-300">{s.bad}</span>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {(data.target || data.offer) && (
         <div className="grid grid-cols-2 gap-2 text-[12px]">
           {data.target && (
@@ -1209,7 +1299,7 @@ function AnalysisViz({ data }: { data: AnalysisData }) {
         </div>
       )}
 
-      {data.strengths && data.strengths.length > 0 && (
+      {segments.length === 0 && data.strengths && data.strengths.length > 0 && (
         <div>
           <div className="mb-1 text-[11px] font-bold text-gray-400">잘된 점</div>
           <ul className="list-disc space-y-0.5 pl-4 text-[12px] text-gray-600 dark:text-gray-300">
@@ -1528,12 +1618,14 @@ function AdDetailModal({
                 <span className="text-xs font-bold text-gray-400">Source</span>
                 <a href={sourceLink(ad)} target="_blank" rel="noopener noreferrer" className="block truncate text-primary underline">{sourceLink(ad)}</a>
               </div>
-              {ad.landing_url && (
-                <div>
-                  <span className="text-xs font-bold text-gray-400">랜딩 페이지</span>
+              <div>
+                <span className="text-xs font-bold text-gray-400">랜딩 페이지</span>
+                {ad.landing_url ? (
                   <a href={ad.landing_url} target="_blank" rel="noopener noreferrer" className="block truncate text-primary underline">{ad.landing_url}</a>
-                </div>
-              )}
+                ) : (
+                  <span className="block text-xs text-gray-400">수집되지 않음 (다음 크롤링에서 채워질 수 있어요)</span>
+                )}
+              </div>
             </div>
 
             {/* 메모 */}
@@ -1588,7 +1680,7 @@ function AdDetailModal({
                   {(() => {
                     const parsed = parseAnalysis(analysis);
                     return parsed ? (
-                      <AnalysisViz data={parsed} />
+                      <AnalysisViz data={parsed} videoUrl={ad.media_type === "video" ? ad.media_url : null} />
                     ) : (
                       <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700 dark:text-gray-200">{analysis}</p>
                     );

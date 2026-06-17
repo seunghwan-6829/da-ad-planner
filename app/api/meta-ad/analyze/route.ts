@@ -51,14 +51,16 @@ export async function POST(req: Request) {
 ${mediaNote}
 
 규칙:
-- phases: 소재를 흐름 구간으로 나눔(4~6개). 영상이면 시간 흐름(예: 후킹→문제 제기→해결/원리→근거→CTA), 이미지면 시선·정보 흐름. 각 weight는 대략적 비중(전부 합쳐 100). desc는 25자 이내.
+- phases: 소재를 흐름 구간으로 나눔(4~6개). 영상이면 시간 흐름, 이미지면 시선·정보 흐름. 각 weight는 대략적 비중(전부 합쳐 100). desc는 25자 이내.
+  ⚠️ 각 구간의 name은 반드시 "서로 다른 단계"로 분배할 것. 후보: 후킹 / 문제 제기 / 비밀·정보 공개 / 원리·근거·증명 / 사회적 증거 / 상품 실증 / CTA(행동 유도). 절대 모든 구간을 '후킹'으로 만들지 말 것.
 - engagement: 시청자 몰입/감정 흐름 추정 곡선(7~9개 포인트). t(0~100, 진행률), v(0~100, 몰입도).
 - markers: 특히 잘된 지점(3~5개). t(0~100), 짧은 label, note(왜 좋은지, 35자 이내).
+- segments: 시간 흐름을 구간별로 나눠 각 구간의 단계명(name, phases와 같은 계열로 분배)과 잘한 점(good)·아쉬운 점(bad)을 적음(4~6개, t 0~100 오름차순). good/bad는 각 30자 이내. 단점이 없으면 bad는 "개선 제안"으로 채움.
 - 모든 한국어. 수치는 추정이어도 좋음.
 - ⚠️ 반드시 끝까지 "완결된 JSON" 하나만 출력(잘리지 않게 간결히). 마크다운/설명 금지.
 
 아래 JSON만 출력(다른 텍스트 절대 금지):
-{"summary":"한 줄 총평","phases":[{"name":"후킹","weight":15,"desc":"이 구간 설명"}],"engagement":[{"t":0,"v":60},{"t":15,"v":88}],"markers":[{"t":12,"label":"강한 후킹","note":"설명"}],"target":"추정 타겟","offer":"핵심 오퍼/소구점","strengths":["잘된 점1","잘된 점2"]}`
+{"summary":"한 줄 총평","phases":[{"name":"후킹","weight":15,"desc":"이 구간 설명"},{"name":"문제 제기","weight":20,"desc":"설명"}],"engagement":[{"t":0,"v":60},{"t":15,"v":88}],"markers":[{"t":12,"label":"강한 후킹","note":"설명"}],"segments":[{"name":"후킹","t":0,"good":"질문형 자막으로 즉시 시선 고정","bad":"첫 프레임 정보량이 적음"},{"name":"CTA","t":85,"good":"쿠폰으로 행동 장벽 최소화","bad":"마감 압박 부재"}],"target":"추정 타겟","offer":"핵심 오퍼/소구점","strengths":["잘된 점1","잘된 점2"]}`
 
   type Block = { type: 'text'; text: string } | { type: 'image'; source: { type: 'url'; url: string } }
   const baseContent: Block[] = [{ type: 'text', text: prompt }]
