@@ -17,6 +17,7 @@ import {
   Sparkles,
   ExternalLink,
   Save,
+  Check,
 } from "lucide-react";
 
 type Target = {
@@ -121,7 +122,11 @@ const CAPTION_DROP = [
 
 function cleanCaption(text: string | null | undefined, brandName: string): string {
   if (!text) return "—";
-  const lines = text.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+  const lines = text
+    .replace(/[​-‍⁠﻿ ]/g, " ") // 제로폭/비가시 공백 → 일반 공백
+    .split(/\n+/)
+    .map((l) => l.trim())
+    .filter(Boolean);
   const kept: string[] = [];
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i];
@@ -795,8 +800,20 @@ function AdDetailModal({
   const [saved, setSaved] = useState(false);
   const [analysis, setAnalysis] = useState<string | null>(ad.ai_analysis ?? null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [analysisSaved, setAnalysisSaved] = useState<boolean>(!!ad.ai_analysis);
+  const [savingAnalysis, setSavingAnalysis] = useState(false);
   const ended = ad.status === "ended";
   const days = activeDays(ad);
+
+  // 메모 세로 자동 확장 (내용 길어져도 잘리지 않게)
+  const memoRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const el = memoRef.current;
+    if (el) {
+      el.style.height = "auto";
+      el.style.height = `${el.scrollHeight}px`;
+    }
+  }, [memo]);
 
   async function runAnalyze() {
     setAnalyzing(true);
@@ -812,9 +829,29 @@ function AdDetailModal({
         return;
       }
       setAnalysis(j.analysis || "분석 결과가 없습니다.");
-      onAnalyzed(ad.library_id, j.analysis || "");
+      setAnalysisSaved(false); // 저장 전 상태
     } finally {
       setAnalyzing(false);
+    }
+  }
+
+  async function saveAnalysis() {
+    if (!analysis) return;
+    setSavingAnalysis(true);
+    try {
+      const res = await fetch(`/api/meta-ad/ads/${ad.library_id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ai_analysis: analysis }),
+      });
+      if (res.ok) {
+        setAnalysisSaved(true);
+        onAnalyzed(ad.library_id, analysis);
+      } else {
+        alert("분석 저장 실패");
+      }
+    } finally {
+      setSavingAnalysis(false);
     }
   }
 
@@ -921,17 +958,51 @@ function AdDetailModal({
                   {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : saved ? "저장됨" : <><Save className="h-3 w-3" /> 저장</>}
                 </button>
               </div>
-              <textarea value={memo} onChange={(e) => setMemo(e.target.value)} placeholder="이 소재에 대한 메모를 남기세요 (팀 공유)" className="min-h-[90px] w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-2.5 text-sm dark:text-gray-200" />
+              <textarea
+                ref={memoRef}
+                value={memo}
+                onChange={(e) => setMemo(e.target.value)}
+                placeholder="이 소재에 대한 메모를 남기세요 (팀 공유 · Shift+Enter 줄바꿈)"
+                className="min-h-[90px] w-full resize-none overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-2.5 text-sm leading-relaxed dark:text-gray-200"
+              />
             </div>
 
             {/* AI 분석 (메모 아래) */}
             <div>
               {analysis ? (
                 <div className="rounded-xl border border-violet-200 dark:border-violet-900/50 bg-violet-50 dark:bg-violet-950/20 p-3">
-                  <div className="mb-1.5 flex items-center gap-1 text-xs font-bold text-violet-700 dark:text-violet-300">
-                    <Sparkles className="h-3.5 w-3.5" /> AI 분석
+                  <div className="mb-1.5 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1 text-xs font-bold text-violet-700 dark:text-violet-300">
+                      <Sparkles className="h-3.5 w-3.5" /> AI 분석
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      {analysisSaved ? (
+                        <span className="flex items-center gap-0.5 text-[11px] font-medium text-green-600">
+                          <Check className="h-3 w-3" /> 저장됨
+                        </span>
+                      ) : (
+                        <button
+                          onClick={saveAnalysis}
+                          disabled={savingAnalysis}
+                          className="flex items-center gap-1 rounded-md bg-violet-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-violet-700 disabled:opacity-50"
+                        >
+                          {savingAnalysis ? <Loader2 className="h-3 w-3 animate-spin" /> : <><Save className="h-3 w-3" /> 저장</>}
+                        </button>
+                      )}
+                      <button
+                        onClick={runAnalyze}
+                        disabled={analyzing}
+                        className="rounded-md border border-violet-300 dark:border-violet-800 px-2 py-1 text-[11px] font-medium text-violet-700 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-900/30 disabled:opacity-50"
+                        title="다시 분석"
+                      >
+                        {analyzing ? <Loader2 className="h-3 w-3 animate-spin" /> : "다시"}
+                      </button>
+                    </div>
                   </div>
                   <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700 dark:text-gray-200">{analysis}</p>
+                  {!analysisSaved && (
+                    <p className="mt-2 text-[11px] text-gray-400">저장하지 않으면 이 분석은 창을 닫을 때 사라집니다.</p>
+                  )}
                 </div>
               ) : (
                 <button

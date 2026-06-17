@@ -77,9 +77,7 @@ ${firstImage ? '- 크리에이티브 이미지가 함께 첨부됨(분석에 반
     const analysis =
       data.content?.find((b: { type: string }) => b.type === 'text')?.text?.trim() ?? ''
 
-    // 캐싱(컬럼 없으면 무시) — 다음에 다시 열 때 재분석 없이 표시
-    await supabaseAdmin.from('am_ads').update({ ai_analysis: analysis }).eq('library_id', libraryId)
-
+    // 저장하지 않음 — 사용자가 모달에서 '저장'을 눌러야만 DB에 남는다.
     return NextResponse.json({ analysis })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
