@@ -156,7 +156,7 @@ def scrape_target(
     selectors: dict,
     country: str,
     headful: bool = False,
-    max_scrolls: int = 8,
+    max_scrolls: int = 40,
 ) -> list[dict]:
     url = build_url(target, country)
     label = target.get("label", "?")
@@ -175,13 +175,30 @@ def scrape_target(
         page.goto(url, wait_until="domcontentloaded", timeout=60000)
         _human_pause(2.0, 4.0)
 
-        # 무한스크롤: 조금씩 내리며 광고를 더 로드하고, 매번 추출해 합친다.
+        # 무한스크롤: 페이지 맨 아래로 계속 내리며 매번 추출해 합친다.
+        # (가상화로 화면 밖 카드가 DOM에서 사라질 수 있어 매 스텝 추출 + dedup)
+        # 더 이상 늘지 않으면(끝 도달) 몇 번 확인 후 종료.
+        prev_count = -1
+        stagnant = 0
         for _ in range(max_scrolls):
             for ad in extract_ads(page, selectors):
                 ad["target_label"] = label
                 ad["page_name"] = target.get("page_id") or target.get("query")
                 ads[ad["library_id"]] = ad
-            page.mouse.wheel(0, 3000)
+
+            if len(ads) == prev_count:
+                stagnant += 1
+                if stagnant >= 3:  # 3번 연속 안 늘면 끝으로 판단
+                    break
+            else:
+                stagnant = 0
+            prev_count = len(ads)
+
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            try:
+                page.wait_for_load_state("networkidle", timeout=3500)
+            except Exception:
+                pass
             _human_pause()
 
         browser.close()
