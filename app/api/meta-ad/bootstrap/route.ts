@@ -11,10 +11,12 @@ export async function GET() {
     'library_id, target_id, page_name, started_on, ad_text, media_type, media_url, media_urls, poster_url, landing_url, memo, status, ended_at, first_seen_at, last_seen_at'
   const adCols = `${baseCols}, saved`
 
-  let [tRes, aRes, cRes] = await Promise.all([
+  let [tRes, aRes, cRes, anRes] = await Promise.all([
     supabaseAdmin.from('am_targets').select('*').order('created_at', { ascending: false }),
     supabaseAdmin.from('am_ads').select(adCols).order('first_seen_at', { ascending: false }).limit(500),
     supabaseAdmin.from('am_ads').select('target_id'),
+    // 저장된 AI 분석이 있는 소재 id만(가벼움) → 목록에 has_analysis 플래그로 표시
+    supabaseAdmin.from('am_ads').select('library_id').not('ai_analysis', 'is', null),
   ])
 
   if (aRes.error) {
@@ -30,5 +32,8 @@ export async function GET() {
     counts[r.target_id] = (counts[r.target_id] || 0) + 1
   }
 
-  return NextResponse.json({ targets: tRes.data ?? [], ads: aRes.data ?? [], counts })
+  const analyzed = new Set((anRes && !anRes.error ? anRes.data ?? [] : []).map((r: any) => r.library_id))
+  const ads = (aRes.data ?? []).map((a: any) => ({ ...a, has_analysis: analyzed.has(a.library_id) }))
+
+  return NextResponse.json({ targets: tRes.data ?? [], ads, counts })
 }

@@ -28,6 +28,7 @@ import {
   ArrowUpRight,
   Play,
   MapPin,
+  ClipboardList,
 } from "lucide-react";
 
 type Target = {
@@ -61,6 +62,7 @@ type Ad = {
   memo?: string | null;
   saved?: boolean | null;
   ai_analysis?: string | null;
+  has_analysis?: boolean;
   first_seen_at: string;
   last_seen_at?: string | null;
 };
@@ -271,6 +273,7 @@ export default function MetaAdCrawlerPage() {
   const [mediaFilter, setMediaFilter] = useState<"all" | "image" | "carousel" | "video">("all");
   const [sortBy, setSortBy] = useState<"recent" | "longevity">("recent");
   const [savedOnly, setSavedOnly] = useState(false);
+  const [workedOnly, setWorkedOnly] = useState(false);
   const [showFeed, setShowFeed] = useState(false);
   const [page, setPage] = useState(1);
   const [detail, setDetail] = useState<Ad | null>(null);
@@ -388,6 +391,7 @@ export default function MetaAdCrawlerPage() {
     const q = search.trim().toLowerCase();
     const list = ads.filter((ad) => {
       if (savedOnly && !ad.saved) return false;
+      if (workedOnly && !((ad.memo && ad.memo.trim()) || ad.has_analysis)) return false;
       const cat = ad.target_id ? (targetMap[ad.target_id]?.category || "").trim() || "미분류" : "미분류";
       if (activeCategory !== "all" && cat !== activeCategory) return false;
       if (selectedBrand !== "all" && ad.target_id !== selectedBrand) return false;
@@ -404,9 +408,10 @@ export default function MetaAdCrawlerPage() {
     // recent: API가 first_seen_at desc 로 주므로 그대로 유지(최신순)
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ads, search, activeCategory, selectedBrand, mediaFilter, sortBy, savedOnly, targetMap]);
+  }, [ads, search, activeCategory, selectedBrand, mediaFilter, sortBy, savedOnly, workedOnly, targetMap]);
 
   const savedCount = useMemo(() => ads.filter((a) => a.saved).length, [ads]);
+  const workedCount = useMemo(() => ads.filter((a) => (a.memo && a.memo.trim()) || a.has_analysis).length, [ads]);
 
   // #3 카테고리 벤치마크: 대분류별 활성일수 분포를 한 번 계산해두고, 소재별 위치(상위 %)를 구한다.
   const categoryDays = useMemo(() => {
@@ -622,8 +627,8 @@ export default function MetaAdCrawlerPage() {
   }
 
   function onAdAnalyzed(libraryId: string, ai_analysis: string) {
-    setAds((prev) => prev.map((a) => (a.library_id === libraryId ? { ...a, ai_analysis } : a)));
-    setDetail((d) => (d && d.library_id === libraryId ? { ...d, ai_analysis } : d));
+    setAds((prev) => prev.map((a) => (a.library_id === libraryId ? { ...a, ai_analysis, has_analysis: true } : a)));
+    setDetail((d) => (d && d.library_id === libraryId ? { ...d, ai_analysis, has_analysis: true } : d));
   }
 
   // #7 스와이프 파일: 즐겨찾기 토글(낙관적 갱신 후 PATCH)
@@ -793,6 +798,22 @@ export default function MetaAdCrawlerPage() {
             <Star className={`h-4 w-4 ${savedOnly ? "fill-amber-400 text-amber-400" : ""}`} />
             스와이프 {savedCount > 0 && `(${savedCount})`}
           </button>
+          {/* 메모·분석 작업한 소재만 */}
+          <button
+            onClick={() => {
+              setWorkedOnly((v) => !v);
+              resetToFirst();
+            }}
+            title="메모를 적었거나 AI 분석을 저장한 소재만 보기"
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium ${
+              workedOnly
+                ? "border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-700 dark:bg-violet-900/30 dark:text-violet-300"
+                : "border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800"
+            }`}
+          >
+            <ClipboardList className="h-4 w-4" />
+            메모·분석 {workedCount > 0 && `(${workedCount})`}
+          </button>
           <button
             onClick={exportCsv}
             disabled={filteredAds.length === 0}
@@ -824,6 +845,8 @@ export default function MetaAdCrawlerPage() {
               const img = brandImageOfAd(ad);
               const ended = ad.status === "ended";
               const days = activeDays(ad);
+              const hasMemo = !!(ad.memo && ad.memo.trim());
+              const hasAnalysis = !!ad.has_analysis;
               const typeLabel = ad.media_type === "video" ? "영상" : ad.media_type === "carousel" || (ad.media_urls && ad.media_urls.length > 1) ? "슬라이드" : "이미지";
               return (
                 <div
@@ -858,11 +881,23 @@ export default function MetaAdCrawlerPage() {
                     {!ended && isNew(ad.first_seen_at) && (
                       <span className="absolute left-1.5 top-1.5 z-10 rounded-full bg-green-600 px-2 py-0.5 text-[10px] font-bold text-white">신규</span>
                     )}
-                    {ended ? (
-                      <span className="absolute right-1.5 top-1.5 z-10 rounded-full bg-gray-700/90 px-2 py-0.5 text-[10px] font-bold text-white">종료</span>
-                    ) : days >= 7 ? (
-                      <span className="absolute right-1.5 top-1.5 z-10 rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-bold text-white">🔥 {days}일</span>
-                    ) : null}
+                    {/* 우상단: 상태 + 작업(메모/AI분석) 표시 */}
+                    <div className="absolute right-1.5 top-1.5 z-10 flex flex-col items-end gap-1">
+                      {ended ? (
+                        <span className="rounded-full bg-gray-700/90 px-2 py-0.5 text-[10px] font-bold text-white">종료</span>
+                      ) : days >= 7 ? (
+                        <span className="rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-bold text-white">🔥 {days}일</span>
+                      ) : null}
+                      {(hasMemo || hasAnalysis) && (
+                        <span
+                          className="flex items-center gap-0.5 rounded-full bg-white/90 px-1.5 py-0.5 shadow-sm dark:bg-gray-900/90"
+                          title={`${hasAnalysis ? "AI 분석 저장됨" : ""}${hasAnalysis && hasMemo ? " · " : ""}${hasMemo ? "메모 있음" : ""}`}
+                        >
+                          {hasAnalysis && <Sparkles className="h-3 w-3 text-violet-600 dark:text-violet-400" />}
+                          {hasMemo && <Pencil className="h-3 w-3 text-blue-600 dark:text-blue-400" />}
+                        </span>
+                      )}
+                    </div>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
