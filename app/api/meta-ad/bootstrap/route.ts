@@ -14,7 +14,8 @@ export async function GET() {
   let [tRes, aRes, cRes, anRes] = await Promise.all([
     supabaseAdmin.from('am_targets').select('*').order('created_at', { ascending: false }),
     supabaseAdmin.from('am_ads').select(adCols).order('first_seen_at', { ascending: false }).limit(500),
-    supabaseAdmin.from('am_ads').select('target_id'),
+    // 브랜드별 광고 수 집계용. PostgREST 기본 상한(1000행)에 걸리지 않게 명시적으로 크게 잡는다(target_id만이라 가벼움).
+    supabaseAdmin.from('am_ads').select('target_id').limit(100000),
     // 저장된 AI 분석이 있는 소재 id만(가벼움) → 목록에 has_analysis 플래그로 표시
     supabaseAdmin.from('am_ads').select('library_id').not('ai_analysis', 'is', null),
   ])
