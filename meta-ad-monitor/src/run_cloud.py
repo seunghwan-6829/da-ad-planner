@@ -29,6 +29,10 @@ def main() -> int:
 
     # CRAWL_TARGET_ID 가 있으면 그 브랜드 1개만 즉시 크롤(브랜드 추가 직후 트리거용).
     target_id = (os.environ.get("CRAWL_TARGET_ID") or "").strip()
+    # 단일 브랜드 dispatch는 매트릭스 청크 0에서만 실행(나머지 청크 작업은 바로 종료).
+    if target_id and int(os.environ.get("CRAWL_CHUNK") or "0") != 0:
+        print("단일 브랜드 크롤은 청크 0에서만 수행 — 이 청크는 건너뜀")
+        return 0
     if target_id:
         t = supabase_store.fetch_target(client, target_id)
         targets = [t] if t else []

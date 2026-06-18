@@ -15,8 +15,7 @@ jobs:
   crawl:
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    # 단일 브랜드 즉시 크롤(target_id 있음)이면 청크 0 하나만, 전체 크롤이면 8개 병렬로 분담(82개도 45분 내).
-    if: ${{ github.event.inputs.target_id == '' || matrix.chunk == 0 }}
+    # 전체 크롤이면 8개 병렬로 분담(82개도 45분 내). 단일 브랜드 dispatch면 청크0만 실제 크롤(나머지는 run_cloud가 즉시 종료).
     strategy:
       fail-fast: false
       matrix:
