@@ -15,6 +15,12 @@ jobs:
   crawl:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # 단일 브랜드 즉시 크롤(target_id 있음)이면 청크 0 하나만, 전체 크롤이면 8개 병렬로 분담(82개도 45분 내).
+    if: ${{ github.event.inputs.target_id == '' || matrix.chunk == 0 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        chunk: [0, 1, 2, 3, 4, 5, 6, 7]
     # 파이썬 크롤러(src/, config/, requirements.txt)는 meta-ad-monitor/ 에 그대로 둔다.
     defaults:
       run:
@@ -45,6 +51,8 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           CRAWL_TARGET_ID: ${{ github.event.inputs.target_id }}
+          CRAWL_CHUNK: ${{ matrix.chunk }}
+          CRAWL_CHUNKS: "8"
           # 레지던셜 프록시(있으면 전 광고 수집, 없으면 직접 접속=상위 ~30개)
           PROXY_SERVER: ${{ secrets.PROXY_SERVER }}
           PROXY_USERNAME: ${{ secrets.PROXY_USERNAME }}

@@ -66,7 +66,8 @@ export async function POST(req: Request) {
     .single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  // 추가 즉시 그 브랜드만 크롤 트리거(5일 주기 안 기다리고 바로 수집)
-  const crawl_triggered = await triggerCrawl(data.id)
+  // 추가 즉시 그 브랜드만 크롤 트리거(5일 주기 안 기다리고 바로 수집).
+  // 단, 대량 일괄 등록 시엔 no_crawl=true 로 트리거를 막는다(82개 동시 디스패치 방지 → 정기 크롤이 처리).
+  const crawl_triggered = body.no_crawl ? false : await triggerCrawl(data.id)
   return NextResponse.json({ ...data, crawl_triggered })
 }

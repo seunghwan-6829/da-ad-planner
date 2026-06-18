@@ -38,6 +38,14 @@ def main() -> int:
         print(f"단일 브랜드 즉시 크롤: {targets[0].get('label')} ({target_id})")
     else:
         targets = supabase_store.fetch_enabled_targets(client)
+        # 브랜드가 많으면(예: 82개) 한 작업에서 다 돌면 45분 한도를 넘는다.
+        # CRAWL_CHUNKS/CRAWL_CHUNK 로 enabled 타겟을 N등분해 병렬 작업이 나눠 처리.
+        chunks = int(os.environ.get("CRAWL_CHUNKS") or "0")
+        chunk = int(os.environ.get("CRAWL_CHUNK") or "0")
+        if chunks > 1:
+            targets = sorted(targets, key=lambda t: str(t.get("id") or ""))
+            targets = [t for i, t in enumerate(targets) if i % chunks == chunk]
+            print(f"청크 {chunk + 1}/{chunks}: 이 작업이 맡은 {len(targets)}개 크롤")
     if not targets:
         print("enabled 타겟이 없습니다. 대시보드에서 업체를 추가하세요.")
         return 0
@@ -56,8 +64,8 @@ def main() -> int:
             print(f"[{t.get('label')}] 실패: {e}", file=sys.stderr)
             supabase_store.record_health(client, t.get("id"), 0, "ERROR")
 
-    # 전체(정기) 크롤일 때만 오래 안 보인 광고를 종료 처리(부분 수집 오탐 방지).
-    if not target_id:
+    # 전체(정기) 크롤일 때만, 그리고 청크 0(작업 1개)에서만 종료 스윕 1회 실행(중복/오탐 방지).
+    if not target_id and int(os.environ.get("CRAWL_CHUNK") or "0") == 0:
         ended = supabase_store.sweep_stale_ended(client)
         if ended:
             print(f"오래 미관측 {ended}건 종료 표기")
