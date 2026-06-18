@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from supabase import Client, create_client
 
@@ -99,24 +99,33 @@ def save_ads(client: Client, target: dict, ads: list[dict]) -> tuple[int, int]:
         )
     client.table("am_ads").upsert(payload, on_conflict="library_id").execute()
 
-    # 이번 크롤에서 안 보인(사라진) 이 브랜드의 광고 → '종료'로 표기만(삭제 X).
-    # 중복 수집은 upsert(library_id PK)로 자연 방지되고, 남아있으면 last_seen_at 만 갱신됨.
-    target_id = target.get("id")
-    if target_id and scraped_ids:
-        try:
-            (
-                client.table("am_ads")
-                .update({"status": "ended", "ended_at": now})
-                .eq("target_id", target_id)
-                .eq("status", "active")
-                .not_.in_("library_id", scraped_ids)
-                .execute()
-            )
-        except Exception as e:  # 종료 표기는 실패해도 수집 자체는 성공 처리
-            print(f"  종료 표기 건너뜀: {e}")
+    # ⚠️ '종료' 표기는 여기서 하지 않는다.
+    #   메타가 headless 크롤에 광고를 매번 다른 부분집합(30~40개)만 내주기 때문에,
+    #   "이번에 안 보임=종료"로 찍으면 멀쩡한 광고가 오종료된다(부분 수집 오탐).
+    #   대신 run_cloud 가 정기(전체) 크롤 끝에 sweep_stale_ended() 로
+    #   "오래(기본 12일) 안 보인" 광고만 종료 처리한다. last_seen_at 은 매 크롤 갱신됨.
 
     new = len(set(scraped_ids) - existing)
     return new, len(scraped_ids)
+
+
+def sweep_stale_ended(client: Client, days: int = 12) -> int:
+    """오래(기본 12일) 안 보인 active 광고만 '종료'로 표기. 부분 수집 오탐 방지용.
+    매 크롤에서 본 광고는 last_seen_at 이 갱신되므로, 진짜 사라진 광고만 점차 종료된다."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        res = (
+            client.table("am_ads")
+            .update({"status": "ended", "ended_at": now})
+            .eq("status", "active")
+            .lt("last_seen_at", cutoff)
+            .execute()
+        )
+        return len(res.data or [])
+    except Exception as e:
+        print(f"  종료 스윕 건너뜀: {e}")
+        return 0
 
 
 def record_health(client: Client, target_id: str, count: int, status: str) -> None:

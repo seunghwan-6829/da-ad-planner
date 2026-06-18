@@ -56,6 +56,12 @@ def main() -> int:
             print(f"[{t.get('label')}] 실패: {e}", file=sys.stderr)
             supabase_store.record_health(client, t.get("id"), 0, "ERROR")
 
+    # 전체(정기) 크롤일 때만 오래 안 보인 광고를 종료 처리(부분 수집 오탐 방지).
+    if not target_id:
+        ended = supabase_store.sweep_stale_ended(client)
+        if ended:
+            print(f"오래 미관측 {ended}건 종료 표기")
+
     print(f"\n총 신규 {grand_new}건 누적.")
     return 0
 
