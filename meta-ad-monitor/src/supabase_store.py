@@ -30,6 +30,13 @@ def fetch_enabled_targets(client: Client) -> list[dict]:
     return res.data or []
 
 
+def fetch_target(client: Client, target_id: str) -> dict | None:
+    """단일 브랜드(즉시 크롤용). enabled 여부와 무관하게 id 로 조회."""
+    res = client.table("am_targets").select("*").eq("id", target_id).limit(1).execute()
+    rows = res.data or []
+    return rows[0] if rows else None
+
+
 def save_ads(client: Client, target: dict, ads: list[dict]) -> tuple[int, int]:
     """반환: (신규 개수, 추출 총 개수). first_seen_at 은 신규일 때만 기록되도록
     payload 에서 제외 → 기존 광고는 last_seen_at 만 갱신됨."""

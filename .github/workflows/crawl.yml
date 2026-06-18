@@ -4,7 +4,12 @@ on:
   schedule:
     # 5일마다 UTC 18:00(KST 새벽 03:00) — 매월 1,6,11,16,21,26,31일에 실행
     - cron: "0 18 */5 * *"
-  workflow_dispatch: {} # 깃허브에서 수동 실행 버튼
+  workflow_dispatch:
+    inputs:
+      target_id:
+        description: "특정 브랜드 id만 즉시 크롤(비우면 enabled 전체)"
+        required: false
+        default: ""
 
 jobs:
   crawl:
@@ -36,4 +41,5 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          CRAWL_TARGET_ID: ${{ github.event.inputs.target_id }}
         run: python -m src.run_cloud

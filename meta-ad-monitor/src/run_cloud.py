@@ -8,6 +8,7 @@ Supabase am_targets 에서 enabled 타겟을 읽어 크롤링하고,
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -25,7 +26,18 @@ def main() -> int:
     )
 
     client = supabase_store.get_client()
-    targets = supabase_store.fetch_enabled_targets(client)
+
+    # CRAWL_TARGET_ID 가 있으면 그 브랜드 1개만 즉시 크롤(브랜드 추가 직후 트리거용).
+    target_id = (os.environ.get("CRAWL_TARGET_ID") or "").strip()
+    if target_id:
+        t = supabase_store.fetch_target(client, target_id)
+        targets = [t] if t else []
+        if not targets:
+            print(f"target_id={target_id} 를 찾을 수 없습니다.")
+            return 0
+        print(f"단일 브랜드 즉시 크롤: {targets[0].get('label')} ({target_id})")
+    else:
+        targets = supabase_store.fetch_enabled_targets(client)
     if not targets:
         print("enabled 타겟이 없습니다. 대시보드에서 업체를 추가하세요.")
         return 0

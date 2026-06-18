@@ -284,6 +284,7 @@ export default function MetaAdCrawlerPage() {
   // 브랜드 관리 모달
   const [showSettings, setShowSettings] = useState(false);
   const [brandMgmtSearch, setBrandMgmtSearch] = useState("");
+  const [addNotice, setAddNotice] = useState<string | null>(null);
 
   // 추가 폼
   const [label, setLabel] = useState("");
@@ -553,8 +554,8 @@ export default function MetaAdCrawlerPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(bodyData),
     });
+    const j = await res.json().catch(() => ({}));
     if (!res.ok) {
-      const j = await res.json().catch(() => ({}));
       alert("추가 실패: " + (j.error ?? res.status));
       return;
     }
@@ -564,6 +565,15 @@ export default function MetaAdCrawlerPage() {
     setQuery("");
     setPreviewFocus(null);
     loadAll();
+    if (j.crawl_triggered) {
+      setAddNotice("✅ 브랜드 추가됨 · 방금 이 브랜드 크롤링을 시작했어요. 1~2분 뒤 소재가 자동으로 채워집니다.");
+      // 크롤 완료 즈음 자동 반영
+      setTimeout(() => loadAll(), 90000);
+      setTimeout(() => loadAll(), 150000);
+    } else {
+      setAddNotice("브랜드 추가됨 · 즉시 크롤은 미설정 상태라 다음 자동 크롤링(최대 5일) 때 수집됩니다. (관리자: Vercel에 GH_DISPATCH_TOKEN 설정 시 즉시 크롤)");
+    }
+    setTimeout(() => setAddNotice(null), 15000);
   }
 
   async function patchTarget(id: string, patch: Record<string, unknown>) {
@@ -1045,6 +1055,11 @@ export default function MetaAdCrawlerPage() {
                       ))}
                     </select>
                   </div>
+                  {addNotice && (
+                    <div className="rounded-lg border border-green-200 dark:border-green-900/50 bg-green-50 dark:bg-green-950/30 p-2.5 text-xs text-green-800 dark:text-green-300">
+                      {addNotice}
+                    </div>
+                  )}
                   <div className="flex justify-end pt-1">
                     <button type="submit" disabled={!label.trim() || (type === "page" ? !pageInput.trim() : !query.trim())} className="rounded-lg bg-primary px-6 py-2.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40">추가</button>
                   </div>
