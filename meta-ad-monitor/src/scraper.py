@@ -203,16 +203,18 @@ def scrape_target(
                 ctx_kwargs["proxy"] = proxy
                 print(f"  프록시 사용: {proxy_server}")
             ctx = browser.new_context(**ctx_kwargs)
-            # 프록시 대역폭 절약: 영상/폰트 '바이트'는 안 받음(추출엔 src 속성만 필요, 실제 파일은 media.py가 직접 다운로드)
-            try:
-                ctx.route(
-                    "**/*",
-                    lambda route: route.abort()
-                    if route.request.resource_type in ("media", "font")
-                    else route.continue_(),
-                )
-            except Exception:
-                pass
+            # 프록시 모드에서만 대역폭 절약(영상/폰트 차단). 직접 접속(프록시 없음)에선
+            # 라우트 가로채기가 추출을 불안정하게 만들 수 있어 간섭하지 않는다.
+            if use_proxy and proxy_server:
+                try:
+                    ctx.route(
+                        "**/*",
+                        lambda route: route.abort()
+                        if route.request.resource_type in ("media", "font")
+                        else route.continue_(),
+                    )
+                except Exception:
+                    pass
             page = ctx.new_page()
             page.goto(url, wait_until="domcontentloaded", timeout=60000)
             _human_pause(2.0, 4.0)
