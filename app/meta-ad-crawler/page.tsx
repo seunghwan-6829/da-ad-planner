@@ -29,6 +29,7 @@ import {
   Play,
   MapPin,
   ClipboardList,
+  Move,
 } from "lucide-react";
 
 type Target = {
@@ -888,13 +889,14 @@ export default function MetaAdCrawlerPage() {
                       ) : days >= 7 ? (
                         <span className="rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-bold text-white">🔥 {days}일</span>
                       ) : null}
-                      {(hasMemo || hasAnalysis) && (
-                        <span
-                          className="flex items-center gap-0.5 rounded-full bg-white/90 px-1.5 py-0.5 shadow-sm dark:bg-gray-900/90"
-                          title={`${hasAnalysis ? "AI 분석 저장됨" : ""}${hasAnalysis && hasMemo ? " · " : ""}${hasMemo ? "메모 있음" : ""}`}
-                        >
-                          {hasAnalysis && <Sparkles className="h-3 w-3 text-violet-600 dark:text-violet-400" />}
-                          {hasMemo && <Pencil className="h-3 w-3 text-blue-600 dark:text-blue-400" />}
+                      {hasAnalysis && (
+                        <span className="flex items-center gap-0.5 rounded-full bg-violet-600 px-1.5 py-0.5 text-[10px] font-bold text-white shadow" title="AI 분석 저장됨">
+                          <Sparkles className="h-3 w-3" /> AI
+                        </span>
+                      )}
+                      {hasMemo && (
+                        <span className="flex items-center gap-0.5 rounded-full bg-blue-600 px-1.5 py-0.5 text-[10px] font-bold text-white shadow" title="메모 있음">
+                          <Pencil className="h-3 w-3" /> 메모
                         </span>
                       )}
                     </div>
@@ -1289,6 +1291,9 @@ function AnalysisViz({
 
   // 사용자 마커(메모) — 부모가 분석 JSON(userMarkers)에 합쳐 '저장' 버튼으로 영구화
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  const [editTarget, setEditTarget] = useState<number | null>(null); // 위치 이동(드래그) 편집 중인 마커
+  const graphRef = useRef<HTMLDivElement>(null);
+  const markerDragRef = useRef<number | null>(null);
   function addMarker(t: number) {
     const next = [...userMarkers, { t: Math.round(t), note: "" }];
     onMarkersChange?.(next);
@@ -1297,7 +1302,11 @@ function AnalysisViz({
   function updateMarker(i: number, note: string) {
     onMarkersChange?.(userMarkers.map((m, j) => (j === i ? { ...m, note } : m)));
   }
+  function updateMarkerT(i: number, t: number) {
+    onMarkersChange?.(userMarkers.map((m, j) => (j === i ? { ...m, t: Math.round(clamp(t, 0, 100)) } : m)));
+  }
   function removeMarker(i: number) {
+    if (editTarget === i) setEditTarget(null);
     onMarkersChange?.(userMarkers.filter((_, j) => j !== i));
   }
 
@@ -1351,9 +1360,11 @@ function AnalysisViz({
             )}
           </div>
           <div
+            ref={graphRef}
             className={`relative h-28 w-full touch-none select-none rounded-lg border border-gray-100 dark:border-gray-800 bg-gradient-to-b from-blue-50/70 to-transparent dark:from-blue-950/20 ${videoUrl ? "cursor-pointer" : ""}`}
             onPointerDown={(e) => {
               if (!videoUrl) return;
+              if (markerDragRef.current != null) return; // 마커 드래그 중이면 스크럽 안 함
               (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
               draggingRef.current = true;
               seek(pctFromX(e.clientX, e.currentTarget), false);
@@ -1386,14 +1397,54 @@ function AnalysisViz({
                 className="pointer-events-none absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-blue-500 ring-2 ring-white dark:ring-gray-900"
               />
             ))}
-            {/* 사용자 마커(주황 깃발) */}
-            {userMarkers.map((m, i) => (
-              <div key={`u${i}`} style={{ left: `${m.t}%` }} className="pointer-events-none absolute bottom-0 top-0 w-px bg-amber-400" title={m.note}>
-                <div className="absolute -top-1 left-0 flex h-4 w-4 -translate-x-1/2 items-center justify-center rounded-sm bg-amber-500 text-[9px] font-bold text-white">
-                  {i + 1}
+            {/* 사용자 마커(주황 깃발) — 편집 중인 마커는 그래프에서 드래그로 위치 이동 */}
+            {userMarkers.map((m, i) => {
+              const isEdit = editTarget === i;
+              const dim = editTarget != null && !isEdit;
+              return (
+                <div
+                  key={`u${i}`}
+                  style={{ left: `${m.t}%` }}
+                  className={`absolute bottom-0 top-0 w-px ${isEdit ? "bg-amber-600" : "bg-amber-400"} ${isEdit ? "" : "pointer-events-none"} ${dim ? "opacity-30" : ""}`}
+                  title={m.note}
+                >
+                  <div
+                    onPointerDown={
+                      isEdit
+                        ? (e) => {
+                            e.stopPropagation();
+                            (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+                            markerDragRef.current = i;
+                          }
+                        : undefined
+                    }
+                    onPointerMove={
+                      isEdit
+                        ? (e) => {
+                            if (markerDragRef.current === i && graphRef.current) {
+                              e.stopPropagation();
+                              updateMarkerT(i, pctFromX(e.clientX, graphRef.current));
+                            }
+                          }
+                        : undefined
+                    }
+                    onPointerUp={
+                      isEdit
+                        ? (e) => {
+                            e.stopPropagation();
+                            markerDragRef.current = null;
+                          }
+                        : undefined
+                    }
+                    className={`absolute -top-1 left-0 flex -translate-x-1/2 items-center justify-center rounded-sm font-bold text-white ${
+                      isEdit ? "h-5 w-5 animate-pulse cursor-ew-resize bg-amber-600 text-[10px] ring-2 ring-amber-300" : "h-4 w-4 bg-amber-500 text-[9px]"
+                    }`}
+                  >
+                    {i + 1}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {/* 재생 위치 인디게이터 — 영상 재생/스크럽에 따라 이동 */}
             {playPct != null && (
               <div style={{ left: `${clamp(playPct, 0, 100)}%` }} className="pointer-events-none absolute bottom-0 top-0 z-10 w-0.5 -translate-x-1/2 bg-blue-600">
@@ -1431,31 +1482,53 @@ function AnalysisViz({
           {/* 내 마커 메모 편집 */}
           {onMarkersChange && userMarkers.length > 0 && (
             <div className="mt-2 space-y-1">
-              {userMarkers.map((m, i) => (
-                <div key={i} className="flex items-center gap-1.5">
-                  <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-sm bg-amber-500 text-[9px] font-bold text-white">{i + 1}</span>
-                  <button onClick={() => seek(m.t, true)} title="이 지점부터 재생" className="w-10 shrink-0 text-left text-[10px] text-blue-600 hover:underline">
-                    {timeLabel(m.t)}
-                  </button>
-                  <input
-                    autoFocus={editingIdx === i}
-                    value={m.note}
-                    onChange={(e) => updateMarker(i, e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        setEditingIdx(null);
-                        (e.target as HTMLInputElement).blur(); // 엔터 → 마커 확정
-                      }
-                    }}
-                    placeholder="이 지점 메모 후 Enter"
-                    className="flex-1 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 py-1 text-[11px] dark:text-gray-200"
-                  />
-                  <button onClick={() => removeMarker(i)} className="shrink-0 rounded p-0.5 text-gray-400 hover:text-red-500">
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              ))}
+              {editTarget != null && (
+                <p className="text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                  ✋ 그래프에서 {editTarget + 1}번 마커를 좌우로 드래그해 위치를 옮기세요. (완료 버튼으로 종료)
+                </p>
+              )}
+              {userMarkers.map((m, i) => {
+                const isEdit = editTarget === i;
+                return (
+                  <div
+                    key={i}
+                    className={`flex items-center gap-1.5 rounded px-1 py-0.5 ${isEdit ? "bg-amber-50 ring-1 ring-amber-300 dark:bg-amber-900/20 dark:ring-amber-700" : ""}`}
+                  >
+                    <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-sm bg-amber-500 text-[9px] font-bold text-white">{i + 1}</span>
+                    <button onClick={() => seek(m.t, true)} title="이 지점부터 재생" className="w-10 shrink-0 text-left text-[10px] text-blue-600 hover:underline">
+                      {timeLabel(m.t)}
+                    </button>
+                    <input
+                      autoFocus={editingIdx === i}
+                      value={m.note}
+                      onChange={(e) => updateMarker(i, e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          setEditingIdx(null);
+                          (e.target as HTMLInputElement).blur(); // 엔터 → 마커 확정
+                        }
+                      }}
+                      placeholder="이 지점 메모 후 Enter"
+                      className="flex-1 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 py-1 text-[11px] dark:text-gray-200"
+                    />
+                    <button
+                      onClick={() => {
+                        const next = isEdit ? null : i;
+                        setEditTarget(next);
+                        if (next != null) seek(m.t, false); // 편집 시작 시 그 지점으로 영상 이동(집중)
+                      }}
+                      title={isEdit ? "위치 편집 완료" : "위치 이동(그래프에서 드래그)"}
+                      className={`shrink-0 rounded p-0.5 ${isEdit ? "bg-amber-500 text-white" : "text-gray-400 hover:text-amber-600"}`}
+                    >
+                      {isEdit ? <Check className="h-3.5 w-3.5" /> : <Move className="h-3.5 w-3.5" />}
+                    </button>
+                    <button onClick={() => removeMarker(i)} title="마커 삭제" className="shrink-0 rounded p-0.5 text-gray-400 hover:text-red-500">
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
