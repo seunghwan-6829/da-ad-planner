@@ -84,11 +84,22 @@ const CATEGORIES = [
 ];
 
 function parsePageId(input: string): string {
-  const m = input.match(/view_all_page_id=(\d+)/);
+  const s = input.trim();
+  const m = s.match(/view_all_page_id=(\d+)/);
   if (m) return m[1];
-  const onlyDigits = input.trim();
-  return /^\d+$/.test(onlyDigits) ? onlyDigits : input.trim();
+  if (/^\d+$/.test(s)) return s;
+  // 잘못된 형태(전체 URL 등)는 숫자열만 추출해 폴백(없으면 원문). 단일 광고 링크는 addTarget 검증에서 거른다.
+  const any = s.match(/(\d{6,})/);
+  return any ? any[1] : s;
 }
+
+// "광고 1개" 상세 링크인지(id=만 있고 view_all_page_id 없음) — 이걸로는 페이지 전체를 못 가져온다.
+function isSingleAdUrl(input: string): boolean {
+  const s = input.trim();
+  return /[?&]id=\d+/.test(s) && !/view_all_page_id=\d+/.test(s);
+}
+const SINGLE_AD_WARN =
+  "이 링크는 '광고 1개' 상세 링크예요(주소에 id=…).\n\n브랜드 전체 광고를 가져오려면:\n메타 광고 라이브러리에서 그 광고를 연 뒤 → 광고주(페이지) 이름을 클릭 → '모든 광고 보기' 화면으로 이동 → 그 주소(view_all_page_id=… 가 들어간 URL)를 복사해 붙여넣어 주세요.\n\n(또는 유형을 '키워드'로 바꿔 브랜드명으로 검색해도 됩니다.)";
 
 function isNew(iso: string): boolean {
   return Date.now() - new Date(iso).getTime() < 7 * 24 * 3600 * 1000;
@@ -545,6 +556,10 @@ export default function MetaAdCrawlerPage() {
 
   async function addTarget(e: React.FormEvent) {
     e.preventDefault();
+    if (type === "page" && isSingleAdUrl(pageInput)) {
+      alert(SINGLE_AD_WARN);
+      return;
+    }
     const bodyData =
       type === "page"
         ? { label, category, type, page_id: parsePageId(pageInput), country }
@@ -598,6 +613,10 @@ export default function MetaAdCrawlerPage() {
   }
 
   async function saveEdit(id: string) {
+    if (edit.type === "page" && isSingleAdUrl(edit.pageInput ?? "")) {
+      alert(SINGLE_AD_WARN);
+      return;
+    }
     const patch: Record<string, unknown> = {
       label: edit.label,
       category: edit.category,
