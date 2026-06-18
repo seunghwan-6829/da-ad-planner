@@ -30,12 +30,15 @@ export async function PATCH(
   return NextResponse.json(data)
 }
 
-// 타겟 삭제 (쌓인 광고는 target_id 가 null 로 남음)
+// 타겟 삭제 — 그 브랜드에 쌓인 광고/헬스체크도 함께 정리(고아 데이터 방지).
 export async function DELETE(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
+  // 자식 레코드 먼저 정리(FK 캐스케이드가 설정돼 있지 않으므로 명시적으로 삭제).
+  await supabaseAdmin.from('am_ads').delete().eq('target_id', id)
+  await supabaseAdmin.from('am_health_checks').delete().eq('target_id', id)
   const { error } = await supabaseAdmin.from('am_targets').delete().eq('id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })
