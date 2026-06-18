@@ -40,7 +40,10 @@ jobs:
         run: python -m playwright install --with-deps chromium
 
       - name: Ensure ffmpeg (영상 프레임 추출용)
-        timeout-minutes: 5  # apt 행(hang) 시 전체 30분 잡아먹지 않게 빠르게 실패
+        # ffmpeg 는 프레임 추출(부가기능)용. 설치가 느리거나 실패해도 크롤(광고/영상 저장)은 계속돼야 하므로
+        # continue-on-error 로 두어 이 단계 실패가 잡 전체를 죽이지 않게 한다.
+        continue-on-error: true
+        timeout-minutes: 8
         run: |
           ffmpeg -version >/dev/null 2>&1 && echo "ffmpeg 이미 설치됨" && exit 0
           sudo apt-get install -y ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
