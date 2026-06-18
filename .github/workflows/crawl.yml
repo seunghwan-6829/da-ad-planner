@@ -14,7 +14,7 @@ on:
 jobs:
   crawl:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     # 파이썬 크롤러(src/, config/, requirements.txt)는 meta-ad-monitor/ 에 그대로 둔다.
     defaults:
       run:
@@ -35,7 +35,10 @@ jobs:
         run: python -m playwright install --with-deps chromium
 
       - name: Ensure ffmpeg (영상 프레임 추출용)
-        run: ffmpeg -version || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+        timeout-minutes: 5  # apt 행(hang) 시 전체 30분 잡아먹지 않게 빠르게 실패
+        run: |
+          ffmpeg -version >/dev/null 2>&1 && echo "ffmpeg 이미 설치됨" && exit 0
+          sudo apt-get install -y ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
 
       - name: Run crawler
         env:
