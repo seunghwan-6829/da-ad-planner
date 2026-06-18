@@ -11,11 +11,27 @@ export async function GET() {
     'library_id, target_id, page_name, started_on, ad_text, media_type, media_url, media_urls, poster_url, landing_url, memo, status, ended_at, first_seen_at, last_seen_at'
   const adCols = `${baseCols}, saved`
 
+  // 브랜드별 광고 수 집계: PostgREST 서버측 상한(db-max-rows, 보통 1000)은 .limit()으로 못 넘기므로
+  // .range() 로 페이지네이션하며 target_id 만 모아 정확히 센다.
+  async function fetchAllTargetIds(): Promise<{ data: { target_id: string }[]; error: any }> {
+    const PAGE = 1000
+    const all: { target_id: string }[] = []
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await supabaseAdmin
+        .from('am_ads')
+        .select('target_id')
+        .range(from, from + PAGE - 1)
+      if (error) return { data: all, error }
+      all.push(...((data as any[]) ?? []))
+      if (!data || data.length < PAGE) break
+    }
+    return { data: all, error: null }
+  }
+
   let [tRes, aRes, cRes, anRes] = await Promise.all([
     supabaseAdmin.from('am_targets').select('*').order('created_at', { ascending: false }),
     supabaseAdmin.from('am_ads').select(adCols).order('first_seen_at', { ascending: false }).limit(500),
-    // 브랜드별 광고 수 집계용. PostgREST 기본 상한(1000행)에 걸리지 않게 명시적으로 크게 잡는다(target_id만이라 가벼움).
-    supabaseAdmin.from('am_ads').select('target_id').limit(100000),
+    fetchAllTargetIds(),
     // 저장된 AI 분석이 있는 소재 id만(가벼움) → 목록에 has_analysis 플래그로 표시
     supabaseAdmin.from('am_ads').select('library_id').not('ai_analysis', 'is', null),
   ])
