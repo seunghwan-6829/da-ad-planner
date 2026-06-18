@@ -179,67 +179,83 @@ def scrape_target(
 ) -> list[dict]:
     url = build_url(target, country)
     label = target.get("label", "?")
-    ads: dict[str, dict] = {}
+    proxy_server = (os.environ.get("PROXY_SERVER") or "").strip()
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=not headful)
-        ctx_kwargs = dict(
-            locale="ko-KR",
-            viewport={"width": 1366, "height": 1800},  # 크게 잡아 한 번에 더 많이 로드
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-            ),
-        )
-        # 레지던셜 프록시(일반 IP)로 거치면 메타가 봇 차단을 안 해 전 광고를 내준다.
-        # PROXY_SERVER 가 있을 때만 사용(없으면 기존처럼 직접 접속 = 상위 ~30개).
-        proxy_server = (os.environ.get("PROXY_SERVER") or "").strip()
-        if proxy_server:
-            proxy = {"server": proxy_server}
-            if os.environ.get("PROXY_USERNAME"):
-                proxy["username"] = os.environ["PROXY_USERNAME"]
-            if os.environ.get("PROXY_PASSWORD"):
-                proxy["password"] = os.environ["PROXY_PASSWORD"]
-            ctx_kwargs["proxy"] = proxy
-            print(f"  프록시 사용: {proxy_server}")
-        ctx = browser.new_context(**ctx_kwargs)
-        # 프록시 대역폭 절약: 영상/폰트 '바이트'는 안 받음(추출엔 src 속성만 필요, 실제 파일은 media.py가 직접 다운로드)
-        try:
-            ctx.route(
-                "**/*",
-                lambda route: route.abort()
-                if route.request.resource_type in ("media", "font")
-                else route.continue_(),
+    def _attempt(use_proxy: bool) -> dict:
+        ads: dict[str, dict] = {}
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=not headful)
+            ctx_kwargs = dict(
+                locale="ko-KR",
+                viewport={"width": 1366, "height": 1800},  # 크게 잡아 한 번에 더 많이 로드
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+                ),
             )
-        except Exception:
-            pass
-        page = ctx.new_page()
-        page.goto(url, wait_until="domcontentloaded", timeout=60000)
-        _human_pause(2.0, 4.0)
+            # 레지던셜 프록시(일반 IP)로 거치면 메타가 봇 차단을 안 해 전 광고를 내준다.
+            if use_proxy and proxy_server:
+                proxy = {"server": proxy_server}
+                if os.environ.get("PROXY_USERNAME"):
+                    proxy["username"] = os.environ["PROXY_USERNAME"]
+                if os.environ.get("PROXY_PASSWORD"):
+                    proxy["password"] = os.environ["PROXY_PASSWORD"]
+                ctx_kwargs["proxy"] = proxy
+                print(f"  프록시 사용: {proxy_server}")
+            ctx = browser.new_context(**ctx_kwargs)
+            # 프록시 대역폭 절약: 영상/폰트 '바이트'는 안 받음(추출엔 src 속성만 필요, 실제 파일은 media.py가 직접 다운로드)
+            try:
+                ctx.route(
+                    "**/*",
+                    lambda route: route.abort()
+                    if route.request.resource_type in ("media", "font")
+                    else route.continue_(),
+                )
+            except Exception:
+                pass
+            page = ctx.new_page()
+            page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            _human_pause(2.0, 4.0)
 
-        # 무한스크롤: 페이지 맨 아래로 계속 내리며 매번 추출해 합친다.
-        # (가상화로 화면 밖 카드가 DOM에서 사라질 수 있어 매 스텝 추출 + dedup)
-        # 더 이상 늘지 않으면(끝 도달) 몇 번 확인 후 종료.
-        prev_count = -1
-        stagnant = 0
-        for _ in range(max_scrolls):
-            for ad in extract_ads(page, selectors):
-                ad["target_label"] = label
-                ad["page_name"] = target.get("page_id") or target.get("query")
-                ads[ad["library_id"]] = ad
+            # 무한스크롤: 페이지 맨 아래로 계속 내리며 매번 추출해 합친다.
+            # (가상화로 화면 밖 카드가 DOM에서 사라질 수 있어 매 스텝 추출 + dedup)
+            # 더 이상 늘지 않으면(끝 도달) 몇 번 확인 후 종료.
+            prev_count = -1
+            stagnant = 0
+            for _ in range(max_scrolls):
+                for ad in extract_ads(page, selectors):
+                    ad["target_label"] = label
+                    ad["page_name"] = target.get("page_id") or target.get("query")
+                    ads[ad["library_id"]] = ad
 
-            if len(ads) == prev_count:
-                stagnant += 1
-                if stagnant >= 6:  # 6번 연속 안 늘면 끝으로 판단(느린 로드 대비 여유)
-                    break
-            else:
-                stagnant = 0
-            prev_count = len(ads)
+                if len(ads) == prev_count:
+                    stagnant += 1
+                    if stagnant >= 6:  # 6번 연속 안 늘면 끝으로 판단(느린 로드 대비 여유)
+                        break
+                else:
+                    stagnant = 0
+                prev_count = len(ads)
 
-            page.evaluate(_SCROLL_JS)
-            _human_pause(2.0, 3.5)  # 다음 배치 로드 대기(넉넉히)
+                page.evaluate(_SCROLL_JS)
+                _human_pause(2.0, 3.5)  # 다음 배치 로드 대기(넉넉히)
 
-        browser.close()
+            browser.close()
+        return ads
+
+    # 프록시 설정 시 우선 시도 → 실패하면 직접 접속으로 폴백(크롤이 0건으로 깨지지 않게).
+    ads: dict = {}
+    if proxy_server:
+        try:
+            ads = _attempt(True)
+        except Exception as e:
+            print(f"  프록시 크롤 실패({e}) → 직접 접속으로 폴백")
+            ads = {}
+    if not ads:
+        try:
+            ads = _attempt(False)
+        except Exception as e:
+            print(f"  크롤 실패: {e}")
+            ads = {}
 
     print(f"  [{label}] {len(ads)}개 광고 추출")
     return list(ads.values())
