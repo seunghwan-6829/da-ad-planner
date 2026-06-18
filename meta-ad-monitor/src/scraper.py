@@ -174,7 +174,7 @@ def scrape_target(
     selectors: dict,
     country: str,
     headful: bool = False,
-    max_scrolls: int = 40,
+    max_scrolls: int = 80,
 ) -> list[dict]:
     url = build_url(target, country)
     label = target.get("label", "?")
@@ -207,14 +207,14 @@ def scrape_target(
 
             if len(ads) == prev_count:
                 stagnant += 1
-                if stagnant >= 4:  # 4번 연속 안 늘면 끝으로 판단
+                if stagnant >= 6:  # 6번 연속 안 늘면 끝으로 판단(느린 로드 대비 여유)
                     break
             else:
                 stagnant = 0
             prev_count = len(ads)
 
             page.evaluate(_SCROLL_JS)
-            _human_pause(1.3, 2.6)  # 다음 배치 로드 대기
+            _human_pause(2.0, 3.5)  # 다음 배치 로드 대기(넉넉히)
 
         browser.close()
 
