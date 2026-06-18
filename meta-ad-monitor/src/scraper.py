@@ -151,6 +151,24 @@ def extract_ads(page, selectors: dict) -> list[dict]:
         return []
 
 
+# 무한스크롤 트리거: window/scrollingElement + 가장 큰 내부 스크롤 컨테이너 + 마지막 카드까지 모두 내림.
+# (광고 라이브러리가 내부 div 스크롤을 쓰는 경우 window 스크롤만으론 추가 로드가 안 됨)
+_SCROLL_JS = """() => {
+  try { window.scrollTo(0, document.body.scrollHeight); } catch (e) {}
+  try { if (document.scrollingElement) document.scrollingElement.scrollTop = document.scrollingElement.scrollHeight; } catch (e) {}
+  let best = null, bestH = 0;
+  for (const d of document.querySelectorAll('div')) {
+    if (d.scrollHeight > d.clientHeight + 300 && d.clientHeight > 300 && d.scrollHeight > bestH) {
+      bestH = d.scrollHeight; best = d;
+    }
+  }
+  if (best) best.scrollTop = best.scrollHeight;
+  const all = document.querySelectorAll('a[href*="/ads/library"], [role="article"]');
+  if (all.length) { try { all[all.length - 1].scrollIntoView({block:'end'}); } catch (e) {} }
+  return document.body.scrollHeight;
+}"""
+
+
 def scrape_target(
     target: dict,
     selectors: dict,
@@ -166,6 +184,7 @@ def scrape_target(
         browser = p.chromium.launch(headless=not headful)
         ctx = browser.new_context(
             locale="ko-KR",
+            viewport={"width": 1366, "height": 1800},  # 크게 잡아 한 번에 더 많이 로드
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                 "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
@@ -188,18 +207,14 @@ def scrape_target(
 
             if len(ads) == prev_count:
                 stagnant += 1
-                if stagnant >= 3:  # 3번 연속 안 늘면 끝으로 판단
+                if stagnant >= 4:  # 4번 연속 안 늘면 끝으로 판단
                     break
             else:
                 stagnant = 0
             prev_count = len(ads)
 
-            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            try:
-                page.wait_for_load_state("networkidle", timeout=3500)
-            except Exception:
-                pass
-            _human_pause()
+            page.evaluate(_SCROLL_JS)
+            _human_pause(1.3, 2.6)  # 다음 배치 로드 대기
 
         browser.close()
 
