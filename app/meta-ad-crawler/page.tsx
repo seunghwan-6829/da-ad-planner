@@ -22,7 +22,6 @@ import {
   Check,
   Star,
   Activity,
-  TrendingUp,
   Layers,
   Lightbulb,
   Camera,
@@ -127,13 +126,6 @@ function mediaListOf(ad: Ad): string[] {
 // 클릭 가능한 작은 썸네일용 정적 이미지 URL(영상은 poster). 비디오/캐러셀 컨트롤이 클릭을 가로채지 않게.
 function posterThumb(ad: Ad): string | null {
   return ad.poster_url || (Array.isArray(ad.media_urls) && ad.media_urls[0]) || ad.media_url || null;
-}
-
-function activeDays(ad: Ad): number {
-  const a = ad.first_seen_at ? new Date(ad.first_seen_at).getTime() : 0;
-  const b = ad.last_seen_at ? new Date(ad.last_seen_at).getTime() : Date.now();
-  if (!a) return 0;
-  return Math.max(0, Math.floor((b - a) / 86400000));
 }
 
 function sourceLink(ad: Ad): string {
@@ -285,7 +277,6 @@ export default function MetaAdCrawlerPage() {
   const [activeCategory, setActiveCategory] = useState<string>("all");
   const [selectedBrand, setSelectedBrand] = useState<string>("all");
   const [mediaFilter, setMediaFilter] = useState<"all" | "image" | "carousel" | "video">("all");
-  const [sortBy, setSortBy] = useState<"recent" | "longevity">("recent");
   const [savedOnly, setSavedOnly] = useState(false);
   const [workedOnly, setWorkedOnly] = useState(false);
   const [showFeed, setShowFeed] = useState(false);
@@ -419,36 +410,13 @@ export default function MetaAdCrawlerPage() {
       }
       return true;
     });
-    if (sortBy === "longevity") list.sort((a, b) => activeDays(b) - activeDays(a));
-    // recent: API가 first_seen_at desc 로 주므로 그대로 유지(최신순)
+    // 최신순(API가 first_seen_at desc 로 정렬). 롱런/위닝 정렬은 실제 광고 수명을 알 수 없어 제거.
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ads, search, activeCategory, selectedBrand, mediaFilter, sortBy, savedOnly, workedOnly, targetMap]);
+  }, [ads, search, activeCategory, selectedBrand, mediaFilter, savedOnly, workedOnly, targetMap]);
 
   const savedCount = useMemo(() => ads.filter((a) => a.saved).length, [ads]);
   const workedCount = useMemo(() => ads.filter((a) => (a.memo && a.memo.trim()) || a.has_analysis).length, [ads]);
-
-  // #3 카테고리 벤치마크: 대분류별 활성일수 분포를 한 번 계산해두고, 소재별 위치(상위 %)를 구한다.
-  const categoryDays = useMemo(() => {
-    const m: Record<string, number[]> = {};
-    for (const ad of ads) {
-      const cat = ad.target_id ? (targetMap[ad.target_id]?.category || "").trim() || "미분류" : "미분류";
-      (m[cat] ||= []).push(activeDays(ad));
-    }
-    for (const k in m) m[k].sort((a, b) => a - b);
-    return m;
-  }, [ads, targetMap]);
-
-  function benchmarkOf(ad: Ad): { category: string; avg: number; topPct: number; n: number } | null {
-    const cat = ad.target_id ? (targetMap[ad.target_id]?.category || "").trim() || "미분류" : "미분류";
-    const arr = categoryDays[cat];
-    if (!arr || arr.length < 3) return null; // 표본이 너무 적으면 의미 없음
-    const d = activeDays(ad);
-    const avg = arr.reduce((s, v) => s + v, 0) / arr.length;
-    const below = arr.filter((v) => v < d).length; // 이 소재보다 짧게 산 소재 수
-    const topPct = Math.max(1, Math.round((1 - below / arr.length) * 100)); // 상위 %
-    return { category: cat, avg: Math.round(avg), topPct, n: arr.length };
-  }
 
   // #4 변주 그룹핑(추정): 같은 브랜드 + (같은 랜딩 URL 또는 카피 토큰 유사도 높음)
   function tokensOf(s: string | null | undefined): Set<string> {
@@ -785,17 +753,7 @@ export default function MetaAdCrawlerPage() {
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <strong className="text-sm dark:text-gray-200">{loading ? "불러오는 중..." : `광고 ${filteredAds.length}건`}</strong>
-          <select
-            value={sortBy}
-            onChange={(e) => {
-              setSortBy(e.target.value as "recent" | "longevity");
-              resetToFirst();
-            }}
-            className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1.5 text-xs dark:text-gray-200"
-          >
-            <option value="recent">최신순</option>
-            <option value="longevity">롱런순 (오래 살아남은)</option>
-          </select>
+          <span className="text-xs text-gray-400">최신순</span>
         </div>
         <div className="flex items-center gap-2">
           {/* 보기 형식 */}
@@ -891,7 +849,6 @@ export default function MetaAdCrawlerPage() {
               const brand = brandNameOfAd(ad);
               const img = brandImageOfAd(ad);
               const ended = ad.status === "ended";
-              const days = activeDays(ad);
               const hasMemo = !!(ad.memo && ad.memo.trim());
               const hasAnalysis = !!ad.has_analysis;
               const typeLabel = ad.media_type === "video" ? "영상" : ad.media_type === "carousel" || (ad.media_urls && ad.media_urls.length > 1) ? "슬라이드" : "이미지";
@@ -930,11 +887,9 @@ export default function MetaAdCrawlerPage() {
                     )}
                     {/* 우상단: 상태 + 작업(메모/AI분석) 표시 */}
                     <div className="absolute right-1.5 top-1.5 z-10 flex flex-col items-end gap-1">
-                      {ended ? (
+                      {ended && (
                         <span className="rounded-full bg-gray-700/90 px-2 py-0.5 text-[10px] font-bold text-white">종료</span>
-                      ) : days >= 7 ? (
-                        <span className="rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-bold text-white">🔥 {days}일</span>
-                      ) : null}
+                      )}
                       {hasAnalysis && (
                         <span className="flex items-center gap-0.5 rounded-full bg-violet-600 px-1.5 py-0.5 text-[10px] font-bold text-white shadow" title="AI 분석 저장됨">
                           <Sparkles className="h-3 w-3" /> AI
@@ -991,7 +946,6 @@ export default function MetaAdCrawlerPage() {
           brandName={brandNameOfAd(detail)}
           brandImage={brandImageOfAd(detail)}
           country={detail.target_id ? targetMap[detail.target_id]?.country ?? null : null}
-          benchmark={benchmarkOf(detail)}
           variations={variationsOf(detail)}
           brandNameOf={brandNameOfAd}
           onClose={() => setDetail(null)}
@@ -1762,7 +1716,6 @@ function AdDetailModal({
   brandName,
   brandImage,
   country,
-  benchmark,
   variations,
   brandNameOf,
   onClose,
@@ -1776,7 +1729,6 @@ function AdDetailModal({
   brandName: string;
   brandImage: string | null;
   country: string | null;
-  benchmark: { category: string; avg: number; topPct: number; n: number } | null;
   variations: Ad[];
   brandNameOf: (ad: Ad) => string;
   onClose: () => void;
@@ -1794,7 +1746,6 @@ function AdDetailModal({
   const [analysisSaved, setAnalysisSaved] = useState<boolean>(!!ad.ai_analysis);
   const [savingAnalysis, setSavingAnalysis] = useState(false);
   const ended = ad.status === "ended";
-  const days = activeDays(ad);
 
   // 메인 영상: 그래프 드래그/클릭·프레임 클릭으로 이동+재생(AnalysisViz가 ref로 직접 제어)
   const mainVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -1898,7 +1849,6 @@ function AdDetailModal({
                   <span className={`h-1.5 w-1.5 rounded-full ${ended ? "bg-gray-400" : "bg-green-500"}`} />
                   {ended ? "종료됨" : "활성"}
                 </span>
-                <span className="text-gray-400">· 활성 {days}일</span>
               </div>
             </div>
           </div>
@@ -1943,7 +1893,6 @@ function AdDetailModal({
               <div className="mb-2 text-xs font-bold uppercase tracking-wide text-gray-400">메타데이터</div>
               <dl className="grid grid-cols-2 gap-y-2 text-sm">
                 <Meta k="시작일" v={ad.started_on ?? "—"} />
-                <Meta k="활성 일수" v={`${days}일`} />
                 <Meta k="최초 수집" v={fmtDate(ad.first_seen_at)} />
                 <Meta k="최근 확인" v={fmtDate(ad.last_seen_at)} />
                 <Meta k="국가" v={country ?? "—"} />
@@ -1952,24 +1901,6 @@ function AdDetailModal({
                 <Meta k="Library ID" v={ad.library_id} />
               </dl>
             </div>
-
-            {/* #3 카테고리 벤치마크 */}
-            {benchmark && (
-              <div className="rounded-xl border border-sky-200 dark:border-sky-900/50 bg-sky-50 dark:bg-sky-950/20 p-3">
-                <div className="mb-1.5 flex items-center gap-1 text-xs font-bold text-sky-700 dark:text-sky-300">
-                  <TrendingUp className="h-3.5 w-3.5" /> 카테고리 벤치마크
-                </div>
-                <p className="text-sm text-gray-700 dark:text-gray-200">
-                  <b>{benchmark.category}</b> 내 상위{" "}
-                  <b className={benchmark.topPct <= 30 ? "text-rose-500" : "text-sky-600 dark:text-sky-300"}>{benchmark.topPct}%</b>{" "}
-                  롱런 소재 ({benchmark.n}개 중)
-                </p>
-                <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                  이 소재 {days}일 · 카테고리 평균 {benchmark.avg}일
-                  {days >= benchmark.avg ? " · 평균 이상으로 오래 살아남는 중" : ""}
-                </p>
-              </div>
-            )}
 
             {/* 링크 */}
             <div className="space-y-1.5 text-sm">
