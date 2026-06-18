@@ -45,4 +45,8 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           CRAWL_TARGET_ID: ${{ github.event.inputs.target_id }}
+          # 레지던셜 프록시(있으면 전 광고 수집, 없으면 직접 접속=상위 ~30개)
+          PROXY_SERVER: ${{ secrets.PROXY_SERVER }}
+          PROXY_USERNAME: ${{ secrets.PROXY_USERNAME }}
+          PROXY_PASSWORD: ${{ secrets.PROXY_PASSWORD }}
         run: python -m src.run_cloud

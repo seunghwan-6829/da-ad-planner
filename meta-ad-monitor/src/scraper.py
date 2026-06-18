@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import os
 import random
 import time
 from pathlib import Path
@@ -182,7 +183,7 @@ def scrape_target(
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=not headful)
-        ctx = browser.new_context(
+        ctx_kwargs = dict(
             locale="ko-KR",
             viewport={"width": 1366, "height": 1800},  # 크게 잡아 한 번에 더 많이 로드
             user_agent=(
@@ -190,6 +191,28 @@ def scrape_target(
                 "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
             ),
         )
+        # 레지던셜 프록시(일반 IP)로 거치면 메타가 봇 차단을 안 해 전 광고를 내준다.
+        # PROXY_SERVER 가 있을 때만 사용(없으면 기존처럼 직접 접속 = 상위 ~30개).
+        proxy_server = (os.environ.get("PROXY_SERVER") or "").strip()
+        if proxy_server:
+            proxy = {"server": proxy_server}
+            if os.environ.get("PROXY_USERNAME"):
+                proxy["username"] = os.environ["PROXY_USERNAME"]
+            if os.environ.get("PROXY_PASSWORD"):
+                proxy["password"] = os.environ["PROXY_PASSWORD"]
+            ctx_kwargs["proxy"] = proxy
+            print(f"  프록시 사용: {proxy_server}")
+        ctx = browser.new_context(**ctx_kwargs)
+        # 프록시 대역폭 절약: 영상/폰트 '바이트'는 안 받음(추출엔 src 속성만 필요, 실제 파일은 media.py가 직접 다운로드)
+        try:
+            ctx.route(
+                "**/*",
+                lambda route: route.abort()
+                if route.request.resource_type in ("media", "font")
+                else route.continue_(),
+            )
+        except Exception:
+            pass
         page = ctx.new_page()
         page.goto(url, wait_until="domcontentloaded", timeout=60000)
         _human_pause(2.0, 4.0)
