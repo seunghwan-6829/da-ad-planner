@@ -1205,12 +1205,12 @@ function AnalysisViz({
   data,
   videoUrl,
   onMarkersChange,
-  onSeek,
+  videoRef,
 }: {
   data: AnalysisData;
   videoUrl?: string | null;
   onMarkersChange?: (markers: { t: number; note: string }[]) => void;
-  onSeek?: (t: number) => void;
+  videoRef?: React.RefObject<HTMLVideoElement | null>;
 }) {
   const phases = (data.phases || []).filter((p) => p && p.name);
   const totalWeight = phases.reduce((s, p) => s + (Number(p.weight) || 0), 0) || 1;
@@ -1225,22 +1225,53 @@ function AnalysisViz({
   const segments = (data.segments || []).filter((s) => s && s.name);
   const userMarkers = (data.userMarkers || []).map((m) => ({ t: clamp(Number(m.t) || 0, 0, 100), note: m.note || "" }));
 
-  // 호버 위치(0~100). 클릭 시 pinned 로 고정(해당 구간으로 이동).
+  // 호버 위치(0~100) — 구간 흐름 툴팁용
   const [hover, setHover] = useState<number | null>(null);
-  const [pinned, setPinned] = useState<number | null>(null);
-  const active = pinned ?? hover;
-
-  // 해당 시점 영상 프리뷰 + 길이
-  const previewRef = useRef<HTMLVideoElement>(null);
   const [vidDur, setVidDur] = useState(0);
-  function seekPreview(x: number) {
-    const v = previewRef.current;
-    if (v && vidDur > 0 && isFinite(vidDur)) {
-      try {
-        v.currentTime = Math.min(vidDur - 0.05, (x / 100) * vidDur);
-      } catch {}
-    }
+  const [playPct, setPlayPct] = useState<number | null>(null); // 메인 영상 재생 위치(인디케이터)
+  const draggingRef = useRef(false);
+
+  // 메인 영상과 동기화: 길이 + 재생 위치(인디케이터가 재생/스크럽 따라 움직이게)
+  useEffect(() => {
+    const v = videoRef?.current;
+    if (!v) return;
+    const onMeta = () => {
+      if (isFinite(v.duration) && v.duration > 0) setVidDur(v.duration);
+    };
+    const onTime = () => {
+      if (v.duration > 0) setPlayPct((v.currentTime / v.duration) * 100);
+    };
+    onMeta();
+    v.addEventListener("loadedmetadata", onMeta);
+    v.addEventListener("timeupdate", onTime);
+    return () => {
+      v.removeEventListener("loadedmetadata", onMeta);
+      v.removeEventListener("timeupdate", onTime);
+    };
+  }, [videoRef]);
+
+  // 그래프 위치 t(0~100)로 메인 영상 이동. play=true면 재생까지.
+  function seek(t: number, play: boolean) {
+    setPlayPct(t); // 인디케이터 즉시 반영(낙관적)
+    const v = videoRef?.current;
+    if (!v) return;
+    const apply = () => {
+      const d = v.duration;
+      if (isFinite(d) && d > 0) {
+        try {
+          v.currentTime = Math.min(d - 0.05, (t / 100) * d);
+        } catch {}
+      }
+    };
+    if (isFinite(v.duration) && v.duration > 0) apply();
+    else v.addEventListener("loadedmetadata", apply, { once: true });
+    if (play) v.play?.().catch(() => {});
   }
+
+  const pctFromX = (clientX: number, el: HTMLElement) => {
+    const r = el.getBoundingClientRect();
+    return clamp(((clientX - r.left) / r.width) * 100, 0, 100);
+  };
 
   // 진행률 t(0~100)가 속한 구간(phase)
   function phaseAt(t: number): { phase: { name: string; weight: number; desc?: string }; idx: number } | null {
@@ -1309,10 +1340,10 @@ function AnalysisViz({
       {pts.length > 0 && (
         <div>
           <div className="mb-1 flex items-center justify-between">
-            <span className="text-[11px] font-bold text-gray-400">시청자 몰입 흐름 (추정) · 클릭해 이동</span>
+            <span className="text-[11px] font-bold text-gray-400">시청자 몰입 흐름 (추정){videoUrl ? " · 클릭/드래그로 영상 이동" : ""}</span>
             {onMarkersChange && (
               <button
-                onClick={() => addMarker(active ?? 50)}
+                onClick={() => addMarker(hover ?? playPct ?? 50)}
                 className="flex items-center gap-1 rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
               >
                 <MapPin className="h-3 w-3" /> 마커 추가
@@ -1320,20 +1351,26 @@ function AnalysisViz({
             )}
           </div>
           <div
-            className="relative h-28 w-full cursor-crosshair select-none rounded-lg border border-gray-100 dark:border-gray-800 bg-gradient-to-b from-blue-50/70 to-transparent dark:from-blue-950/20"
-            onMouseMove={(e) => {
-              const r = e.currentTarget.getBoundingClientRect();
-              const x = clamp(((e.clientX - r.left) / r.width) * 100, 0, 100);
-              setHover(x);
-              if (videoUrl && pinned == null) seekPreview(x);
+            className={`relative h-28 w-full touch-none select-none rounded-lg border border-gray-100 dark:border-gray-800 bg-gradient-to-b from-blue-50/70 to-transparent dark:from-blue-950/20 ${videoUrl ? "cursor-pointer" : ""}`}
+            onPointerDown={(e) => {
+              if (!videoUrl) return;
+              (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+              draggingRef.current = true;
+              seek(pctFromX(e.clientX, e.currentTarget), false);
             }}
-            onMouseLeave={() => setHover(null)}
-            onClick={(e) => {
-              const r = e.currentTarget.getBoundingClientRect();
-              const x = clamp(((e.clientX - r.left) / r.width) * 100, 0, 100);
-              setPinned(x);
-              if (videoUrl) seekPreview(x);
-              onSeek?.(x); // 메인 영상을 그 지점으로 이동 + 재생
+            onPointerMove={(e) => {
+              const x = pctFromX(e.clientX, e.currentTarget);
+              setHover(x);
+              if (draggingRef.current && videoUrl) seek(x, false); // 드래그 스크럽
+            }}
+            onPointerUp={(e) => {
+              if (draggingRef.current) {
+                draggingRef.current = false;
+                if (videoUrl) seek(pctFromX(e.clientX, e.currentTarget), true); // 놓으면 그 지점부터 재생
+              }
+            }}
+            onPointerLeave={() => {
+              if (!draggingRef.current) setHover(null);
             }}
           >
             <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 h-full w-full">
@@ -1346,72 +1383,50 @@ function AnalysisViz({
                 key={i}
                 style={{ left: `${m.t}%`, top: `${yTop(interpV(m.t))}%` }}
                 title={m.label + (m.note ? ` · ${m.note}` : "")}
-                className="absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-blue-500 ring-2 ring-white dark:ring-gray-900"
+                className="pointer-events-none absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-blue-500 ring-2 ring-white dark:ring-gray-900"
               />
             ))}
             {/* 사용자 마커(주황 깃발) */}
             {userMarkers.map((m, i) => (
-              <div key={`u${i}`} style={{ left: `${m.t}%` }} className="absolute bottom-0 top-0 w-px bg-amber-400" title={m.note}>
+              <div key={`u${i}`} style={{ left: `${m.t}%` }} className="pointer-events-none absolute bottom-0 top-0 w-px bg-amber-400" title={m.note}>
                 <div className="absolute -top-1 left-0 flex h-4 w-4 -translate-x-1/2 items-center justify-center rounded-sm bg-amber-500 text-[9px] font-bold text-white">
                   {i + 1}
                 </div>
               </div>
             ))}
-            {/* 호버/고정 시 구간 흐름 + 프레임 카드 */}
-            {active != null &&
+            {/* 재생 위치 인디게이터 — 영상 재생/스크럽에 따라 이동 */}
+            {playPct != null && (
+              <div style={{ left: `${clamp(playPct, 0, 100)}%` }} className="pointer-events-none absolute bottom-0 top-0 z-10 w-0.5 -translate-x-1/2 bg-blue-600">
+                <div className="absolute -top-1 left-1/2 h-2.5 w-2.5 -translate-x-1/2 rounded-full bg-blue-600 shadow ring-2 ring-white dark:ring-gray-900" />
+              </div>
+            )}
+            {/* 호버 시 구간 흐름 툴팁(프리뷰 이미지 없음) */}
+            {hover != null &&
               (() => {
-                const pa = phaseAt(active);
+                const pa = phaseAt(hover);
                 return (
                   <>
-                    <div style={{ left: `${active}%` }} className={`absolute bottom-0 top-0 w-px ${pinned != null ? "bg-blue-600" : "bg-blue-400/70"}`} />
+                    <div style={{ left: `${hover}%` }} className="pointer-events-none absolute bottom-0 top-0 w-px bg-blue-400/50" />
                     <div
-                      style={{ left: `${clamp(active, 13, 87)}%` }}
-                      className="pointer-events-none absolute bottom-[104%] z-20 w-44 -translate-x-1/2 overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-800"
+                      style={{ left: `${clamp(hover, 15, 85)}%` }}
+                      className="pointer-events-none absolute bottom-[104%] z-20 w-44 -translate-x-1/2 rounded-lg border border-gray-200 bg-white p-2 shadow-lg dark:border-gray-700 dark:bg-gray-800"
                     >
-                      {videoUrl && (
-                        <video
-                          ref={previewRef}
-                          src={videoUrl}
-                          muted
-                          playsInline
-                          preload="metadata"
-                          onLoadedMetadata={(e) => setVidDur(e.currentTarget.duration)}
-                          className="h-28 w-full bg-black object-cover"
-                        />
-                      )}
-                      <div className="p-2">
-                        <div className="flex items-center gap-1.5">
-                          {pa && (
-                            <span className="rounded px-1.5 py-0.5 text-[10px] font-bold text-white" style={{ backgroundColor: PHASE_COLORS[pa.idx % PHASE_COLORS.length] }}>
-                              {pa.phase.name}
-                            </span>
-                          )}
-                          <span className="text-[10px] text-gray-400">
-                            {timeLabel(active)} · 몰입 {Math.round(interpV(active))}
+                      <div className="flex items-center gap-1.5">
+                        {pa && (
+                          <span className="rounded px-1.5 py-0.5 text-[10px] font-bold text-white" style={{ backgroundColor: PHASE_COLORS[pa.idx % PHASE_COLORS.length] }}>
+                            {pa.phase.name}
                           </span>
-                        </div>
-                        {pa?.phase.desc && <p className="mt-1 text-[11px] leading-snug text-gray-600 dark:text-gray-300">{pa.phase.desc}</p>}
+                        )}
+                        <span className="text-[10px] text-gray-400">
+                          {timeLabel(hover)} · 몰입 {Math.round(interpV(hover))}
+                        </span>
                       </div>
+                      {pa?.phase.desc && <p className="mt-1 text-[11px] leading-snug text-gray-600 dark:text-gray-300">{pa.phase.desc}</p>}
                     </div>
                   </>
                 );
               })()}
           </div>
-          {/* 길이 측정용(숨김) — 영상 시간 표기/프레임용 */}
-          {videoUrl && (
-            <video
-              src={videoUrl}
-              muted
-              preload="metadata"
-              onLoadedMetadata={(e) => setVidDur(e.currentTarget.duration)}
-              className="pointer-events-none absolute left-0 top-0 h-px w-px opacity-0"
-            />
-          )}
-          {pinned != null && (
-            <button onClick={() => setPinned(null)} className="mt-1 text-[10px] text-blue-600 hover:underline">
-              고정 해제
-            </button>
-          )}
 
           {/* 내 마커 메모 편집 */}
           {onMarkersChange && userMarkers.length > 0 && (
@@ -1419,7 +1434,7 @@ function AnalysisViz({
               {userMarkers.map((m, i) => (
                 <div key={i} className="flex items-center gap-1.5">
                   <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-sm bg-amber-500 text-[9px] font-bold text-white">{i + 1}</span>
-                  <button onClick={() => onSeek?.(m.t)} title="이 지점부터 재생" className="w-10 shrink-0 text-left text-[10px] text-blue-600 hover:underline">
+                  <button onClick={() => seek(m.t, true)} title="이 지점부터 재생" className="w-10 shrink-0 text-left text-[10px] text-blue-600 hover:underline">
                     {timeLabel(m.t)}
                   </button>
                   <input
@@ -1485,7 +1500,7 @@ function AnalysisViz({
                   </span>
                   {videoUrl && (
                     <div className="w-12 shrink-0">
-                      <SegFrame src={videoUrl} t={t} onSeek={onSeek} />
+                      <SegFrame src={videoUrl} t={t} onSeek={(tt) => seek(tt, true)} />
                     </div>
                   )}
                   <div className="flex-1 leading-snug text-green-700 dark:text-green-400">{s.good || "—"}</div>
@@ -1657,23 +1672,8 @@ function AdDetailModal({
   const ended = ad.status === "ended";
   const days = activeDays(ad);
 
-  // 메인 영상: 그래프/프레임 클릭 시 해당 지점으로 이동 + 재생
+  // 메인 영상: 그래프 드래그/클릭·프레임 클릭으로 이동+재생(AnalysisViz가 ref로 직접 제어)
   const mainVideoRef = useRef<HTMLVideoElement | null>(null);
-  function seekMainVideo(t: number) {
-    const v = mainVideoRef.current;
-    if (!v) return;
-    const apply = () => {
-      const d = v.duration;
-      if (isFinite(d) && d > 0) {
-        try {
-          v.currentTime = Math.min(d - 0.05, (t / 100) * d);
-        } catch {}
-      }
-    };
-    if (isFinite(v.duration) && v.duration > 0) apply();
-    else v.addEventListener("loadedmetadata", apply, { once: true });
-    v.play?.().catch(() => {});
-  }
 
   // 상세 지연 로딩으로 ad.memo / ad.ai_analysis 가 나중에 채워지면 동기화
   useEffect(() => {
@@ -1918,7 +1918,7 @@ function AdDetailModal({
                       <AnalysisViz
                         data={parsed}
                         videoUrl={ad.media_type === "video" ? ad.media_url : null}
-                        onSeek={ad.media_type === "video" ? seekMainVideo : undefined}
+                        videoRef={ad.media_type === "video" ? mainVideoRef : undefined}
                         onMarkersChange={(markers) => {
                           const base = parseAnalysis(analysis) || {};
                           setAnalysis(JSON.stringify({ ...base, userMarkers: markers }));
