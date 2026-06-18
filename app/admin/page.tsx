@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Shield, Users, Check, X, Clock, Loader2, RefreshCw, Folder, UserCheck } from 'lucide-react'
+import { Shield, Users, Check, X, Clock, Loader2, RefreshCw, Folder, UserCheck, Megaphone } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -23,6 +23,7 @@ interface UserProfile {
   name: string | null
   role: UserRole
   created_at: string
+  can_meta_ad?: boolean
 }
 
 export default function AdminPage() {
@@ -31,7 +32,8 @@ export default function AdminPage() {
   const { isAdmin, loading: authLoading } = useAuth()
   
   // 탭 관리
-  const [activeTab, setActiveTab] = useState<'users' | 'clients'>('users')
+  const [activeTab, setActiveTab] = useState<'users' | 'clients' | 'metaAd'>('users')
+  const [metaUpdating, setMetaUpdating] = useState<string | null>(null)
   
   // 사용자 관리
   const [users, setUsers] = useState<UserProfile[]>([])
@@ -47,8 +49,8 @@ export default function AdminPage() {
 
   useEffect(() => {
     const tab = searchParams.get('tab')
-    if (tab === 'clients') {
-      setActiveTab('clients')
+    if (tab === 'clients' || tab === 'metaAd') {
+      setActiveTab(tab)
     }
   }, [searchParams])
 
@@ -163,6 +165,24 @@ export default function AdminPage() {
     }
   }
 
+  async function updateMetaAccess(userId: string, value: boolean) {
+    if (!supabase) return
+    setMetaUpdating(userId)
+    try {
+      const { error } = await supabase
+        .from('user_profiles')
+        .update({ can_meta_ad: value })
+        .eq('id', userId)
+      if (error) throw error
+      setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, can_meta_ad: value } : u)))
+    } catch (error) {
+      console.error('메타 광고 권한 변경 실패:', error)
+      alert('권한 변경에 실패했습니다. (can_meta_ad 컬럼 마이그레이션을 실행했는지 확인하세요)')
+    } finally {
+      setMetaUpdating(null)
+    }
+  }
+
   if (authLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -214,14 +234,25 @@ export default function AdminPage() {
         </button>
         <button
           className={`px-4 py-2 font-medium transition-colors ${
-            activeTab === 'clients' 
-              ? 'border-b-2 border-primary text-primary' 
+            activeTab === 'clients'
+              ? 'border-b-2 border-primary text-primary'
               : 'text-gray-500 hover:text-gray-700'
           }`}
           onClick={() => setActiveTab('clients')}
         >
           <Folder className="h-4 w-4 inline mr-2" />
           클라이언트 권한
+        </button>
+        <button
+          className={`px-4 py-2 font-medium transition-colors ${
+            activeTab === 'metaAd'
+              ? 'border-b-2 border-primary text-primary'
+              : 'text-gray-500 hover:text-gray-700'
+          }`}
+          onClick={() => setActiveTab('metaAd')}
+        >
+          <Megaphone className="h-4 w-4 inline mr-2" />
+          메타 광고 크롤러
         </button>
       </div>
 
@@ -537,6 +568,88 @@ export default function AdminPage() {
             </CardContent>
           </Card>
         </div>
+      )}
+
+      {/* 메타 광고 크롤러 권한 탭 */}
+      {activeTab === 'metaAd' && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Megaphone className="h-5 w-5" />
+              메타 광고 크롤러 접근 권한
+            </CardTitle>
+            <CardDescription>
+              경쟁사 메타 광고 크롤러 메뉴를 볼 수 있는 사용자를 설정합니다. (관리자는 항상 접근 가능)
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin" />
+              </div>
+            ) : approvedAndAdminUsers.length === 0 ? (
+              <p className="text-center text-muted-foreground py-8">승인된 사용자가 없습니다</p>
+            ) : (
+              <div className="space-y-2">
+                {approvedAndAdminUsers.map((user) => {
+                  const isUserAdmin = user.role === 'admin'
+                  const has = isUserAdmin || !!user.can_meta_ad
+                  return (
+                    <div
+                      key={user.id}
+                      className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${has ? 'bg-green-100' : 'bg-gray-100'}`}>
+                          {has ? <Check className="h-5 w-5 text-green-600" /> : <X className="h-5 w-5 text-gray-400" />}
+                        </div>
+                        <p className="font-medium text-lg">{user.email}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {isUserAdmin ? (
+                          <Badge variant="destructive">관리자 (항상 접근)</Badge>
+                        ) : user.can_meta_ad ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => updateMetaAccess(user.id, false)}
+                            disabled={metaUpdating === user.id}
+                            className="text-red-500 border-red-200 hover:bg-red-50"
+                          >
+                            {metaUpdating === user.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <>
+                                <X className="h-4 w-4 mr-1" />
+                                권한 해제
+                              </>
+                            )}
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            onClick={() => updateMetaAccess(user.id, true)}
+                            disabled={metaUpdating === user.id}
+                            className="bg-green-600 hover:bg-green-700"
+                          >
+                            {metaUpdating === user.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <>
+                                <Check className="h-4 w-4 mr-1" />
+                                권한 부여
+                              </>
+                            )}
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
       )}
     </div>
   )

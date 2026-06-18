@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth-context";
 import {
   Megaphone,
   Settings,
@@ -263,6 +264,7 @@ function MediaView({
 
 export default function MetaAdCrawlerPage() {
   const router = useRouter();
+  const { canMetaAd, loading: authLoading } = useAuth();
   const [targets, setTargets] = useState<Target[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [ads, setAds] = useState<Ad[]>([]);
@@ -671,6 +673,21 @@ export default function MetaAdCrawlerPage() {
     if (mgmtQuery && !name.includes(mgmtQuery)) continue;
     const key = (t.category || "").trim() || "미분류";
     (groups[key] ||= []).push(t);
+  }
+
+  // 접근 권한 가드: 관리자 또는 can_meta_ad 권한이 있는 사용자만
+  if (!authLoading && !canMetaAd) {
+    return (
+      <div className="mx-auto max-w-md py-24 text-center">
+        <Megaphone className="mx-auto mb-4 h-12 w-12 text-gray-300 dark:text-gray-600" />
+        <h2 className="text-lg font-bold text-gray-700 dark:text-gray-200">접근 권한이 없습니다</h2>
+        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+          메타 광고 크롤러는 관리자가 권한을 부여한 사용자만 볼 수 있어요.
+          <br />
+          관리자에게 접근 권한을 요청해 주세요.
+        </p>
+      </div>
+    );
   }
 
   return (

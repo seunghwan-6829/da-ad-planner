@@ -11,6 +11,7 @@ interface UserProfile {
   email: string
   name: string | null
   role: UserRole
+  can_meta_ad?: boolean
 }
 
 interface AuthContextType {
@@ -23,6 +24,7 @@ interface AuthContextType {
   signOut: () => void
   isAdmin: boolean
   isApproved: boolean
+  canMetaAd: boolean
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -35,6 +37,7 @@ const AuthContext = createContext<AuthContextType>({
   signOut: () => {},
   isAdmin: false,
   isApproved: false,
+  canMetaAd: false,
 })
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -149,10 +152,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const isAdmin = profile?.role === 'admin'
   const isApproved = profile?.role === 'admin' || profile?.role === 'approved'
+  const canMetaAd = profile?.role === 'admin' || profile?.can_meta_ad === true
 
   return (
     <AuthContext.Provider value={{
-      user, profile, loading, error, signIn, signUp, signOut, isAdmin, isApproved
+      user, profile, loading, error, signIn, signUp, signOut, isAdmin, isApproved, canMetaAd
     }}>
       {children}
     </AuthContext.Provider>

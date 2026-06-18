@@ -48,7 +48,10 @@ type MetaChange = { newCount: number; endedCount: number; latest: string | null 
 export function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
-  const { user, profile, isAdmin, signOut } = useAuth()
+  const { user, profile, isAdmin, canMetaAd, signOut } = useAuth()
+
+  // '메타 광고 크롤러'는 권한(can_meta_ad) 또는 관리자만 노출
+  const topItems = navigationTop.filter((item) => item.href !== '/meta-ad-crawler' || canMetaAd)
 
   // #6 메타 광고 5일 알림: 신규/종료 변화가 있으면 하단 배지. 닫으면 그 시그니처는 다시 안 뜸(새 변화 시 재등장).
   const [change, setChange] = useState<MetaChange | null>(null)
@@ -93,7 +96,7 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 space-y-1 overflow-y-auto p-4">
-        {navigationTop.map((item) => {
+        {topItems.map((item) => {
           const isActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href))
 
           return (
