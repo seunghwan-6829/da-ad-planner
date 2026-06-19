@@ -1717,7 +1717,7 @@ function BrandPickerModal({
       onClick={onClose}
     >
       <div
-        className="mt-[6vh] w-full max-w-2xl rounded-2xl bg-white dark:bg-gray-900 shadow-2xl flex max-h-[82vh] flex-col"
+        className="mt-[6vh] w-full max-w-4xl rounded-2xl bg-white dark:bg-gray-900 shadow-2xl flex max-h-[82vh] flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* 헤더 */}
