@@ -11,15 +11,22 @@ export async function GET() {
     'library_id, target_id, page_name, started_on, ad_text, media_type, media_url, media_urls, poster_url, landing_url, memo, status, ended_at, first_seen_at, last_seen_at'
   const adCols = `${baseCols}, saved`
 
-  // 브랜드별 광고 수 집계: PostgREST 서버측 상한(db-max-rows, 보통 1000)은 .limit()으로 못 넘기므로
-  // .range() 로 페이지네이션하며 target_id 만 모아 정확히 센다.
-  async function fetchAllTargetIds(): Promise<{ data: { target_id: string }[]; error: any }> {
+  // 광고 전체를 로드: PostgREST 서버측 상한(db-max-rows, 보통 1000)은 .limit()으로 못 넘기므로
+  // .range() 로 페이지네이션해 전부 가져온다(과거엔 500개로 잘려 "전체" 화면이 일부만 보였음).
+  // 카운트(브랜드별 광고 수)도 이 전체에서 파생한다.
+  async function fetchAllAds(): Promise<{ data: any[]; error: any }> {
     const PAGE = 1000
-    const all: { target_id: string }[] = []
-    for (let from = 0; ; from += PAGE) {
+    const CAP = 5000 // 안전 상한(과도한 페이로드 방지). 넘어가면 추후 지연 로딩으로 전환.
+    // saved 컬럼 존재 여부 1행으로 확인(마이그레이션 전이면 빼고 조회).
+    let cols = adCols
+    const probe = await supabaseAdmin.from('am_ads').select(adCols).limit(1)
+    if (probe.error) cols = baseCols
+    const all: any[] = []
+    for (let from = 0; from < CAP; from += PAGE) {
       const { data, error } = await supabaseAdmin
         .from('am_ads')
-        .select('target_id')
+        .select(cols)
+        .order('first_seen_at', { ascending: false })
         .range(from, from + PAGE - 1)
       if (error) return { data: all, error }
       all.push(...((data as any[]) ?? []))
@@ -28,23 +35,18 @@ export async function GET() {
     return { data: all, error: null }
   }
 
-  let [tRes, aRes, cRes, anRes] = await Promise.all([
+  const [tRes, aRes, anRes] = await Promise.all([
     supabaseAdmin.from('am_targets').select('*').order('created_at', { ascending: false }),
-    supabaseAdmin.from('am_ads').select(adCols).order('first_seen_at', { ascending: false }).limit(500),
-    fetchAllTargetIds(),
+    fetchAllAds(),
     // 저장된 AI 분석이 있는 소재 id만(가벼움) → 목록에 has_analysis 플래그로 표시
     supabaseAdmin.from('am_ads').select('library_id').not('ai_analysis', 'is', null),
   ])
-
-  if (aRes.error) {
-    aRes = await supabaseAdmin.from('am_ads').select(baseCols).order('first_seen_at', { ascending: false }).limit(500)
-  }
 
   if (tRes.error) return NextResponse.json({ error: tRes.error.message }, { status: 500 })
   if (aRes.error) return NextResponse.json({ error: aRes.error.message }, { status: 500 })
 
   const counts: Record<string, number> = {}
-  for (const r of cRes.data ?? []) {
+  for (const r of aRes.data ?? []) {
     if (!r.target_id) continue
     counts[r.target_id] = (counts[r.target_id] || 0) + 1
   }

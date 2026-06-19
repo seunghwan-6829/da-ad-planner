@@ -371,6 +371,12 @@ export default function MetaAdCrawlerPage() {
   useEffect(() => {
     if (selectedBrand === "all") return;
     if (loadedBrandsRef.current.has(selectedBrand)) return;
+    // bootstrap이 이미 그 브랜드 광고를 배지 수만큼 들고 있으면(보통의 경우) 추가 요청 불필요.
+    const have = ads.filter((a) => a.target_id === selectedBrand).length;
+    if (have >= (counts[selectedBrand] || 0)) {
+      loadedBrandsRef.current.add(selectedBrand);
+      return;
+    }
     loadedBrandsRef.current.add(selectedBrand); // 즉시 표시해 중복 fetch 방지
     let cancelled = false;
     (async () => {
@@ -398,7 +404,7 @@ export default function MetaAdCrawlerPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedBrand]);
+  }, [selectedBrand, ads, counts]);
 
   const targetMap = useMemo(() => {
     const m: Record<string, Target> = {};
