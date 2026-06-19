@@ -984,10 +984,12 @@ export default function MetaAdCrawlerPage() {
           selected={selectedBrands}
           onToggle={(id) => {
             setSelectedBrands((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+            setActiveCategory("all"); // 브랜드 선택은 카테고리 필터보다 우선(AND로 빈 화면 방지)
             resetToFirst();
           }}
           onSelectMany={(ids) => {
             setSelectedBrands(ids);
+            setActiveCategory("all");
             resetToFirst();
           }}
           onClear={() => {
