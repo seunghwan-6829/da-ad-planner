@@ -12,17 +12,16 @@ export async function GET() {
   const adCols = `${baseCols}, saved`
 
   // 광고 전체를 로드: PostgREST 서버측 상한(db-max-rows, 보통 1000)은 .limit()으로 못 넘기므로
-  // .range() 로 페이지네이션해 전부 가져온다(과거엔 500개로 잘려 "전체" 화면이 일부만 보였음).
-  // 카운트(브랜드별 광고 수)도 이 전체에서 파생한다.
+  // .range() 로 페이지네이션해 "전부" 가져온다(과거엔 500개로 잘려 "전체" 화면이 일부만 보였음).
+  // 개수 상한 없이, 페이지가 가득 차지 않을 때(=마지막 페이지)까지 계속 받는다. 카운트도 이 전체에서 파생.
   async function fetchAllAds(): Promise<{ data: any[]; error: any }> {
     const PAGE = 1000
-    const CAP = 5000 // 안전 상한(과도한 페이로드 방지). 넘어가면 추후 지연 로딩으로 전환.
     // saved 컬럼 존재 여부 1행으로 확인(마이그레이션 전이면 빼고 조회).
     let cols = adCols
     const probe = await supabaseAdmin.from('am_ads').select(adCols).limit(1)
     if (probe.error) cols = baseCols
     const all: any[] = []
-    for (let from = 0; from < CAP; from += PAGE) {
+    for (let from = 0; ; from += PAGE) {
       const { data, error } = await supabaseAdmin
         .from('am_ads')
         .select(cols)
@@ -30,7 +29,7 @@ export async function GET() {
         .range(from, from + PAGE - 1)
       if (error) return { data: all, error }
       all.push(...((data as any[]) ?? []))
-      if (!data || data.length < PAGE) break
+      if (!data || data.length < PAGE) break // 마지막 페이지 → 종료(자연 종료, 개수 제한 없음)
     }
     return { data: all, error: null }
   }
