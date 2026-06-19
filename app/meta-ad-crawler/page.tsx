@@ -303,6 +303,8 @@ export default function MetaAdCrawlerPage() {
   const [edit, setEdit] = useState<Partial<Target> & { pageInput?: string }>({});
 
   const categorizedRef = useRef(false);
+  // 브랜드별 전체 광고를 서버에서 받아왔는지 추적(중복 fetch 방지).
+  const loadedBrandsRef = useRef<Set<string>>(new Set());
 
   const loadAll = useCallback(async () => {
     try {
@@ -364,6 +366,40 @@ export default function MetaAdCrawlerPage() {
     })();
   }, [loading, targets, counts]);
 
+  // 브랜드 선택 시, bootstrap의 최신 500개 풀에 없을 수 있는 그 브랜드의 "전체" 광고를 서버에서 받아 병합.
+  // (배지 카운트는 전체 기준인데 화면 풀은 500개로 잘려, 오래된 브랜드가 0~몇 개만 보이던 문제 해결.)
+  useEffect(() => {
+    if (selectedBrand === "all") return;
+    if (loadedBrandsRef.current.has(selectedBrand)) return;
+    loadedBrandsRef.current.add(selectedBrand); // 즉시 표시해 중복 fetch 방지
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(`/api/meta-ad/ads?target_id=${selectedBrand}&limit=500`);
+        if (!r.ok) {
+          loadedBrandsRef.current.delete(selectedBrand);
+          return;
+        }
+        const rows: Ad[] = await r.json();
+        if (cancelled) return;
+        setAds((prev) => {
+          const map = new Map(prev.map((a) => [a.library_id, a]));
+          for (const row of rows) {
+            const ex = map.get(row.library_id);
+            // bootstrap이 계산해준 has_analysis 플래그는 보존
+            map.set(row.library_id, ex ? { ...ex, ...row, has_analysis: ex.has_analysis } : row);
+          }
+          return Array.from(map.values());
+        });
+      } catch {
+        loadedBrandsRef.current.delete(selectedBrand);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedBrand]);
+
   const targetMap = useMemo(() => {
     const m: Record<string, Target> = {};
     for (const t of targets) m[t.id] = t;
@@ -410,7 +446,12 @@ export default function MetaAdCrawlerPage() {
       }
       return true;
     });
-    // 최신순(API가 first_seen_at desc 로 정렬). 롱런/위닝 정렬은 실제 광고 수명을 알 수 없어 제거.
+    // 최신순 정렬(브랜드별 병합 fetch로 순서가 섞일 수 있어 명시적으로 first_seen_at desc).
+    list.sort((a, b) => {
+      const ta = a.first_seen_at ? new Date(a.first_seen_at).getTime() : 0;
+      const tb = b.first_seen_at ? new Date(b.first_seen_at).getTime() : 0;
+      return tb - ta;
+    });
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ads, search, activeCategory, selectedBrand, mediaFilter, savedOnly, workedOnly, targetMap]);
