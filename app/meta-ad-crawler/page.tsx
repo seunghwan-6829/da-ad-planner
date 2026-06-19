@@ -30,6 +30,8 @@ import {
   MapPin,
   ClipboardList,
   Move,
+  Filter,
+  ChevronDown,
 } from "lucide-react";
 
 type Target = {
@@ -275,7 +277,8 @@ export default function MetaAdCrawlerPage() {
 
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState<string>("all");
-  const [selectedBrand, setSelectedBrand] = useState<string>("all");
+  const [selectedBrands, setSelectedBrands] = useState<string[]>([]); // 비어있으면 전체 브랜드
+  const [showBrandPicker, setShowBrandPicker] = useState(false);
   const [mediaFilter, setMediaFilter] = useState<"all" | "image" | "carousel" | "video">("all");
   const [savedOnly, setSavedOnly] = useState(false);
   const [workedOnly, setWorkedOnly] = useState(false);
@@ -303,8 +306,6 @@ export default function MetaAdCrawlerPage() {
   const [edit, setEdit] = useState<Partial<Target> & { pageInput?: string }>({});
 
   const categorizedRef = useRef(false);
-  // 브랜드별 전체 광고를 서버에서 받아왔는지 추적(중복 fetch 방지).
-  const loadedBrandsRef = useRef<Set<string>>(new Set());
 
   const loadAll = useCallback(async () => {
     try {
@@ -366,46 +367,6 @@ export default function MetaAdCrawlerPage() {
     })();
   }, [loading, targets, counts]);
 
-  // 브랜드 선택 시, bootstrap의 최신 500개 풀에 없을 수 있는 그 브랜드의 "전체" 광고를 서버에서 받아 병합.
-  // (배지 카운트는 전체 기준인데 화면 풀은 500개로 잘려, 오래된 브랜드가 0~몇 개만 보이던 문제 해결.)
-  useEffect(() => {
-    if (selectedBrand === "all") return;
-    if (loadedBrandsRef.current.has(selectedBrand)) return;
-    // bootstrap이 이미 그 브랜드 광고를 배지 수만큼 들고 있으면(보통의 경우) 추가 요청 불필요.
-    const have = ads.filter((a) => a.target_id === selectedBrand).length;
-    if (have >= (counts[selectedBrand] || 0)) {
-      loadedBrandsRef.current.add(selectedBrand);
-      return;
-    }
-    loadedBrandsRef.current.add(selectedBrand); // 즉시 표시해 중복 fetch 방지
-    let cancelled = false;
-    (async () => {
-      try {
-        const r = await fetch(`/api/meta-ad/ads?target_id=${selectedBrand}&limit=500`);
-        if (!r.ok) {
-          loadedBrandsRef.current.delete(selectedBrand);
-          return;
-        }
-        const rows: Ad[] = await r.json();
-        if (cancelled) return;
-        setAds((prev) => {
-          const map = new Map(prev.map((a) => [a.library_id, a]));
-          for (const row of rows) {
-            const ex = map.get(row.library_id);
-            // bootstrap이 계산해준 has_analysis 플래그는 보존
-            map.set(row.library_id, ex ? { ...ex, ...row, has_analysis: ex.has_analysis } : row);
-          }
-          return Array.from(map.values());
-        });
-      } catch {
-        loadedBrandsRef.current.delete(selectedBrand);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedBrand, ads, counts]);
-
   const targetMap = useMemo(() => {
     const m: Record<string, Target> = {};
     for (const t of targets) m[t.id] = t;
@@ -415,16 +376,13 @@ export default function MetaAdCrawlerPage() {
   const categories = useMemo(() => {
     const set = new Set<string>();
     for (const t of targets) set.add((t.category || "").trim() || "미분류");
-    return Array.from(set).sort();
+    // '기타'는 항상 맨 끝으로, 나머지는 가나다순.
+    return Array.from(set).sort((a, b) => {
+      if (a === "기타") return 1;
+      if (b === "기타") return -1;
+      return a.localeCompare(b, "ko");
+    });
   }, [targets]);
-
-  const brandsInCategory = useMemo(
-    () =>
-      targets.filter(
-        (t) => activeCategory === "all" || ((t.category || "").trim() || "미분류") === activeCategory
-      ),
-    [targets, activeCategory]
-  );
 
   function brandNameOfAd(ad: Ad): string {
     const t = ad.target_id ? targetMap[ad.target_id] : undefined;
@@ -442,7 +400,7 @@ export default function MetaAdCrawlerPage() {
       if (workedOnly && !((ad.memo && ad.memo.trim()) || ad.has_analysis)) return false;
       const cat = ad.target_id ? (targetMap[ad.target_id]?.category || "").trim() || "미분류" : "미분류";
       if (activeCategory !== "all" && cat !== activeCategory) return false;
-      if (selectedBrand !== "all" && ad.target_id !== selectedBrand) return false;
+      if (selectedBrands.length > 0 && (!ad.target_id || !selectedBrands.includes(ad.target_id))) return false;
       if (q && !brandNameOfAd(ad).toLowerCase().includes(q)) return false;
       if (mediaFilter !== "all") {
         const carousel = ad.media_type === "carousel" || (Array.isArray(ad.media_urls) && ad.media_urls.length > 1);
@@ -460,7 +418,7 @@ export default function MetaAdCrawlerPage() {
     });
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ads, search, activeCategory, selectedBrand, mediaFilter, savedOnly, workedOnly, targetMap]);
+  }, [ads, search, activeCategory, selectedBrands, mediaFilter, savedOnly, workedOnly, targetMap]);
 
   const savedCount = useMemo(() => ads.filter((a) => a.saved).length, [ads]);
   const workedCount = useMemo(() => ads.filter((a) => (a.memo && a.memo.trim()) || a.has_analysis).length, [ads]);
@@ -647,7 +605,7 @@ export default function MetaAdCrawlerPage() {
   async function remove(t: Target) {
     if (!confirm(`'${t.label}' 삭제할까요? (쌓인 광고는 유지됩니다)`)) return;
     await fetch(`/api/meta-ad/targets/${t.id}`, { method: "DELETE" });
-    if (selectedBrand === t.id) setSelectedBrand("all");
+    setSelectedBrands((prev) => prev.filter((id) => id !== t.id));
     loadAll();
   }
 
@@ -773,27 +731,41 @@ export default function MetaAdCrawlerPage() {
       {/* 카테고리 칩 + 브랜드 드롭다운 */}
       <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
         <div className="flex flex-wrap gap-2">
-          <Chip active={activeCategory === "all"} onClick={() => { setActiveCategory("all"); setSelectedBrand("all"); resetToFirst(); }}>
+          <Chip active={activeCategory === "all"} onClick={() => { setActiveCategory("all"); setSelectedBrands([]); resetToFirst(); }}>
             모든 광고
           </Chip>
           {categories.map((c) => (
-            <Chip key={c} active={activeCategory === c} onClick={() => { setActiveCategory(c); setSelectedBrand("all"); resetToFirst(); }}>
+            <Chip key={c} active={activeCategory === c} onClick={() => { setActiveCategory(c); setSelectedBrands([]); resetToFirst(); }}>
               {c}
             </Chip>
           ))}
         </div>
-        <select
-          value={selectedBrand}
-          onChange={(e) => { setSelectedBrand(e.target.value); resetToFirst(); }}
-          className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm dark:text-gray-200"
-        >
-          <option value="all">전체 브랜드</option>
-          {brandsInCategory.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.profile_name || t.label} ({counts[t.id] ?? 0})
-            </option>
-          ))}
-        </select>
+        <div className="flex items-center gap-2">
+          {selectedBrands.length > 0 && (
+            <button
+              onClick={() => { setSelectedBrands([]); resetToFirst(); }}
+              className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 underline underline-offset-2"
+            >
+              선택 해제
+            </button>
+          )}
+          <button
+            onClick={() => setShowBrandPicker(true)}
+            className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium ${
+              selectedBrands.length > 0
+                ? "border-primary/40 bg-primary/5 text-primary dark:bg-primary/10"
+                : "border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800"
+            }`}
+          >
+            <Filter className="h-4 w-4" />
+            {selectedBrands.length === 0
+              ? "전체 브랜드"
+              : selectedBrands.length === 1
+                ? (targetMap[selectedBrands[0]]?.profile_name || targetMap[selectedBrands[0]]?.label || "브랜드 1개")
+                : `브랜드 ${selectedBrands.length}개 선택`}
+            <ChevronDown className="h-4 w-4 opacity-60" />
+          </button>
+        </div>
       </div>
 
       {/* 툴바 */}
@@ -1001,6 +973,28 @@ export default function MetaAdCrawlerPage() {
           onToggleSaved={toggleSaved}
           onOpenVariation={openDetail}
           onSeed={seedTo}
+        />
+      )}
+
+      {/* 브랜드 선택 플로팅(다중 선택 + 카테고리/광고수) */}
+      {showBrandPicker && (
+        <BrandPickerModal
+          targets={targets}
+          counts={counts}
+          selected={selectedBrands}
+          onToggle={(id) => {
+            setSelectedBrands((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+            resetToFirst();
+          }}
+          onSelectMany={(ids) => {
+            setSelectedBrands(ids);
+            resetToFirst();
+          }}
+          onClear={() => {
+            setSelectedBrands([]);
+            resetToFirst();
+          }}
+          onClose={() => setShowBrandPicker(false)}
         />
       )}
 
@@ -1664,6 +1658,191 @@ function AnalysisViz({
           </ul>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ── 브랜드 선택 플로팅: 카테고리 필터 + 검색 + 다중 선택 ── */
+function BrandPickerModal({
+  targets,
+  counts,
+  selected,
+  onToggle,
+  onSelectMany,
+  onClear,
+  onClose,
+}: {
+  targets: Target[];
+  counts: Record<string, number>;
+  selected: string[];
+  onToggle: (id: string) => void;
+  onSelectMany: (ids: string[]) => void;
+  onClear: () => void;
+  onClose: () => void;
+}) {
+  const [q, setQ] = useState("");
+  const [cat, setCat] = useState<string>("all");
+
+  const cats = useMemo(() => {
+    const set = new Set<string>();
+    for (const t of targets) set.add((t.category || "").trim() || "미분류");
+    return Array.from(set).sort((a, b) => {
+      if (a === "기타") return 1;
+      if (b === "기타") return -1;
+      return a.localeCompare(b, "ko");
+    });
+  }, [targets]);
+
+  const rows = useMemo(() => {
+    const kw = q.trim().toLowerCase();
+    return targets
+      .map((t) => ({ t, n: counts[t.id] || 0, c: (t.category || "").trim() || "미분류" }))
+      .filter(({ t, c }) => {
+        if (cat !== "all" && c !== cat) return false;
+        if (kw && !((t.profile_name || t.label || "").toLowerCase().includes(kw))) return false;
+        return true;
+      })
+      .sort((a, b) => b.n - a.n); // 광고 많은 순
+  }, [targets, counts, q, cat]);
+
+  const selectedSet = new Set(selected);
+  const visibleIds = rows.map((r) => r.t.id);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedSet.has(id));
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="mt-[6vh] w-full max-w-2xl rounded-2xl bg-white dark:bg-gray-900 shadow-2xl flex max-h-[82vh] flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* 헤더 */}
+        <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800 px-5 py-4">
+          <div className="flex items-center gap-2">
+            <Filter className="h-5 w-5 text-primary" />
+            <h3 className="text-base font-bold dark:text-gray-100">브랜드 선택</h3>
+            {selected.length > 0 && (
+              <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
+                {selected.length}개 선택됨
+              </span>
+            )}
+          </div>
+          <button onClick={onClose} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {/* 검색 + 카테고리 필터 */}
+        <div className="border-b border-gray-100 dark:border-gray-800 px-5 py-3 space-y-3">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="브랜드명 검색"
+              className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 py-2 pl-9 pr-3 text-sm dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary/40"
+            />
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              onClick={() => setCat("all")}
+              className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                cat === "all" ? "bg-primary text-white" : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"
+              }`}
+            >
+              전체
+            </button>
+            {cats.map((c) => (
+              <button
+                key={c}
+                onClick={() => setCat(c)}
+                className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                  cat === c ? "bg-primary text-white" : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"
+                }`}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* 일괄 동작 */}
+        <div className="flex items-center justify-between px-5 py-2 text-xs">
+          <span className="text-gray-400">{rows.length}개 브랜드</span>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => onSelectMany(allVisibleSelected ? selected.filter((id) => !visibleIds.includes(id)) : Array.from(new Set([...selected, ...visibleIds])))}
+              className="font-medium text-primary hover:underline"
+            >
+              {allVisibleSelected ? "보이는 항목 해제" : "보이는 항목 전체 선택"}
+            </button>
+            {selected.length > 0 && (
+              <button onClick={onClear} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+                전체 해제
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* 브랜드 목록 */}
+        <div className="flex-1 overflow-y-auto px-3 pb-3">
+          {rows.length === 0 ? (
+            <p className="py-10 text-center text-sm text-gray-400">검색 결과가 없습니다.</p>
+          ) : (
+            <ul className="space-y-0.5">
+              {rows.map(({ t, n, c }) => {
+                const on = selectedSet.has(t.id);
+                return (
+                  <li key={t.id}>
+                    <button
+                      onClick={() => onToggle(t.id)}
+                      className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left ${
+                        on ? "bg-primary/5 dark:bg-primary/10" : "hover:bg-gray-50 dark:hover:bg-gray-800"
+                      }`}
+                    >
+                      <span
+                        className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded border ${
+                          on ? "border-primary bg-primary text-white" : "border-gray-300 dark:border-gray-600"
+                        }`}
+                      >
+                        {on && <Check className="h-3.5 w-3.5" />}
+                      </span>
+                      {t.profile_image ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={t.profile_image} alt="" className="h-8 w-8 flex-shrink-0 rounded-full object-cover" />
+                      ) : (
+                        <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-gray-100 dark:bg-gray-800 text-xs font-bold text-gray-500">
+                          {(t.profile_name || t.label || "?").slice(0, 1)}
+                        </span>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="truncate text-sm font-medium dark:text-gray-200">{t.profile_name || t.label}</span>
+                          <span className="flex-shrink-0 rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-[11px] text-gray-500 dark:text-gray-400">{c}</span>
+                        </div>
+                        {t.summary && <p className="truncate text-xs text-gray-400">{t.summary}</p>}
+                      </div>
+                      <span className="flex-shrink-0 text-xs font-semibold text-gray-400">{n}건</span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+
+        {/* 푸터 */}
+        <div className="border-t border-gray-100 dark:border-gray-800 px-5 py-3">
+          <button
+            onClick={onClose}
+            className="w-full rounded-lg bg-primary py-2.5 text-sm font-semibold text-white hover:bg-primary/90"
+          >
+            {selected.length > 0 ? `${selected.length}개 브랜드 보기` : "전체 브랜드 보기"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
