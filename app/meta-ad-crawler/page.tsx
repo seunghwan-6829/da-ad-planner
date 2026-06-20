@@ -306,6 +306,18 @@ export default function MetaAdCrawlerPage() {
   const [edit, setEdit] = useState<Partial<Target> & { pageInput?: string }>({});
 
   const categorizedRef = useRef(false);
+  const bgLoadedRef = useRef(false); // 백그라운드 전체 로드 1회만
+  const loadedBrandsRef = useRef<Set<string>>(new Set()); // 브랜드별 on-demand 로드 추적
+
+  // 새로 받은 광고들을 기존 ads 에 병합(중복 제거, 기존 항목 우선 — bootstrap 의 ad_text/has_analysis 보존)
+  const mergeAds = useCallback((rows: Ad[]) => {
+    if (!rows?.length) return;
+    setAds((prev) => {
+      const map = new Map(prev.map((a) => [a.library_id, a]));
+      for (const row of rows) if (!map.has(row.library_id)) map.set(row.library_id, row);
+      return Array.from(map.values());
+    });
+  }, []);
 
   const loadAll = useCallback(async () => {
     try {
@@ -322,7 +334,29 @@ export default function MetaAdCrawlerPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+    // 첫 화면(최근 300)을 띄운 뒤, 나머지 광고를 백그라운드로 이어 받아 병합(화면 안 멈춤). 진입당 1회.
+    if (!bgLoadedRef.current) {
+      bgLoadedRef.current = true;
+      (async () => {
+        const PAGE = 500;
+        let offset = 300; // bootstrap 이 최근 300 줬으니 그다음부터
+        for (let i = 0; i < 400; i++) {
+          // 안전 상한(=최대 20만 건)
+          try {
+            const r = await fetch(`/api/meta-ad/ads?light=1&limit=${PAGE}&offset=${offset}`);
+            if (!r.ok) break;
+            const rows: Ad[] = await r.json();
+            if (!rows.length) break;
+            mergeAds(rows);
+            if (rows.length < PAGE) break;
+            offset += PAGE;
+          } catch {
+            break;
+          }
+        }
+      })();
+    }
+  }, [mergeAds]);
 
   useEffect(() => {
     // 재진입 시 세션 캐시를 즉시 표시(진입 순간 기다림 제거) → 뒤에서 최신으로 갱신
@@ -366,6 +400,33 @@ export default function MetaAdCrawlerPage() {
       if (tRes.ok) setTargets(await tRes.json());
     })();
   }, [loading, targets, counts]);
+
+  // 브랜드를 선택하면 그 브랜드 광고를 서버에서 완전히 받아 병합(백그라운드 로드가 아직 안 끝났거나
+  // 그 브랜드가 최근 300 밖이어도 브랜드 뷰는 항상 완전하게). 이미 다 들고 있으면 스킵.
+  useEffect(() => {
+    if (selectedBrands.length === 0) return;
+    for (const bid of selectedBrands) {
+      if (loadedBrandsRef.current.has(bid)) continue;
+      const have = ads.filter((a) => a.target_id === bid).length;
+      if ((counts[bid] || 0) > 0 && have >= (counts[bid] || 0)) {
+        loadedBrandsRef.current.add(bid);
+        continue;
+      }
+      loadedBrandsRef.current.add(bid);
+      (async () => {
+        try {
+          const r = await fetch(`/api/meta-ad/ads?light=1&limit=1000&target_id=${bid}`);
+          if (!r.ok) {
+            loadedBrandsRef.current.delete(bid);
+            return;
+          }
+          mergeAds(await r.json());
+        } catch {
+          loadedBrandsRef.current.delete(bid);
+        }
+      })();
+    }
+  }, [selectedBrands, ads, counts, mergeAds]);
 
   const targetMap = useMemo(() => {
     const m: Record<string, Target> = {};
