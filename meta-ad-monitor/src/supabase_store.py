@@ -37,6 +37,25 @@ def fetch_target(client: Client, target_id: str) -> dict | None:
     return rows[0] if rows else None
 
 
+def fetch_ad_counts(client: Client) -> dict[str, int]:
+    """브랜드(target_id)별 현재 누적 광고 수. PostgREST 기본 상한(보통 1000행)을
+    .range() 페이지네이션으로 넘겨 정확히 센다."""
+    counts: dict[str, int] = {}
+    page = 1000
+    frm = 0
+    while True:
+        res = client.table("am_ads").select("target_id").range(frm, frm + page - 1).execute()
+        rows = res.data or []
+        for r in rows:
+            tid = r.get("target_id")
+            if tid:
+                counts[tid] = counts.get(tid, 0) + 1
+        if len(rows) < page:
+            break
+        frm += page
+    return counts
+
+
 def save_ads(client: Client, target: dict, ads: list[dict]) -> tuple[int, int]:
     """반환: (신규 개수, 추출 총 개수). first_seen_at 은 신규일 때만 기록되도록
     payload 에서 제외 → 기존 광고는 last_seen_at 만 갱신됨."""

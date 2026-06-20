@@ -66,6 +66,14 @@ def main() -> int:
             before = len(targets)
             targets = [t for t in targets if _is_new(t)]
             print(f"최근 {since_days}일 내 추가된 브랜드만: {len(targets)}/{before}개")
+        # CRAWL_MAX_COUNT: 현재 광고 수가 N개 이하인 브랜드만 크롤(=아직 다 못 가져온 브랜드).
+        # 클라우드 30개 제한에 걸린 브랜드만 골라 로컬(집 IP)에서 전량 보충할 때 사용. 이미 많이 쌓인 브랜드는 건너뜀.
+        max_count = int(os.environ.get("CRAWL_MAX_COUNT") or "0")
+        if max_count > 0:
+            ad_counts = supabase_store.fetch_ad_counts(client)
+            before = len(targets)
+            targets = [t for t in targets if ad_counts.get(t.get("id"), 0) <= max_count]
+            print(f"광고 {max_count}개 이하(미완) 브랜드만: {len(targets)}/{before}개")
         # 브랜드가 많으면(예: 82개) 한 작업에서 다 돌면 45분 한도를 넘는다.
         # CRAWL_CHUNKS/CRAWL_CHUNK 로 enabled 타겟을 N등분해 병렬 작업이 나눠 처리.
         chunks = int(os.environ.get("CRAWL_CHUNKS") or "0")
