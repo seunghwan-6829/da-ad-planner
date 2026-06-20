@@ -25,11 +25,19 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'library_id 가 필요합니다.' }, { status: 400 })
   }
 
-  const { data: ad, error } = await supabaseAdmin
+  // transcript 컬럼이 아직 없는(마이그레이션 전) 환경에서도 동작하게 폴백(캐시만 생략).
+  let { data: ad, error } = await supabaseAdmin
     .from('am_ads')
     .select('library_id, media_type, media_url, transcript')
     .eq('library_id', libraryId)
     .single()
+  if (error) {
+    ;({ data: ad, error } = await supabaseAdmin
+      .from('am_ads')
+      .select('library_id, media_type, media_url')
+      .eq('library_id', libraryId)
+      .single())
+  }
   if (error || !ad) {
     return NextResponse.json({ error: '광고를 찾을 수 없습니다.' }, { status: 404 })
   }
