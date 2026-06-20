@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
+import { aiFetch } from "@/lib/ai-fetch";
 import {
   Megaphone,
   Settings,
@@ -32,6 +33,7 @@ import {
   Move,
   Filter,
   ChevronDown,
+  FileText,
 } from "lucide-react";
 
 type Target = {
@@ -66,6 +68,7 @@ type Ad = {
   saved?: boolean | null;
   ai_analysis?: string | null;
   has_analysis?: boolean;
+  transcript?: string | null;
   first_seen_at: string;
   last_seen_at?: string | null;
 };
@@ -2034,6 +2037,9 @@ function AdDetailModal({
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisSaved, setAnalysisSaved] = useState<boolean>(!!ad.ai_analysis);
   const [savingAnalysis, setSavingAnalysis] = useState(false);
+  const [transcript, setTranscript] = useState<string | null>(ad.transcript ?? null);
+  const [transcribing, setTranscribing] = useState(false);
+  const [transcriptErr, setTranscriptErr] = useState<string | null>(null);
   const ended = ad.status === "ended";
 
   // 메인 영상: 그래프 드래그/클릭·프레임 클릭으로 이동+재생(AnalysisViz가 ref로 직접 제어)
@@ -2047,6 +2053,36 @@ function AdDetailModal({
     setAnalysis(ad.ai_analysis ?? null);
     setAnalysisSaved(!!ad.ai_analysis);
   }, [ad.ai_analysis]);
+  useEffect(() => {
+    setTranscript(ad.transcript ?? null);
+    setTranscriptErr(null);
+  }, [ad.transcript, ad.library_id]);
+
+  async function runTranscript() {
+    setTranscribing(true);
+    setTranscriptErr(null);
+    try {
+      const res = await aiFetch("/api/meta-ad/transcript", {
+        method: "POST",
+        body: JSON.stringify({ library_id: ad.library_id }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setTranscriptErr(j.error || "대본 추출에 실패했어요.");
+        return;
+      }
+      if (j.empty) {
+        setTranscript("");
+        setTranscriptErr("나레이션(음성)이 감지되지 않았어요.");
+        return;
+      }
+      setTranscript(j.transcript || "");
+    } catch {
+      setTranscriptErr("대본 추출 중 오류가 발생했어요.");
+    } finally {
+      setTranscribing(false);
+    }
+  }
 
   // 메모 세로 자동 확장 (내용 길어져도 잘리지 않게)
   const memoRef = useRef<HTMLTextAreaElement>(null);
@@ -2168,10 +2204,50 @@ function AdDetailModal({
               <MediaView ad={ad} rounded="rounded-xl" videoRef={mainVideoRef} />
             </div>
             <div>
-              <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-gray-400">제목 · 캡션 (T&D)</div>
+              <div className="mb-1.5 flex items-center justify-between gap-2">
+                <span className="text-xs font-bold uppercase tracking-wide text-gray-400">제목 · 캡션 (T&D)</span>
+                {ad.media_type === "video" && (
+                  <button
+                    onClick={runTranscript}
+                    disabled={transcribing}
+                    title="영상 나레이션을 텍스트로 받아쓰기 (리메이크용 대본)"
+                    className="flex items-center gap-1 rounded-lg border border-primary/40 bg-primary/5 px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/10 disabled:opacity-50 dark:bg-primary/10"
+                  >
+                    {transcribing ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />}
+                    {transcribing ? "받아쓰는 중..." : transcript ? "대본 다시" : "대본"}
+                  </button>
+                )}
+              </div>
               <p className="whitespace-pre-wrap rounded-lg bg-gray-50 p-3.5 text-sm leading-relaxed text-gray-700 dark:bg-gray-800/50 dark:text-gray-200">
                 {cleanCaption(ad.ad_text, brandName)}
               </p>
+
+              {transcribing && (
+                <div className="mt-2 flex items-center gap-2 rounded-lg bg-gray-50 p-3 text-xs text-gray-500 dark:bg-gray-800/50">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> 영상 음성에서 나레이션을 받아쓰는 중...
+                </div>
+              )}
+              {transcriptErr && !transcribing && (
+                <div className="mt-2 rounded-lg bg-amber-50 p-2.5 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
+                  {transcriptErr}
+                </div>
+              )}
+              {transcript && !transcribing && (
+                <div className="mt-2">
+                  <div className="mb-1 flex items-center justify-between">
+                    <span className="text-[11px] font-bold uppercase tracking-wide text-gray-400">🎙️ 나레이션 대본</span>
+                    <button
+                      onClick={() => navigator.clipboard?.writeText(transcript)}
+                      className="text-[11px] font-medium text-primary hover:underline"
+                    >
+                      복사
+                    </button>
+                  </div>
+                  <p className="whitespace-pre-wrap rounded-lg border border-primary/20 bg-primary/[0.03] p-3 text-sm leading-relaxed text-gray-700 dark:bg-primary/[0.06] dark:text-gray-200">
+                    {transcript}
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 

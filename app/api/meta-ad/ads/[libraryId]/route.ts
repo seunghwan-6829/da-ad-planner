@@ -3,17 +3,25 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
 
-// 모달 열 때 지연 로딩: 목록에서 뺀 무거운 ai_analysis 만 단건 조회.
+// 모달 열 때 지연 로딩: 목록(경량)에서 뺀 본문(ad_text)·AI분석(ai_analysis)·대본(transcript)을 단건 조회.
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ libraryId: string }> }
 ) {
   const { libraryId } = await params
-  const { data, error } = await supabaseAdmin
+  // transcript 컬럼이 아직 없는(마이그레이션 전) 환경에서도 깨지지 않게 폴백.
+  let { data, error } = await supabaseAdmin
     .from('am_ads')
-    .select('library_id, ai_analysis')
+    .select('library_id, ai_analysis, ad_text, transcript')
     .eq('library_id', libraryId)
     .single()
+  if (error) {
+    ;({ data, error } = await supabaseAdmin
+      .from('am_ads')
+      .select('library_id, ai_analysis, ad_text')
+      .eq('library_id', libraryId)
+      .single())
+  }
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json(data)
 }
