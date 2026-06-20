@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -27,6 +28,12 @@ def main() -> int:
 
     client = supabase_store.get_client()
 
+    # 로컬(사장님 PC) 실행 옵션:
+    #  - CRAWL_HEADFUL=1   → 브라우저 창을 띄워(headful) 집 IP로 크롤. 메타가 봇 차단을 덜 해 더 많은 광고를 내준다.
+    #  - CRAWL_MAX_SCROLLS → 스크롤 횟수(기본 80). 광고 많은 브랜드일수록 크게.
+    headful = (os.environ.get("CRAWL_HEADFUL") or "").strip().lower() in ("1", "true", "yes")
+    max_scrolls = int(os.environ.get("CRAWL_MAX_SCROLLS") or "80")
+
     # CRAWL_TARGET_ID 가 있으면 그 브랜드 1개만 즉시 크롤(브랜드 추가 직후 트리거용).
     target_id = (os.environ.get("CRAWL_TARGET_ID") or "").strip()
     # 단일 브랜드 dispatch는 매트릭스 청크 0에서만 실행(나머지 청크 작업은 바로 종료).
@@ -42,6 +49,23 @@ def main() -> int:
         print(f"단일 브랜드 즉시 크롤: {targets[0].get('label')} ({target_id})")
     else:
         targets = supabase_store.fetch_enabled_targets(client)
+        # CRAWL_SINCE_DAYS: 최근 N일 내 추가된 브랜드만 크롤(신규 브랜드만 로컬에서 전체 크롤할 때).
+        since_days = int(os.environ.get("CRAWL_SINCE_DAYS") or "0")
+        if since_days > 0:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=since_days)
+
+            def _is_new(t: dict) -> bool:
+                v = t.get("created_at")
+                if not v:
+                    return False  # 생성일 모르면 '신규'로 보지 않음(오래된 브랜드 재크롤 방지)
+                try:
+                    return datetime.fromisoformat(str(v).replace("Z", "+00:00")) >= cutoff
+                except Exception:
+                    return False
+
+            before = len(targets)
+            targets = [t for t in targets if _is_new(t)]
+            print(f"최근 {since_days}일 내 추가된 브랜드만: {len(targets)}/{before}개")
         # 브랜드가 많으면(예: 82개) 한 작업에서 다 돌면 45분 한도를 넘는다.
         # CRAWL_CHUNKS/CRAWL_CHUNK 로 enabled 타겟을 N등분해 병렬 작업이 나눠 처리.
         chunks = int(os.environ.get("CRAWL_CHUNKS") or "0")
@@ -58,7 +82,7 @@ def main() -> int:
     for t in targets:
         country = t.get("country", "KR")
         try:
-            ads = scraper.scrape_target(t, selectors, country)
+            ads = scraper.scrape_target(t, selectors, country, headful=headful, max_scrolls=max_scrolls)
             new, total = supabase_store.save_ads(client, t, ads)
             grand_new += new
             status = "OK" if total > 0 else "EMPTY"
