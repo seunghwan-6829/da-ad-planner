@@ -1,37 +1,32 @@
 @echo off
-chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
-
-if not exist .venv\Scripts\python.exe (
-  echo 이 PC에서 처음 실행 - 설치를 먼저 진행합니다...
+if not exist ".venv\Scripts\python.exe" (
+  echo First run on this PC - running setup first...
   call "%~dp0setup-local.bat"
 )
-if not exist .venv\Scripts\python.exe (
-  echo 설치에 실패했습니다. setup-local.bat 을 직접 실행해 확인해 주세요.
+if not exist ".venv\Scripts\python.exe" (
+  echo Setup failed. Please run setup-local.bat directly.
   pause
   exit /b 1
 )
-if not exist .env (
-  echo .env 파일이 없습니다. .env.example 을 복사해 .env 로 만들고 Supabase 키를 채워주세요.
+if not exist ".env" (
+  echo .env not found. Copy .env.example to .env and fill Supabase keys.
   pause
   exit /b 1
 )
-
-REM 집 IP + 브라우저 창을 띄워(headful) 크롤 → 메타가 봇 차단을 덜 해 광고를 더 많이 내줍니다.
 set CRAWL_HEADFUL=1
-REM 최근 7일 내 추가한 브랜드만 (방금 추가한 신규 브랜드들)
-set CRAWL_SINCE_DAYS=7
-REM 스크롤 횟수 (광고 많은 브랜드까지 끝까지 내리도록 크게)
 set CRAWL_MAX_SCROLLS=150
-
-echo ============================================
-echo   신규 브랜드 전체 크롤 (집 IP, 화면 표시)
-echo   * 크롬 창이 떴다 스스로 스크롤합니다. 닫지 마세요.
-echo ============================================
+set PYTHONUTF8=1
+set PYTHONIOENCODING=utf-8
+chcp 65001 >nul
+set CRAWL_SINCE_DAYS=7
+echo ==========================================
+echo   Crawl NEW brands (added in last 7 days)
+echo   Home IP + visible browser. Do NOT close Chrome.
+echo ==========================================
 echo.
-.venv\Scripts\python.exe -m src.run_cloud
-
+".venv\Scripts\python.exe" -m src.run_cloud
 echo.
-echo === 끝났습니다. 갤러리에서 새로고침하면 반영됩니다. ===
+echo === Done. Refresh the web gallery to see results. ===
 pause
