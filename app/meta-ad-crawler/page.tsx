@@ -700,6 +700,12 @@ export default function MetaAdCrawlerPage() {
     setDetail((d) => (d && d.library_id === libraryId ? { ...d, ai_analysis, has_analysis: true } : d));
   }
 
+  // 대본(transcript)은 생성 즉시 자동 저장(서버가 DB에 기록) → 앱 상태에도 바로 반영해 다시 열어도 유지.
+  function onTranscribed(libraryId: string, transcript: string) {
+    setAds((prev) => prev.map((a) => (a.library_id === libraryId ? { ...a, transcript } : a)));
+    setDetail((d) => (d && d.library_id === libraryId ? { ...d, transcript } : d));
+  }
+
   // #7 스와이프 파일: 즐겨찾기 토글(낙관적 갱신 후 PATCH)
   async function toggleSaved(ad: Ad) {
     const next = !ad.saved;
@@ -1034,6 +1040,7 @@ export default function MetaAdCrawlerPage() {
           onClose={() => setDetail(null)}
           onMemoSaved={onMemoSaved}
           onAnalyzed={onAdAnalyzed}
+          onTranscribed={onTranscribed}
           onToggleSaved={toggleSaved}
           onOpenVariation={openDetail}
           onSeed={seedTo}
@@ -2013,6 +2020,7 @@ function AdDetailModal({
   onClose,
   onMemoSaved,
   onAnalyzed,
+  onTranscribed,
   onToggleSaved,
   onOpenVariation,
   onSeed,
@@ -2026,6 +2034,7 @@ function AdDetailModal({
   onClose: () => void;
   onMemoSaved: (libraryId: string, memo: string) => void;
   onAnalyzed: (libraryId: string, analysis: string) => void;
+  onTranscribed: (libraryId: string, transcript: string) => void;
   onToggleSaved: (ad: Ad) => void;
   onOpenVariation: (ad: Ad) => void;
   onSeed: (ad: Ad, dest: "plan" | "guide") => void;
@@ -2077,6 +2086,8 @@ function AdDetailModal({
         return;
       }
       setTranscript(j.transcript || "");
+      // 대본은 자동 저장(서버가 DB 기록) — 앱 상태에도 즉시 반영해 다시 열어도 유지.
+      if (j.transcript) onTranscribed(ad.library_id, j.transcript);
     } catch {
       setTranscriptErr("대본 추출 중 오류가 발생했어요.");
     } finally {
