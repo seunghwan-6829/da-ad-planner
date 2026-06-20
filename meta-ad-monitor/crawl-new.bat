@@ -4,7 +4,11 @@ setlocal
 cd /d "%~dp0"
 
 if not exist .venv\Scripts\python.exe (
-  echo 먼저 setup-local.bat 을 한 번 실행해 주세요.
+  echo 이 PC에서 처음 실행 - 설치를 먼저 진행합니다...
+  call "%~dp0setup-local.bat"
+)
+if not exist .venv\Scripts\python.exe (
+  echo 설치에 실패했습니다. setup-local.bat 을 직접 실행해 확인해 주세요.
   pause
   exit /b 1
 )
