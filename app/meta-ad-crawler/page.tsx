@@ -277,6 +277,7 @@ export default function MetaAdCrawlerPage() {
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [ads, setAds] = useState<Ad[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false); // 백그라운드 전체 로드 진행 중 여부
 
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState<string>("all");
@@ -341,11 +342,12 @@ export default function MetaAdCrawlerPage() {
     if (!bgLoadedRef.current) {
       bgLoadedRef.current = true;
       (async () => {
-        const PAGE = 500;
-        let offset = 300; // bootstrap 이 최근 300 줬으니 그다음부터
-        for (let i = 0; i < 400; i++) {
-          // 안전 상한(=최대 20만 건)
-          try {
+        setSyncing(true);
+        try {
+          const PAGE = 500;
+          let offset = 300; // bootstrap 이 최근 300 줬으니 그다음부터
+          for (let i = 0; i < 400; i++) {
+            // 안전 상한(=최대 20만 건)
             const r = await fetch(`/api/meta-ad/ads?light=1&limit=${PAGE}&offset=${offset}`);
             if (!r.ok) break;
             const rows: Ad[] = await r.json();
@@ -353,9 +355,11 @@ export default function MetaAdCrawlerPage() {
             mergeAds(rows);
             if (rows.length < PAGE) break;
             offset += PAGE;
-          } catch {
-            break;
           }
+        } catch {
+          // 네트워크 오류 등 → 중단(이미 받은 만큼은 유지)
+        } finally {
+          setSyncing(false);
         }
       })();
     }
@@ -840,9 +844,27 @@ export default function MetaAdCrawlerPage() {
 
       {/* 툴바 */}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <strong className="text-sm dark:text-gray-200">{loading ? "불러오는 중..." : `광고 ${filteredAds.length}건`}</strong>
-          <span className="text-xs text-gray-400">최신순</span>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <strong className="text-sm dark:text-gray-200">{loading ? "불러오는 중..." : `광고 ${filteredAds.length.toLocaleString()}건`}</strong>
+            <span className="text-xs text-gray-400">최신순</span>
+          </div>
+          {/* 백그라운드 전체 로드 진행률(첫 화면은 최근 300건만, 나머지는 동기화 중) */}
+          {!loading && syncing && (() => {
+            const total = Object.values(counts).reduce((a, b) => a + b, 0);
+            if (total <= ads.length) return null;
+            const pct = total > 0 ? Math.min(99, Math.round((ads.length / total) * 100)) : 0;
+            return (
+              <div className="flex items-center gap-2" title="전체 광고를 백그라운드로 불러오는 중입니다">
+                <div className="h-1.5 w-24 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
+                  <div className="h-full rounded-full bg-primary transition-all duration-300" style={{ width: `${pct}%` }} />
+                </div>
+                <span className="whitespace-nowrap text-xs text-gray-400">
+                  동기화 {pct}% ({ads.length.toLocaleString()}/{total.toLocaleString()})
+                </span>
+              </div>
+            );
+          })()}
         </div>
         <div className="flex items-center gap-2">
           {/* 보기 형식 */}
