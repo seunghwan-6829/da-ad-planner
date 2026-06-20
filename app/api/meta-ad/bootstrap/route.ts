@@ -51,7 +51,13 @@ export async function GET() {
   }
 
   const analyzed = new Set((anRes && !anRes.error ? anRes.data ?? [] : []).map((r: any) => r.library_id))
-  const ads = (aRes.data ?? []).map((a: any) => ({ ...a, has_analysis: analyzed.has(a.library_id) }))
+  // 목록 페이로드 경량화: ad_text(본문)는 카드에 안 쓰이고 데이터가 쌓일수록 페이로드의 절반을 차지한다.
+  // 미리보기(변주 그룹핑/검색/CSV preview)에 충분한 200자만 보내고, 전체 본문은 상세 클릭 시 openDetail 이 따로 받는다.
+  const ads = (aRes.data ?? []).map((a: any) => ({
+    ...a,
+    ad_text: a.ad_text ? String(a.ad_text).slice(0, 200) : a.ad_text,
+    has_analysis: analyzed.has(a.library_id),
+  }))
 
   return NextResponse.json({ targets: tRes.data ?? [], ads, counts })
 }
