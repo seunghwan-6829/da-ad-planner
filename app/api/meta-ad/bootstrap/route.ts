@@ -13,8 +13,20 @@ const RECENT = 300
 const LIGHT_COLS =
   'library_id, target_id, page_name, started_on, media_type, media_url, media_urls, poster_url, landing_url, memo, status, ended_at, first_seen_at, last_seen_at'
 
-// 브랜드별 광고 수: 총 개수를 구한 뒤 target_id 만 병렬 페이지네이션으로 모아 집계(빠름, 페이로드 작음).
+// 브랜드별 광고 수.
 async function fetchCounts(): Promise<Record<string, number>> {
+  // 1) 빠른 경로: DB 집계 함수(RPC). meta-ad-counts-rpc.sql 실행 후 동작(1쿼리·서버측 GROUP BY·행 전송 없음 → 데이터 양과 무관하게 빠름).
+  try {
+    const { data, error } = await supabaseAdmin.rpc('am_ad_counts')
+    if (!error && Array.isArray(data)) {
+      const counts: Record<string, number> = {}
+      for (const row of data as any[]) if (row.target_id) counts[row.target_id] = Number(row.n) || 0
+      return counts
+    }
+  } catch {
+    // RPC 미설치 → 폴백
+  }
+  // 2) 폴백(RPC 없을 때): 총 개수를 구한 뒤 target_id 만 병렬 페이지네이션으로 모아 집계.
   const { count } = await supabaseAdmin.from('am_ads').select('*', { count: 'exact', head: true })
   const total = count || 0
   const PAGE = 1000
