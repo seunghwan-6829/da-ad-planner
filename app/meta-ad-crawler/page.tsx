@@ -288,7 +288,8 @@ export default function MetaAdCrawlerPage() {
   const [showBrandPicker, setShowBrandPicker] = useState(false);
   const [clients, setClients] = useState<Client[]>([]);
   const [selectedClient, setSelectedClient] = useState<string>("all"); // "all" = 전체
-  const [showClientMap, setShowClientMap] = useState(false);
+  const [showClientPicker, setShowClientPicker] = useState(false); // 클라이언트 필터 플로팅
+  const [showClientMap, setShowClientMap] = useState(false); // 클라이언트↔브랜드 매핑 편집 플로팅
   const [mediaFilter, setMediaFilter] = useState<"all" | "image" | "carousel" | "video">("all");
   const [savedOnly, setSavedOnly] = useState(false);
   const [workedOnly, setWorkedOnly] = useState(false);
@@ -838,31 +839,6 @@ export default function MetaAdCrawlerPage() {
         />
       </div>
 
-      {/* 클라이언트 필터 + 매핑 */}
-      <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-semibold text-gray-400">클라이언트</span>
-          <Chip active={selectedClient === "all"} onClick={() => { setSelectedClient("all"); resetToFirst(); }}>
-            전체
-          </Chip>
-          {clients.map((c) => (
-            <Chip
-              key={c.id}
-              active={selectedClient === c.id}
-              onClick={() => { setSelectedClient(c.id); setSelectedBrands([]); setActiveCategory("all"); resetToFirst(); }}
-            >
-              {c.name}
-            </Chip>
-          ))}
-        </div>
-        <button
-          onClick={() => setShowClientMap(true)}
-          className="flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800"
-        >
-          <Users className="h-4 w-4" /> 클라이언트 매핑
-        </button>
-      </div>
-
       {/* 카테고리 칩 + 브랜드 드롭다운 */}
       <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
         <div className="flex flex-wrap gap-2">
@@ -884,6 +860,18 @@ export default function MetaAdCrawlerPage() {
               선택 해제
             </button>
           )}
+          <button
+            onClick={() => setShowClientPicker(true)}
+            className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium ${
+              selectedClient !== "all"
+                ? "border-primary/40 bg-primary/5 text-primary dark:bg-primary/10"
+                : "border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800"
+            }`}
+          >
+            <Users className="h-4 w-4" />
+            {selectedClient === "all" ? "클라이언트" : (clients.find((c) => c.id === selectedClient)?.name || "클라이언트")}
+            <ChevronDown className="h-4 w-4 opacity-60" />
+          </button>
           <button
             onClick={() => setShowBrandPicker(true)}
             className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium ${
@@ -1156,7 +1144,30 @@ export default function MetaAdCrawlerPage() {
         />
       )}
 
-      {/* 클라이언트별 브랜드 매핑 플로팅 */}
+      {/* 클라이언트 필터 플로팅(고르기) */}
+      {showClientPicker && (
+        <ClientPickerModal
+          clients={clients}
+          targets={targets}
+          selected={selectedClient}
+          onSelect={(id) => {
+            setSelectedClient(id);
+            if (id !== "all") {
+              setSelectedBrands([]);
+              setActiveCategory("all");
+            }
+            resetToFirst();
+            setShowClientPicker(false);
+          }}
+          onEditMapping={() => {
+            setShowClientPicker(false);
+            setShowClientMap(true);
+          }}
+          onClose={() => setShowClientPicker(false)}
+        />
+      )}
+
+      {/* 클라이언트별 브랜드 매핑 플로팅(편집) */}
       {showClientMap && (
         <ClientMapModal
           clients={clients}
@@ -2009,6 +2020,100 @@ function BrandPickerModal({
             className="w-full rounded-lg bg-primary py-2.5 text-sm font-semibold text-white hover:bg-primary/90"
           >
             {selected.length > 0 ? `${selected.length}개 브랜드 보기` : "전체 브랜드 보기"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── 클라이언트 필터 플로팅: 클라이언트 1개 선택(전체/개별) + 매핑 편집 진입 ── */
+function ClientPickerModal({
+  clients,
+  targets,
+  selected,
+  onSelect,
+  onEditMapping,
+  onClose,
+}: {
+  clients: Client[];
+  targets: Target[];
+  selected: string;
+  onSelect: (id: string) => void;
+  onEditMapping: () => void;
+  onClose: () => void;
+}) {
+  const [q, setQ] = useState("");
+  const mappedCount = (clientId: string) =>
+    targets.filter((t) => Array.isArray(t.client_ids) && t.client_ids.includes(clientId)).length;
+
+  const kw = q.trim().toLowerCase();
+  const list = clients.filter((c) => !kw || c.name.toLowerCase().includes(kw));
+
+  const Row = ({ id, name, count, active }: { id: string; name: string; count?: number; active: boolean }) => (
+    <button
+      onClick={() => onSelect(id)}
+      className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left ${
+        active ? "bg-primary/5 dark:bg-primary/10" : "hover:bg-gray-50 dark:hover:bg-gray-800"
+      }`}
+    >
+      <span className={`flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full border ${active ? "border-primary" : "border-gray-300 dark:border-gray-600"}`}>
+        {active && <span className="h-2 w-2 rounded-full bg-primary" />}
+      </span>
+      <span className="flex-1 truncate text-sm font-medium dark:text-gray-200">{name}</span>
+      {typeof count === "number" && <span className="flex-shrink-0 text-xs text-gray-400">{count}개 브랜드</span>}
+    </button>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4" onClick={onClose}>
+      <div className="mt-[8vh] flex max-h-[78vh] w-full max-w-md flex-col rounded-2xl bg-white dark:bg-gray-900 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800 px-5 py-4">
+          <div className="flex items-center gap-2">
+            <Users className="h-5 w-5 text-primary" />
+            <h3 className="text-base font-bold dark:text-gray-100">클라이언트 선택</h3>
+          </div>
+          <button onClick={onClose} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {clients.length > 6 && (
+          <div className="border-b border-gray-100 dark:border-gray-800 px-5 py-3">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="클라이언트 검색"
+                className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 py-2 pl-9 pr-3 text-sm dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary/40"
+              />
+            </div>
+          </div>
+        )}
+
+        <div className="flex-1 overflow-y-auto px-3 py-2">
+          {clients.length === 0 ? (
+            <p className="py-10 text-center text-sm text-gray-400">
+              클라이언트가 없습니다.<br />
+              <span className="text-xs">&apos;기획안 제작&apos;에서 먼저 추가하세요.</span>
+            </p>
+          ) : (
+            <ul className="space-y-0.5">
+              <li><Row id="all" name="전체" active={selected === "all"} /></li>
+              {list.map((c) => (
+                <li key={c.id}><Row id={c.id} name={c.name} count={mappedCount(c.id)} active={selected === c.id} /></li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="border-t border-gray-100 dark:border-gray-800 px-5 py-3">
+          <button
+            onClick={onEditMapping}
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-gray-200 dark:border-gray-700 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800"
+          >
+            <Pencil className="h-4 w-4" /> 브랜드 매핑 편집
           </button>
         </div>
       </div>
