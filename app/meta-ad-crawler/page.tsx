@@ -11,6 +11,8 @@ import {
   Search,
   ChevronLeft,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   FileDown,
   X,
   Pencil,
@@ -186,14 +188,14 @@ function cleanCaption(text: string | null | undefined, brandName: string): strin
   return kept.join("\n").trim() || "—";
 }
 
-function pageItems(current: number, total: number): (number | "…")[] {
-  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
-  const items: (number | "…")[] = [1];
-  if (current > 4) items.push("…");
-  for (let p = Math.max(2, current - 1); p <= Math.min(total - 1, current + 1); p++) items.push(p);
-  if (current < total - 3) items.push("…");
-  items.push(total);
-  return items;
+// 현재 페이지 주변으로 최대 10개의 연속 페이지 번호를 보여준다(끝쪽이면 끝에 맞춰 정렬).
+function pageItems(current: number, total: number): number[] {
+  const WINDOW = 10;
+  if (total <= WINDOW) return Array.from({ length: total }, (_, i) => i + 1);
+  let start = Math.max(1, current - Math.floor(WINDOW / 2));
+  const end = Math.min(total, start + WINDOW - 1);
+  start = Math.max(1, end - WINDOW + 1);
+  return Array.from({ length: end - start + 1 }, (_, i) => start + i);
 }
 
 /* ── 미디어 뷰: 영상 재생 / 캐러셀 슬라이드 / 이미지 ──
@@ -309,6 +311,7 @@ export default function MetaAdCrawlerPage() {
   const [workedOnly, setWorkedOnly] = useState(false);
   const [showFeed, setShowFeed] = useState(false);
   const [page, setPage] = useState(1);
+  const [jumpPage, setJumpPage] = useState(""); // 페이지 직접 입력
   const [detail, setDetail] = useState<Ad | null>(null);
 
   // 브랜드 관리 모달
@@ -1108,22 +1111,60 @@ export default function MetaAdCrawlerPage() {
           </div>
 
           {pageCount > 1 && (
-            <div className="mt-6 flex items-center justify-center gap-1">
-              <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={safePage === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 disabled:opacity-30 hover:bg-gray-50 dark:hover:bg-gray-800">
+            <div className="mt-6 flex flex-wrap items-center justify-center gap-1">
+              {/* 맨 앞 */}
+              <button onClick={() => setPage(1)} disabled={safePage === 1} title="처음으로" className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 disabled:opacity-30 hover:bg-gray-50 dark:hover:bg-gray-800">
+                <ChevronsLeft className="h-4 w-4" />
+              </button>
+              {/* 이전 */}
+              <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={safePage === 1} title="이전" className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 disabled:opacity-30 hover:bg-gray-50 dark:hover:bg-gray-800">
                 <ChevronLeft className="h-4 w-4" />
               </button>
-              {pageItems(safePage, pageCount).map((it, i) =>
-                it === "…" ? (
-                  <span key={`e${i}`} className="px-2 text-gray-400">…</span>
-                ) : (
-                  <button key={it} onClick={() => setPage(it)} className={`h-8 min-w-8 rounded-lg px-2 text-sm font-medium ${it === safePage ? "bg-primary text-white" : "border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"}`}>
-                    {it}
-                  </button>
-                )
-              )}
-              <button onClick={() => setPage((p) => Math.min(pageCount, p + 1))} disabled={safePage === pageCount} className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 disabled:opacity-30 hover:bg-gray-50 dark:hover:bg-gray-800">
+              {/* 번호(최대 10개) */}
+              {pageItems(safePage, pageCount).map((it) => (
+                <button key={it} onClick={() => setPage(it)} className={`h-8 min-w-8 rounded-lg px-2 text-sm font-medium ${it === safePage ? "bg-primary text-white" : "border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"}`}>
+                  {it}
+                </button>
+              ))}
+              {/* 다음 */}
+              <button onClick={() => setPage((p) => Math.min(pageCount, p + 1))} disabled={safePage === pageCount} title="다음" className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 disabled:opacity-30 hover:bg-gray-50 dark:hover:bg-gray-800">
                 <ChevronRight className="h-4 w-4" />
               </button>
+              {/* 맨 뒤 */}
+              <button onClick={() => setPage(pageCount)} disabled={safePage === pageCount} title="끝으로" className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 disabled:opacity-30 hover:bg-gray-50 dark:hover:bg-gray-800">
+                <ChevronsRight className="h-4 w-4" />
+              </button>
+
+              {/* 페이지 직접 입력 */}
+              <div className="ml-3 flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+                <input
+                  type="number"
+                  min={1}
+                  max={pageCount}
+                  value={jumpPage}
+                  onChange={(e) => setJumpPage(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      const n = Math.min(pageCount, Math.max(1, Number(jumpPage) || 1));
+                      setPage(n);
+                      setJumpPage("");
+                    }
+                  }}
+                  placeholder={String(safePage)}
+                  className="h-8 w-16 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 text-center text-sm dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-primary/40"
+                />
+                <span className="whitespace-nowrap">/ {pageCount}</span>
+                <button
+                  onClick={() => {
+                    const n = Math.min(pageCount, Math.max(1, Number(jumpPage) || 1));
+                    setPage(n);
+                    setJumpPage("");
+                  }}
+                  className="h-8 rounded-lg border border-gray-200 dark:border-gray-700 px-2.5 font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
+                >
+                  이동
+                </button>
+              </div>
             </div>
           )}
         </>
