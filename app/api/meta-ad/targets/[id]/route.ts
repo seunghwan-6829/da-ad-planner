@@ -19,6 +19,10 @@ export async function PATCH(
   if (typeof body.page_id === 'string') patch.page_id = body.page_id.trim() || null
   if (typeof body.query === 'string') patch.query = body.query.trim() || null
   if (typeof body.country === 'string') patch.country = body.country.trim() || 'KR'
+  // 클라이언트 매핑(여러 클라이언트 가능). uuid 문자열 배열만 허용.
+  if (Array.isArray(body.client_ids)) {
+    patch.client_ids = body.client_ids.filter((x: unknown) => typeof x === 'string' && x)
+  }
 
   const { data, error } = await supabaseAdmin
     .from('am_targets')

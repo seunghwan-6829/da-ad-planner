@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { aiFetch } from "@/lib/ai-fetch";
+import { getClients, type Client } from "@/lib/api/clients";
 import {
   Megaphone,
   Settings,
@@ -34,6 +35,7 @@ import {
   Filter,
   ChevronDown,
   FileText,
+  Users,
 } from "lucide-react";
 
 type Target = {
@@ -48,6 +50,7 @@ type Target = {
   profile_image?: string | null;
   profile_name?: string | null;
   summary?: string | null;
+  client_ids?: string[] | null;
 };
 
 type Ad = {
@@ -283,6 +286,9 @@ export default function MetaAdCrawlerPage() {
   const [activeCategory, setActiveCategory] = useState<string>("all");
   const [selectedBrands, setSelectedBrands] = useState<string[]>([]); // 비어있으면 전체 브랜드
   const [showBrandPicker, setShowBrandPicker] = useState(false);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [selectedClient, setSelectedClient] = useState<string>("all"); // "all" = 전체
+  const [showClientMap, setShowClientMap] = useState(false);
   const [mediaFilter, setMediaFilter] = useState<"all" | "image" | "carousel" | "video">("all");
   const [savedOnly, setSavedOnly] = useState(false);
   const [workedOnly, setWorkedOnly] = useState(false);
@@ -380,6 +386,13 @@ export default function MetaAdCrawlerPage() {
     loadAll();
   }, [loadAll]);
 
+  // 기획안 제작의 클라이언트 목록(클라이언트별 브랜드 매핑/필터용)
+  useEffect(() => {
+    getClients()
+      .then((cs) => setClients(cs || []))
+      .catch(() => {});
+  }, []);
+
   // 백엔드 자동 대분류 + 한 줄 요약: 광고가 쌓였는데 대분류가 '미분류'거나 요약이 없는 브랜드 처리.
   // 비용/부하 방지를 위해 방문당 최대 12개씩만 채우고, 다음 방문에 이어서 채운다.
   useEffect(() => {
@@ -468,6 +481,10 @@ export default function MetaAdCrawlerPage() {
       if (workedOnly && !((ad.memo && ad.memo.trim()) || ad.has_analysis)) return false;
       const cat = ad.target_id ? (targetMap[ad.target_id]?.category || "").trim() || "미분류" : "미분류";
       if (activeCategory !== "all" && cat !== activeCategory) return false;
+      if (selectedClient !== "all") {
+        const cids = ad.target_id ? targetMap[ad.target_id]?.client_ids : null;
+        if (!cids || !cids.includes(selectedClient)) return false;
+      }
       if (selectedBrands.length > 0 && (!ad.target_id || !selectedBrands.includes(ad.target_id))) return false;
       if (q && !brandNameOfAd(ad).toLowerCase().includes(q)) return false;
       if (mediaFilter !== "all") {
@@ -486,7 +503,7 @@ export default function MetaAdCrawlerPage() {
     });
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ads, search, activeCategory, selectedBrands, mediaFilter, savedOnly, workedOnly, targetMap]);
+  }, [ads, search, activeCategory, selectedClient, selectedBrands, mediaFilter, savedOnly, workedOnly, targetMap]);
 
   const savedCount = useMemo(() => ads.filter((a) => a.saved).length, [ads]);
   const workedCount = useMemo(() => ads.filter((a) => (a.memo && a.memo.trim()) || a.has_analysis).length, [ads]);
@@ -710,6 +727,25 @@ export default function MetaAdCrawlerPage() {
     setDetail((d) => (d && d.library_id === libraryId ? { ...d, transcript } : d));
   }
 
+  // 브랜드 ↔ 클라이언트 매핑 토글(여러 클라이언트 허용). 낙관적 갱신 후 PATCH.
+  async function setBrandClient(targetId: string, clientId: string, on: boolean) {
+    const t = targetMap[targetId];
+    if (!t) return;
+    const cur = Array.isArray(t.client_ids) ? t.client_ids : [];
+    const next = on ? Array.from(new Set([...cur, clientId])) : cur.filter((x) => x !== clientId);
+    setTargets((prev) => prev.map((x) => (x.id === targetId ? { ...x, client_ids: next } : x)));
+    try {
+      const r = await fetch(`/api/meta-ad/targets/${targetId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_ids: next }),
+      });
+      if (!r.ok) throw new Error();
+    } catch {
+      setTargets((prev) => prev.map((x) => (x.id === targetId ? { ...x, client_ids: cur } : x))); // 롤백
+    }
+  }
+
   // #7 스와이프 파일: 즐겨찾기 토글(낙관적 갱신 후 PATCH)
   async function toggleSaved(ad: Ad) {
     const next = !ad.saved;
@@ -802,14 +838,39 @@ export default function MetaAdCrawlerPage() {
         />
       </div>
 
+      {/* 클라이언트 필터 + 매핑 */}
+      <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold text-gray-400">클라이언트</span>
+          <Chip active={selectedClient === "all"} onClick={() => { setSelectedClient("all"); resetToFirst(); }}>
+            전체
+          </Chip>
+          {clients.map((c) => (
+            <Chip
+              key={c.id}
+              active={selectedClient === c.id}
+              onClick={() => { setSelectedClient(c.id); setSelectedBrands([]); setActiveCategory("all"); resetToFirst(); }}
+            >
+              {c.name}
+            </Chip>
+          ))}
+        </div>
+        <button
+          onClick={() => setShowClientMap(true)}
+          className="flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800"
+        >
+          <Users className="h-4 w-4" /> 클라이언트 매핑
+        </button>
+      </div>
+
       {/* 카테고리 칩 + 브랜드 드롭다운 */}
       <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
         <div className="flex flex-wrap gap-2">
-          <Chip active={activeCategory === "all"} onClick={() => { setActiveCategory("all"); setSelectedBrands([]); resetToFirst(); }}>
+          <Chip active={activeCategory === "all"} onClick={() => { setActiveCategory("all"); setSelectedBrands([]); setSelectedClient("all"); resetToFirst(); }}>
             모든 광고
           </Chip>
           {categories.map((c) => (
-            <Chip key={c} active={activeCategory === c} onClick={() => { setActiveCategory(c); setSelectedBrands([]); resetToFirst(); }}>
+            <Chip key={c} active={activeCategory === c} onClick={() => { setActiveCategory(c); setSelectedBrands([]); setSelectedClient("all"); resetToFirst(); }}>
               {c}
             </Chip>
           ))}
@@ -1077,12 +1138,14 @@ export default function MetaAdCrawlerPage() {
           selected={selectedBrands}
           onToggle={(id) => {
             setSelectedBrands((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
-            setActiveCategory("all"); // 브랜드 선택은 카테고리 필터보다 우선(AND로 빈 화면 방지)
+            setActiveCategory("all"); // 브랜드 선택은 카테고리/클라이언트보다 우선(AND로 빈 화면 방지)
+            setSelectedClient("all");
             resetToFirst();
           }}
           onSelectMany={(ids) => {
             setSelectedBrands(ids);
             setActiveCategory("all");
+            setSelectedClient("all");
             resetToFirst();
           }}
           onClear={() => {
@@ -1090,6 +1153,17 @@ export default function MetaAdCrawlerPage() {
             resetToFirst();
           }}
           onClose={() => setShowBrandPicker(false)}
+        />
+      )}
+
+      {/* 클라이언트별 브랜드 매핑 플로팅 */}
+      {showClientMap && (
+        <ClientMapModal
+          clients={clients}
+          targets={targets}
+          counts={counts}
+          onToggle={setBrandClient}
+          onClose={() => setShowClientMap(false)}
         />
       )}
 
@@ -1937,6 +2011,143 @@ function BrandPickerModal({
             {selected.length > 0 ? `${selected.length}개 브랜드 보기` : "전체 브랜드 보기"}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── 클라이언트별 브랜드 매핑: 클라이언트 1개 선택 → 브랜드 체크(중복 허용) ── */
+function ClientMapModal({
+  clients,
+  targets,
+  counts,
+  onToggle,
+  onClose,
+}: {
+  clients: Client[];
+  targets: Target[];
+  counts: Record<string, number>;
+  onToggle: (targetId: string, clientId: string, on: boolean) => void;
+  onClose: () => void;
+}) {
+  const [editClient, setEditClient] = useState<string>(clients[0]?.id ?? "");
+  const [q, setQ] = useState("");
+
+  const clientName = (id: string) => clients.find((c) => c.id === id)?.name || "(삭제된 클라이언트)";
+
+  const rows = useMemo(() => {
+    const kw = q.trim().toLowerCase();
+    return targets
+      .map((t) => ({ t, n: counts[t.id] || 0 }))
+      .filter(({ t }) => !kw || (t.profile_name || t.label || "").toLowerCase().includes(kw))
+      .sort((a, b) => b.n - a.n);
+  }, [targets, counts, q]);
+
+  const mappedCount = editClient
+    ? targets.filter((t) => Array.isArray(t.client_ids) && t.client_ids.includes(editClient)).length
+    : 0;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4" onClick={onClose}>
+      <div className="mt-[6vh] flex max-h-[82vh] w-full max-w-3xl flex-col rounded-2xl bg-white dark:bg-gray-900 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        {/* 헤더 */}
+        <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800 px-5 py-4">
+          <div className="flex items-center gap-2">
+            <Users className="h-5 w-5 text-primary" />
+            <h3 className="text-base font-bold dark:text-gray-100">클라이언트별 브랜드 매핑</h3>
+          </div>
+          <button onClick={onClose} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {clients.length === 0 ? (
+          <div className="px-5 py-12 text-center text-sm text-gray-500 dark:text-gray-400">
+            클라이언트가 없습니다.<br />
+            <span className="text-xs">먼저 &apos;기획안 제작&apos;에서 클라이언트를 추가해 주세요.</span>
+          </div>
+        ) : (
+          <>
+            {/* 클라이언트 선택(편집 대상) */}
+            <div className="border-b border-gray-100 dark:border-gray-800 px-5 py-3">
+              <div className="mb-2 text-xs font-semibold text-gray-400">편집할 클라이언트 선택</div>
+              <div className="flex flex-wrap gap-1.5">
+                {clients.map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => setEditClient(c.id)}
+                    className={`rounded-full px-3 py-1 text-xs font-medium ${
+                      editClient === c.id ? "bg-primary text-white" : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"
+                    }`}
+                  >
+                    {c.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 검색 + 안내 */}
+            <div className="flex items-center gap-3 border-b border-gray-100 dark:border-gray-800 px-5 py-3">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <input
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="브랜드명 검색"
+                  className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 py-2 pl-9 pr-3 text-sm dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary/40"
+                />
+              </div>
+              <span className="whitespace-nowrap text-xs text-gray-400">
+                <b className="text-primary">{clientName(editClient)}</b> · {mappedCount}개 매핑됨
+              </span>
+            </div>
+
+            {/* 브랜드 목록(체크 = 이 클라이언트에 속함) */}
+            <div className="flex-1 overflow-y-auto px-3 py-2">
+              <ul className="space-y-0.5">
+                {rows.map(({ t, n }) => {
+                  const cids = Array.isArray(t.client_ids) ? t.client_ids : [];
+                  const on = cids.includes(editClient);
+                  const others = cids.filter((id) => id !== editClient);
+                  return (
+                    <li key={t.id}>
+                      <button
+                        onClick={() => onToggle(t.id, editClient, !on)}
+                        className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left ${
+                          on ? "bg-primary/5 dark:bg-primary/10" : "hover:bg-gray-50 dark:hover:bg-gray-800"
+                        }`}
+                      >
+                        <span className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded border ${on ? "border-primary bg-primary text-white" : "border-gray-300 dark:border-gray-600"}`}>
+                          {on && <Check className="h-3.5 w-3.5" />}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <span className="truncate text-sm font-medium dark:text-gray-200">{t.profile_name || t.label}</span>
+                          {others.length > 0 && (
+                            <div className="mt-0.5 flex flex-wrap gap-1">
+                              {others.map((id) => (
+                                <span key={id} className="rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-500 dark:text-gray-400">
+                                  {clientName(id)}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        <span className="flex-shrink-0 text-xs font-semibold text-gray-400">{n}건</span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+
+            {/* 푸터 */}
+            <div className="border-t border-gray-100 dark:border-gray-800 px-5 py-3">
+              <button onClick={onClose} className="w-full rounded-lg bg-primary py-2.5 text-sm font-semibold text-white hover:bg-primary/90">
+                완료
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
