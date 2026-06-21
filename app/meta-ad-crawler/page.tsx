@@ -53,6 +53,20 @@ type Target = {
   client_ids?: string[] | null;
 };
 
+// 대분류 표준 목록(관리자 카테고리 수정용). AI 판정과 동일 세트 + 미분류.
+const CATEGORY_OPTIONS = [
+  "미분류",
+  "뷰티 & 에어케어",
+  "패션 & 의류",
+  "음식 & 음료",
+  "리빙 & 인테리어",
+  "육아 & 동물",
+  "의료 & 건강",
+  "교육 & 강의",
+  "IT & 전자기기",
+  "기타",
+];
+
 type Ad = {
   library_id: string;
   target_id: string | null;
@@ -275,7 +289,7 @@ function MediaView({
 
 export default function MetaAdCrawlerPage() {
   const router = useRouter();
-  const { canMetaAd, loading: authLoading } = useAuth();
+  const { canMetaAd, isAdmin, loading: authLoading } = useAuth();
   const [targets, setTargets] = useState<Target[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [ads, setAds] = useState<Ad[]>([]);
@@ -394,15 +408,14 @@ export default function MetaAdCrawlerPage() {
       .catch(() => {});
   }, []);
 
-  // 백엔드 자동 대분류 + 한 줄 요약: 광고가 쌓였는데 대분류가 '미분류'거나 요약이 없는 브랜드 처리.
+  // 백엔드 자동 대분류 + 한 줄 요약: 광고가 쌓였는데 아직 '미분류'인 브랜드만 처리.
+  // (대분류가 이미 정해진 브랜드는 건드리지 않음 → 관리자가 수동으로 고친 카테고리가 덮어써지지 않음.)
   // 비용/부하 방지를 위해 방문당 최대 12개씩만 채우고, 다음 방문에 이어서 채운다.
   useEffect(() => {
     if (categorizedRef.current || loading) return;
     const todo = targets
       .filter(
-        (t) =>
-          (counts[t.id] || 0) > 0 &&
-          (!(t.category || "").trim() || t.category === "미분류" || !(t.summary || "").trim())
+        (t) => (counts[t.id] || 0) > 0 && (!(t.category || "").trim() || t.category === "미분류")
       )
       .slice(0, 12);
     if (todo.length === 0) return;
@@ -726,6 +739,23 @@ export default function MetaAdCrawlerPage() {
   function onTranscribed(libraryId: string, transcript: string) {
     setAds((prev) => prev.map((a) => (a.library_id === libraryId ? { ...a, transcript } : a)));
     setDetail((d) => (d && d.library_id === libraryId ? { ...d, transcript } : d));
+  }
+
+  // 브랜드 카테고리(대분류) 수정 — 관리자 전용. 낙관적 갱신 후 PATCH(바로 반영).
+  async function setBrandCategory(targetId: string, category: string) {
+    if (!isAdmin) return;
+    const prevCat = targetMap[targetId]?.category ?? null;
+    setTargets((prev) => prev.map((x) => (x.id === targetId ? { ...x, category } : x)));
+    try {
+      const r = await fetch(`/api/meta-ad/targets/${targetId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ category }),
+      });
+      if (!r.ok) throw new Error();
+    } catch {
+      setTargets((prev) => prev.map((x) => (x.id === targetId ? { ...x, category: prevCat } : x))); // 롤백
+    }
   }
 
   // 브랜드 ↔ 클라이언트 매핑 토글(여러 클라이언트 허용). 낙관적 갱신 후 PATCH.
@@ -1124,6 +1154,8 @@ export default function MetaAdCrawlerPage() {
           targets={targets}
           counts={counts}
           selected={selectedBrands}
+          isAdmin={isAdmin}
+          onSetCategory={setBrandCategory}
           onToggle={(id) => {
             setSelectedBrands((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
             setActiveCategory("all"); // 브랜드 선택은 카테고리/클라이언트보다 우선(AND로 빈 화면 방지)
@@ -1847,6 +1879,8 @@ function BrandPickerModal({
   targets,
   counts,
   selected,
+  isAdmin,
+  onSetCategory,
   onToggle,
   onSelectMany,
   onClear,
@@ -1855,6 +1889,8 @@ function BrandPickerModal({
   targets: Target[];
   counts: Record<string, number>;
   selected: string[];
+  isAdmin: boolean;
+  onSetCategory: (targetId: string, category: string) => void;
   onToggle: (id: string) => void;
   onSelectMany: (ids: string[]) => void;
   onClear: () => void;
@@ -1974,14 +2010,15 @@ function BrandPickerModal({
             <ul className="space-y-0.5">
               {rows.map(({ t, n, c }) => {
                 const on = selectedSet.has(t.id);
+                const catOpts = CATEGORY_OPTIONS.includes(c) ? CATEGORY_OPTIONS : [c, ...CATEGORY_OPTIONS];
                 return (
-                  <li key={t.id}>
-                    <button
-                      onClick={() => onToggle(t.id)}
-                      className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left ${
-                        on ? "bg-primary/5 dark:bg-primary/10" : "hover:bg-gray-50 dark:hover:bg-gray-800"
-                      }`}
-                    >
+                  <li
+                    key={t.id}
+                    className={`flex items-center gap-3 rounded-lg px-2.5 py-2 ${
+                      on ? "bg-primary/5 dark:bg-primary/10" : "hover:bg-gray-50 dark:hover:bg-gray-800"
+                    }`}
+                  >
+                    <button onClick={() => onToggle(t.id)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
                       <span
                         className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded border ${
                           on ? "border-primary bg-primary text-white" : "border-gray-300 dark:border-gray-600"
@@ -1998,14 +2035,27 @@ function BrandPickerModal({
                         </span>
                       )}
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="truncate text-sm font-medium dark:text-gray-200">{t.profile_name || t.label}</span>
-                          <span className="flex-shrink-0 rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-[11px] text-gray-500 dark:text-gray-400">{c}</span>
-                        </div>
+                        <span className="block truncate text-sm font-medium dark:text-gray-200">{t.profile_name || t.label}</span>
                         {t.summary && <p className="truncate text-xs text-gray-400">{t.summary}</p>}
                       </div>
-                      <span className="flex-shrink-0 text-xs font-semibold text-gray-400">{n}건</span>
                     </button>
+                    {/* 카테고리: 관리자만 수정 가능(즉시 반영), 그 외엔 읽기전용 태그 */}
+                    {isAdmin ? (
+                      <select
+                        value={c}
+                        onChange={(e) => onSetCategory(t.id, e.target.value)}
+                        onClick={(e) => e.stopPropagation()}
+                        title="대분류 수정 (관리자 전용)"
+                        className="max-w-[130px] flex-shrink-0 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-1.5 py-1 text-[11px] text-gray-600 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-primary/40"
+                      >
+                        {catOpts.map((opt) => (
+                          <option key={opt} value={opt}>{opt}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="flex-shrink-0 rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-[11px] text-gray-500 dark:text-gray-400">{c}</span>
+                    )}
+                    <span className="flex-shrink-0 text-xs font-semibold text-gray-400">{n}건</span>
                   </li>
                 );
               })}
