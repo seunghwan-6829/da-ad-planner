@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Shield, Users, Check, X, Clock, Loader2, RefreshCw, Folder, UserCheck, Megaphone } from 'lucide-react'
+import { Shield, Users, Check, X, Clock, Loader2, RefreshCw, Folder, UserCheck, Megaphone, Trash2, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -29,16 +29,19 @@ interface UserProfile {
 export default function AdminPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { isAdmin, loading: authLoading } = useAuth()
-  
+  const { user, isAdmin, loading: authLoading } = useAuth()
+
   // 탭 관리
   const [activeTab, setActiveTab] = useState<'users' | 'clients' | 'metaAd'>('users')
   const [metaUpdating, setMetaUpdating] = useState<string | null>(null)
-  
+
   // 사용자 관리
   const [users, setUsers] = useState<UserProfile[]>([])
   const [loading, setLoading] = useState(true)
   const [updating, setUpdating] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState<string | null>(null)
+  const [userSearch, setUserSearch] = useState('')
+  const [roleFilter, setRoleFilter] = useState<'all' | UserRole>('all')
   
   // 클라이언트 권한 관리
   const [clients, setClients] = useState<Client[]>([])
@@ -183,6 +186,38 @@ export default function AdminPage() {
     }
   }
 
+  // 사용자 강퇴(완전 삭제). Auth 계정까지 삭제되어 다시 로그인 불가.
+  async function handleDeleteUser(target: UserProfile) {
+    if (!supabase) return
+    if (target.id === user?.id) {
+      alert('자기 자신은 삭제할 수 없습니다.')
+      return
+    }
+    if (!confirm(`'${target.email}' 사용자를 완전히 삭제(강퇴)할까요?\n\n계정이 삭제되어 다시 로그인할 수 없게 됩니다. 되돌릴 수 없습니다.`)) {
+      return
+    }
+    setDeleting(target.id)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const res = await fetch('/api/admin/delete-user', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session?.access_token ?? ''}`,
+        },
+        body: JSON.stringify({ userId: target.id }),
+      })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(j.error || '삭제 실패')
+      setUsers((prev) => prev.filter((u) => u.id !== target.id))
+    } catch (error) {
+      console.error('사용자 삭제 실패:', error)
+      alert('사용자 삭제에 실패했습니다.\n' + (error instanceof Error ? error.message : ''))
+    } finally {
+      setDeleting(null)
+    }
+  }
+
   if (authLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -200,6 +235,16 @@ export default function AdminPage() {
   const adminUsers = users.filter(u => u.role === 'admin')
 
   const approvedAndAdminUsers = users.filter(u => u.role === 'approved' || u.role === 'admin')
+
+  // 전체 사용자 목록: 역할 필터 + 검색
+  const filteredUsers = users.filter((u) => {
+    if (roleFilter !== 'all' && u.role !== roleFilter) return false
+    const q = userSearch.trim().toLowerCase()
+    if (q && !((u.email || '').toLowerCase().includes(q) || (u.name || '').toLowerCase().includes(q))) return false
+    return true
+  })
+
+  const roleLabel = (r: UserRole) => (r === 'admin' ? '관리자' : r === 'approved' ? '승인됨' : '대기중')
 
   return (
     <div className="space-y-6">
@@ -353,72 +398,105 @@ export default function AdminPage() {
 
           {/* 전체 사용자 목록 */}
           <Card>
-            <CardHeader>
+            <CardHeader className="gap-3">
               <CardTitle className="flex items-center gap-2">
                 <Users className="h-5 w-5" />
                 전체 사용자 ({users.length}명)
               </CardTitle>
+              {/* 검색 + 역할 필터 */}
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="relative w-full sm:max-w-xs">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  <input
+                    value={userSearch}
+                    onChange={(e) => setUserSearch(e.target.value)}
+                    placeholder="이메일·이름 검색"
+                    className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 py-2 pl-9 pr-3 text-sm dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  />
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {([
+                    ['all', `전체 ${users.length}`],
+                    ['pending', `대기 ${pendingUsers.length}`],
+                    ['approved', `승인 ${approvedUsers.length}`],
+                    ['admin', `관리자 ${adminUsers.length}`],
+                  ] as const).map(([key, label]) => (
+                    <button
+                      key={key}
+                      onClick={() => setRoleFilter(key as 'all' | UserRole)}
+                      className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                        roleFilter === key
+                          ? 'bg-primary text-white'
+                          : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </CardHeader>
             <CardContent>
               {loading ? (
                 <div className="flex items-center justify-center py-8">
                   <Loader2 className="h-6 w-6 animate-spin" />
                 </div>
-              ) : users.length === 0 ? (
+              ) : filteredUsers.length === 0 ? (
                 <p className="text-center text-muted-foreground py-8">
-                  등록된 사용자가 없습니다.
+                  {users.length === 0 ? '등록된 사용자가 없습니다.' : '조건에 맞는 사용자가 없습니다.'}
                 </p>
               ) : (
-                <div className="space-y-2">
-                  {users.map((user) => (
-                    <div 
-                      key={user.id} 
-                      className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50"
-                    >
-                      <div className="flex items-center gap-4">
-                        <div>
-                          <p className="font-medium text-lg">{user.email}</p>
+                <div className="max-h-[55vh] overflow-y-auto rounded-lg border dark:border-gray-800">
+                  {filteredUsers.map((u) => {
+                    const isSelf = u.id === user?.id
+                    return (
+                      <div
+                        key={u.id}
+                        className="flex items-center justify-between gap-3 border-b last:border-b-0 dark:border-gray-800 px-3 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-800/40"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium dark:text-gray-100">
+                            {u.name || u.email}
+                            {isSelf && <span className="ml-1 text-xs text-gray-400">(나)</span>}
+                          </p>
+                          {u.name && <p className="truncate text-xs text-gray-400">{u.email}</p>}
+                        </div>
+                        <span className="hidden whitespace-nowrap text-xs text-gray-400 md:block">
+                          {new Date(u.created_at).toLocaleDateString('ko-KR')}
+                        </span>
+                        <Badge
+                          variant={u.role === 'admin' ? 'destructive' : u.role === 'approved' ? 'default' : 'secondary'}
+                          className="flex-shrink-0"
+                        >
+                          {roleLabel(u.role)}
+                        </Badge>
+                        <div className="flex flex-shrink-0 items-center gap-1">
+                          {u.role === 'pending' && (
+                            <Button size="sm" variant="outline" onClick={() => updateUserRole(u.id, 'approved')} disabled={updating === u.id}>
+                              승인
+                            </Button>
+                          )}
+                          {u.role === 'approved' && (
+                            <Button size="sm" variant="outline" onClick={() => updateUserRole(u.id, 'pending')} disabled={updating === u.id}>
+                              취소
+                            </Button>
+                          )}
+                          {!isSelf && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleDeleteUser(u)}
+                              disabled={deleting === u.id}
+                              title="사용자 강퇴(완전 삭제)"
+                              className="text-red-500 border-red-200 hover:bg-red-50 dark:border-red-900/50 dark:hover:bg-red-950/40"
+                            >
+                              {deleting === u.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                            </Button>
+                          )}
                         </div>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <Badge 
-                          variant={
-                            user.role === 'admin' ? 'destructive' : 
-                            user.role === 'approved' ? 'default' : 
-                            'secondary'
-                          }
-                        >
-                          {user.role === 'admin' ? '관리자' : 
-                           user.role === 'approved' ? '승인됨' : 
-                           '대기중'}
-                        </Badge>
-                        {user.role !== 'admin' && (
-                          <div className="flex gap-1">
-                            {user.role === 'pending' && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => updateUserRole(user.id, 'approved')}
-                                disabled={updating === user.id}
-                              >
-                                승인
-                              </Button>
-                            )}
-                            {user.role === 'approved' && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => updateUserRole(user.id, 'pending')}
-                                disabled={updating === user.id}
-                              >
-                                취소
-                              </Button>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </CardContent>
