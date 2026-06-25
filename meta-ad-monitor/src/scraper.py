@@ -9,9 +9,11 @@
 """
 from __future__ import annotations
 
+import json
 import os
 import random
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -174,30 +176,148 @@ _SCROLL_JS = """() => {
 }"""
 
 
+# ── 네트워크 가로채기: 메타 광고 라이브러리가 광고를 불러올 때 쓰는 GraphQL 응답에서 직접 추출 ──
+# (DOM 렌더/가상화와 무관하게 "서버가 내려준 모든 광고"를 잡는다 → DOM이 바뀌어도 견고)
+def _api_ad_from_node(n: dict) -> dict | None:
+    lib = n.get("ad_archive_id") or n.get("adArchiveID") or n.get("ad_archive_ID")
+    if not lib:
+        return None
+    snap = n.get("snapshot") or {}
+    page_name = n.get("page_name") or snap.get("page_name") or snap.get("current_page_name")
+
+    started = None
+    sd = n.get("start_date") or n.get("startDate") or snap.get("creation_time")
+    try:
+        if isinstance(sd, (int, float)) and sd > 0:
+            started = datetime.fromtimestamp(sd, tz=timezone.utc).strftime("%Y-%m-%d")
+    except Exception:
+        started = None
+
+    body = snap.get("body")
+    if isinstance(body, dict):
+        ad_text = body.get("text")
+    elif isinstance(body, str):
+        ad_text = body
+    else:
+        ad_text = None
+
+    imgs = snap.get("images") or []
+    vids = snap.get("videos") or []
+    cards = snap.get("cards") or []
+
+    def _img_url(d):
+        return d.get("original_image_url") or d.get("resized_image_url") or d.get("image_url") if isinstance(d, dict) else None
+
+    media_url = media_type = None
+    media_urls = None
+    if vids and isinstance(vids[0], dict):
+        v = vids[0]
+        media_url = v.get("video_hd_url") or v.get("video_sd_url")
+        media_type = "video"
+    elif len(imgs) > 1:
+        urls = [u for u in (_img_url(d) for d in imgs) if u]
+        if urls:
+            media_urls = urls[:10]
+            media_url = urls[0]
+            media_type = "carousel"
+    elif imgs:
+        media_url = _img_url(imgs[0])
+        media_type = "image" if media_url else None
+    elif cards and isinstance(cards[0], dict):
+        c = cards[0]
+        vurl = c.get("video_hd_url") or c.get("video_sd_url")
+        media_url = vurl or _img_url(c)
+        media_type = "video" if vurl else ("image" if media_url else None)
+
+    landing = snap.get("link_url") or snap.get("caption")
+    if not landing and cards and isinstance(cards[0], dict):
+        landing = cards[0].get("link_url")
+
+    return {
+        "library_id": str(lib),
+        "page_name": page_name,
+        "started_on": started,
+        "ad_text": ad_text,
+        "media_url": media_url,
+        "media_type": media_type,
+        "media_urls": media_urls,
+        "landing_url": landing,
+    }
+
+
+def _walk_for_api_ads(o, out: dict):
+    """JSON 트리를 훑어 ad_archive_id 를 가진 노드를 모두 광고로 추출."""
+    if isinstance(o, dict):
+        if o.get("ad_archive_id") or o.get("adArchiveID"):
+            ad = _api_ad_from_node(o)
+            if ad and ad.get("library_id"):
+                out[ad["library_id"]] = ad
+        for v in o.values():
+            _walk_for_api_ads(v, out)
+    elif isinstance(o, list):
+        for v in o:
+            _walk_for_api_ads(v, out)
+
+
+def _make_response_handler(api_ads: dict):
+    def _on_response(resp):
+        try:
+            u = resp.url or ""
+            if "graphql" not in u and "/api/" not in u:
+                return
+            txt = resp.text()
+            if "ad_archive_id" not in txt and "adArchiveID" not in txt:
+                return
+            s = txt[9:] if txt.startswith("for (;;);") else txt
+            # 한 응답에 JSON 객체가 줄단위로 여러 개 올 수 있음
+            for part in s.split("\n"):
+                part = part.strip()
+                if not part:
+                    continue
+                try:
+                    data = json.loads(part)
+                except Exception:
+                    continue
+                _walk_for_api_ads(data, api_ads)
+        except Exception:
+            pass
+
+    return _on_response
+
+
 def _collect_by_scroll(page, label, target, selectors, max_scrolls):
-    """현재 page 에서 무한스크롤하며 광고를 모아 {library_id: ad} 로 반환.
-    실제 마우스 휠(page.mouse.wheel) + JS 보조 스크롤. 진행상황은 콘솔에 출력."""
-    ads: dict[str, dict] = {}
-    prev_count = -1
+    """무한스크롤하며 (A) DOM 추출 + (B) 네트워크 GraphQL 응답에서 광고를 모은다.
+    두 경로를 합쳐 {library_id: ad} 로 반환. 진행상황(DOM/API/합계)을 콘솔에 출력."""
+    dom_ads: dict[str, dict] = {}
+    api_ads: dict[str, dict] = {}
+
+    # 네트워크 응답 가로채기 시작
+    handler = _make_response_handler(api_ads)
+    try:
+        page.on("response", handler)
+    except Exception:
+        pass
+
+    prev_total = -1
     stagnant = 0
     for i in range(max_scrolls):
         for ad in extract_ads(page, selectors):
             ad["target_label"] = label
             ad["page_name"] = target.get("page_id") or target.get("query")
-            ads[ad["library_id"]] = ad
+            dom_ads[ad["library_id"]] = ad
 
-        cur = len(ads)
-        if cur != prev_count or stagnant % 4 == 0:
-            print(f"  [{label}] 스크롤 {i + 1}/{max_scrolls} → {cur}건", flush=True)
+        total = len(set(dom_ads) | set(api_ads))
+        if total != prev_total or stagnant % 4 == 0:
+            print(f"  [{label}] 스크롤 {i + 1}/{max_scrolls} → DOM {len(dom_ads)} / API {len(api_ads)} / 합 {total}건", flush=True)
 
-        if cur == prev_count:
+        if total == prev_total:
             stagnant += 1
-            if stagnant >= 12:  # 12번 연속 안 늘면 끝으로 판단(느린 로드 대비 관대하게)
-                print(f"  [{label}] {cur}건에서 더 안 늘어 종료", flush=True)
+            if stagnant >= 12:  # 12번 연속 안 늘면 끝으로 판단
+                print(f"  [{label}] {total}건에서 더 안 늘어 종료", flush=True)
                 break
         else:
             stagnant = 0
-        prev_count = cur
+        prev_total = total
 
         # 실제 마우스 휠로 한 화면씩 내림(내부 스크롤 컨테이너에서도 진짜로 스크롤되어 lazy-load 트리거)
         try:
@@ -207,7 +327,28 @@ def _collect_by_scroll(page, label, target, selectors, max_scrolls):
             pass
         page.evaluate(_SCROLL_JS)  # 보조
         _human_pause(2.2, 3.5)
-    return ads
+
+    try:
+        page.remove_listener("response", handler)
+    except Exception:
+        pass
+
+    # 합치기: API(서버가 내려준 전량) 기준 + DOM 에만 있는 건/미디어 보완
+    merged: dict[str, dict] = {}
+    for lid, a in api_ads.items():
+        merged[lid] = dict(a)
+    for lid, dom_ad in dom_ads.items():
+        if lid in merged:
+            for k in ("media_url", "media_type", "media_urls", "poster_url", "ad_text", "landing_url", "started_on"):
+                if not merged[lid].get(k) and dom_ad.get(k):
+                    merged[lid][k] = dom_ad[k]
+        else:
+            merged[lid] = dom_ad
+    for a in merged.values():
+        a.setdefault("target_label", label)
+        if not a.get("page_name"):
+            a["page_name"] = target.get("page_id") or target.get("query")
+    return merged
 
 
 def _attempt_cdp(cdp_url, url, label, target, selectors, max_scrolls):
