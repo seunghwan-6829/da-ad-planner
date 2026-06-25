@@ -53,6 +53,7 @@ type Target = {
   profile_name?: string | null;
   summary?: string | null;
   client_ids?: string[] | null;
+  created_at?: string | null;
 };
 
 // 대분류 표준 목록(관리자 카테고리 수정용). AI 판정과 동일 세트 + 미분류.
@@ -363,25 +364,39 @@ export default function MetaAdCrawlerPage() {
       setLoading(false);
     }
     // 첫 화면(최근 300)을 띄운 뒤, 나머지 광고를 백그라운드로 이어 받아 병합(화면 안 멈춤). 진입당 1회.
+    // 속도: 페이지를 한 번에 1000개씩, 6개를 동시(병렬)로 받아 합친다 → 순차 대비 수 배 빠름.
     if (!bgLoadedRef.current) {
       bgLoadedRef.current = true;
       (async () => {
         setSyncing(true);
-        try {
-          const PAGE = 500;
-          let offset = 300; // bootstrap 이 최근 300 줬으니 그다음부터
-          for (let i = 0; i < 400; i++) {
-            // 안전 상한(=최대 20만 건)
-            const r = await fetch(`/api/meta-ad/ads?light=1&limit=${PAGE}&offset=${offset}`);
-            if (!r.ok) break;
-            const rows: Ad[] = await r.json();
-            if (!rows.length) break;
-            mergeAds(rows);
-            if (rows.length < PAGE) break;
-            offset += PAGE;
+        const PAGE = 1000; // PostgREST 한 요청 최대치
+        const CONCURRENCY = 6;
+        let nextOffset = 300; // bootstrap 이 최근 300 줬으니 그다음부터
+        let done = false;
+        const worker = async () => {
+          while (!done) {
+            const offset = nextOffset; // 동기적으로 고유 오프셋 선점(겹침/누락 없음)
+            nextOffset += PAGE;
+            try {
+              const r = await fetch(`/api/meta-ad/ads?light=1&limit=${PAGE}&offset=${offset}`);
+              if (!r.ok) {
+                done = true;
+                break;
+              }
+              const rows: Ad[] = await r.json();
+              if (rows.length) mergeAds(rows);
+              if (rows.length < PAGE) {
+                done = true; // 마지막 페이지 도달
+                break;
+              }
+            } catch {
+              done = true;
+              break;
+            }
           }
-        } catch {
-          // 네트워크 오류 등 → 중단(이미 받은 만큼은 유지)
+        };
+        try {
+          await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
         } finally {
           setSyncing(false);
         }
@@ -471,6 +486,30 @@ export default function MetaAdCrawlerPage() {
     return m;
   }, [targets]);
 
+  // 중복되는 광고주 이름은 자동으로 뒤에 번호(1,2,...)를 붙여 구분(생성순). 고유 이름은 그대로.
+  const brandDisplayName = useMemo(() => {
+    const groups: Record<string, Target[]> = {};
+    for (const t of targets) {
+      const base = (t.profile_name || t.label || "—").trim();
+      (groups[base] ||= []).push(t);
+    }
+    const m: Record<string, string> = {};
+    for (const base of Object.keys(groups)) {
+      const list = groups[base];
+      if (list.length <= 1) {
+        if (list[0]) m[list[0].id] = base;
+        continue;
+      }
+      const sorted = [...list].sort((a, b) =>
+        String(a.created_at || "").localeCompare(String(b.created_at || "")) || String(a.id).localeCompare(String(b.id))
+      );
+      sorted.forEach((t, i) => {
+        m[t.id] = `${base} ${i + 1}`;
+      });
+    }
+    return m;
+  }, [targets]);
+
   const categories = useMemo(() => {
     const set = new Set<string>();
     for (const t of targets) set.add((t.category || "").trim() || "미분류");
@@ -484,7 +523,7 @@ export default function MetaAdCrawlerPage() {
 
   function brandNameOfAd(ad: Ad): string {
     const t = ad.target_id ? targetMap[ad.target_id] : undefined;
-    return t?.profile_name || t?.label || ad.page_name || "—";
+    return (t && brandDisplayName[t.id]) || t?.profile_name || t?.label || ad.page_name || "—";
   }
   function brandImageOfAd(ad: Ad): string | null {
     const t = ad.target_id ? targetMap[ad.target_id] : undefined;
@@ -917,7 +956,7 @@ export default function MetaAdCrawlerPage() {
             {selectedBrands.length === 0
               ? "전체 브랜드"
               : selectedBrands.length === 1
-                ? (targetMap[selectedBrands[0]]?.profile_name || targetMap[selectedBrands[0]]?.label || "브랜드 1개")
+                ? (brandDisplayName[selectedBrands[0]] || targetMap[selectedBrands[0]]?.profile_name || targetMap[selectedBrands[0]]?.label || "브랜드 1개")
                 : `브랜드 ${selectedBrands.length}개 선택`}
             <ChevronDown className="h-4 w-4 opacity-60" />
           </button>
@@ -1195,6 +1234,7 @@ export default function MetaAdCrawlerPage() {
           targets={targets}
           counts={counts}
           selected={selectedBrands}
+          displayNames={brandDisplayName}
           isAdmin={isAdmin}
           onSetCategory={setBrandCategory}
           onToggle={(id) => {
@@ -1246,6 +1286,7 @@ export default function MetaAdCrawlerPage() {
           clients={clients}
           targets={targets}
           counts={counts}
+          displayNames={brandDisplayName}
           onToggle={setBrandClient}
           onClose={() => setShowClientMap(false)}
         />
@@ -1920,6 +1961,7 @@ function BrandPickerModal({
   targets,
   counts,
   selected,
+  displayNames,
   isAdmin,
   onSetCategory,
   onToggle,
@@ -1930,6 +1972,7 @@ function BrandPickerModal({
   targets: Target[];
   counts: Record<string, number>;
   selected: string[];
+  displayNames: Record<string, string>;
   isAdmin: boolean;
   onSetCategory: (targetId: string, category: string) => void;
   onToggle: (id: string) => void;
@@ -2076,7 +2119,7 @@ function BrandPickerModal({
                         </span>
                       )}
                       <div className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-medium dark:text-gray-200">{t.profile_name || t.label}</span>
+                        <span className="block truncate text-sm font-medium dark:text-gray-200">{displayNames[t.id] || t.profile_name || t.label}</span>
                         {t.summary && <p className="truncate text-xs text-gray-400">{t.summary}</p>}
                       </div>
                     </button>
@@ -2217,12 +2260,14 @@ function ClientMapModal({
   clients,
   targets,
   counts,
+  displayNames,
   onToggle,
   onClose,
 }: {
   clients: Client[];
   targets: Target[];
   counts: Record<string, number>;
+  displayNames: Record<string, string>;
   onToggle: (targetId: string, clientId: string, on: boolean) => void;
   onClose: () => void;
 }) {
@@ -2317,7 +2362,7 @@ function ClientMapModal({
                           {on && <Check className="h-3.5 w-3.5" />}
                         </span>
                         <div className="min-w-0 flex-1">
-                          <span className="truncate text-sm font-medium dark:text-gray-200">{t.profile_name || t.label}</span>
+                          <span className="truncate text-sm font-medium dark:text-gray-200">{displayNames[t.id] || t.profile_name || t.label}</span>
                           {others.length > 0 && (
                             <div className="mt-0.5 flex flex-wrap gap-1">
                               {others.map((id) => (
