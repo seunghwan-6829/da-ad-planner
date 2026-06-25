@@ -155,17 +155,26 @@ def extract_ads(page, selectors: dict) -> list[dict]:
 # 무한스크롤 트리거: window/scrollingElement + 가장 큰 내부 스크롤 컨테이너 + 마지막 카드까지 모두 내림.
 # (광고 라이브러리가 내부 div 스크롤을 쓰는 경우 window 스크롤만으론 추가 로드가 안 됨)
 _SCROLL_JS = """() => {
-  try { window.scrollTo(0, document.body.scrollHeight); } catch (e) {}
-  try { if (document.scrollingElement) document.scrollingElement.scrollTop = document.scrollingElement.scrollHeight; } catch (e) {}
+  // 가장 큰 내부 스크롤 컨테이너 찾기(광고 라이브러리는 내부 div 스크롤을 쓰기도 함)
   let best = null, bestH = 0;
   for (const d of document.querySelectorAll('div')) {
     if (d.scrollHeight > d.clientHeight + 300 && d.clientHeight > 300 && d.scrollHeight > bestH) {
       bestH = d.scrollHeight; best = d;
     }
   }
-  if (best) best.scrollTop = best.scrollHeight;
+  // 1) 살짝 위로 올렸다(=관찰자 리셋) 다시 맨 아래로 → lazy-load 센티넬을 확실히 다시 건드림
+  try { window.scrollTo(0, Math.max(0, document.body.scrollHeight - 1200)); } catch (e) {}
+  if (best) { try { best.scrollTop = Math.max(0, best.scrollHeight - 1200); } catch (e) {} }
+  // 2) 맨 아래로
+  try { window.scrollTo(0, document.body.scrollHeight); } catch (e) {}
+  try { if (document.scrollingElement) document.scrollingElement.scrollTop = document.scrollingElement.scrollHeight; } catch (e) {}
+  if (best) { try { best.scrollTop = best.scrollHeight; } catch (e) {} }
+  // 3) 마지막 카드로 스크롤(센티넬 진입 트리거)
   const all = document.querySelectorAll('a[href*="/ads/library"], [role="article"]');
   if (all.length) { try { all[all.length - 1].scrollIntoView({block:'end'}); } catch (e) {} }
+  // 4) 스크롤 이벤트 직접 발생(IntersectionObserver/onscroll 트리거 보강)
+  try { window.dispatchEvent(new Event('scroll')); } catch (e) {}
+  if (best) { try { best.dispatchEvent(new Event('scroll')); } catch (e) {} }
   return document.body.scrollHeight;
 }"""
 
@@ -184,10 +193,16 @@ def scrape_target(
     def _attempt(use_proxy: bool) -> dict:
         ads: dict[str, dict] = {}
         with sync_playwright() as p:
-            # 자동화 티(--enable-automation, AutomationControlled)를 숨겨 메타 봇 탐지를 줄인다.
+            # 자동화 티 숨김 + 백그라운드 스로틀링 차단(headful 창이 뒤에 있어도 스크롤/lazy-load가 멈추지 않게 → 끝까지 수집).
             browser = p.chromium.launch(
                 headless=not headful,
-                args=["--disable-blink-features=AutomationControlled"],
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-background-timer-throttling",
+                    "--disable-backgrounding-occluded-windows",
+                    "--disable-renderer-backgrounding",
+                    "--disable-features=CalculateNativeWinOcclusion",
+                ],
                 ignore_default_args=["--enable-automation"],
             )
             ctx_kwargs = dict(
@@ -247,14 +262,15 @@ def scrape_target(
 
                 if len(ads) == prev_count:
                     stagnant += 1
-                    if stagnant >= 6:  # 6번 연속 안 늘면 끝으로 판단(느린 로드 대비 여유)
+                    # 12번 연속(=약 30~40초) 안 늘어야 끝으로 판단. 느린 로드에 일찍 포기하지 않게 관대하게.
+                    if stagnant >= 12:
                         break
                 else:
                     stagnant = 0
                 prev_count = len(ads)
 
                 page.evaluate(_SCROLL_JS)
-                _human_pause(2.0, 3.5)  # 다음 배치 로드 대기(넉넉히)
+                _human_pause(2.2, 3.5)  # 다음 배치 로드 대기(넉넉히)
 
             browser.close()
         return ads
