@@ -152,29 +152,24 @@ def extract_ads(page, selectors: dict) -> list[dict]:
         return []
 
 
-# 무한스크롤 트리거: window/scrollingElement + 가장 큰 내부 스크롤 컨테이너 + 마지막 카드까지 모두 내림.
-# (광고 라이브러리가 내부 div 스크롤을 쓰는 경우 window 스크롤만으론 추가 로드가 안 됨)
+# 점진 스크롤: 맨 아래로 점프하지 않고 "한 화면씩"만 내린다.
+# (한 칸 내림 → 호출자가 광고 ID 수집 → 또 한 칸 내림 … 반복. 천천히 내려가며 lazy-load를 안정적으로 트리거)
 _SCROLL_JS = """() => {
-  // 가장 큰 내부 스크롤 컨테이너 찾기(광고 라이브러리는 내부 div 스크롤을 쓰기도 함)
+  const step = Math.max(700, Math.floor(window.innerHeight * 0.9));  // 약 한 화면
+  // 광고 라이브러리는 내부 div 스크롤을 쓰기도 하므로 가장 큰 스크롤 컨테이너도 같이 한 칸 내린다.
   let best = null, bestH = 0;
   for (const d of document.querySelectorAll('div')) {
     if (d.scrollHeight > d.clientHeight + 300 && d.clientHeight > 300 && d.scrollHeight > bestH) {
       bestH = d.scrollHeight; best = d;
     }
   }
-  // 1) 살짝 위로 올렸다(=관찰자 리셋) 다시 맨 아래로 → lazy-load 센티넬을 확실히 다시 건드림
-  try { window.scrollTo(0, Math.max(0, document.body.scrollHeight - 1200)); } catch (e) {}
-  if (best) { try { best.scrollTop = Math.max(0, best.scrollHeight - 1200); } catch (e) {} }
-  // 2) 맨 아래로
-  try { window.scrollTo(0, document.body.scrollHeight); } catch (e) {}
-  try { if (document.scrollingElement) document.scrollingElement.scrollTop = document.scrollingElement.scrollHeight; } catch (e) {}
-  if (best) { try { best.scrollTop = best.scrollHeight; } catch (e) {} }
-  // 3) 마지막 카드로 스크롤(센티넬 진입 트리거)
-  const all = document.querySelectorAll('a[href*="/ads/library"], [role="article"]');
-  if (all.length) { try { all[all.length - 1].scrollIntoView({block:'end'}); } catch (e) {} }
-  // 4) 스크롤 이벤트 직접 발생(IntersectionObserver/onscroll 트리거 보강)
+  if (best) {
+    try { best.scrollTop = best.scrollTop + step; } catch (e) {}
+    try { best.dispatchEvent(new Event('scroll')); } catch (e) {}
+  }
+  try { window.scrollBy(0, step); } catch (e) {}
+  try { if (document.scrollingElement) document.scrollingElement.scrollTop += step; } catch (e) {}
   try { window.dispatchEvent(new Event('scroll')); } catch (e) {}
-  if (best) { try { best.dispatchEvent(new Event('scroll')); } catch (e) {} }
   return document.body.scrollHeight;
 }"""
 

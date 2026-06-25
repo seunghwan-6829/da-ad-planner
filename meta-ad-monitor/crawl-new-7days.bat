@@ -16,7 +16,7 @@ if not exist ".env" (
   exit /b 1
 )
 set CRAWL_HEADFUL=1
-set CRAWL_MAX_SCROLLS=150
+set CRAWL_MAX_SCROLLS=400
 set PYTHONUTF8=1
 set PYTHONIOENCODING=utf-8
 chcp 65001 >nul
