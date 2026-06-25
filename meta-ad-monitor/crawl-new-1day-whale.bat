@@ -23,8 +23,8 @@ if not exist "%WHALE%" (
 )
 REM Launch Whale with remote debugging on a separate profile (coexists with your normal Whale)
 start "" "%WHALE%" --remote-debugging-port=9222 --user-data-dir="%TEMP%\whale-crawl" --no-first-run --no-default-browser-check "about:blank"
-echo Waiting 6s for Whale (debug) to start...
-timeout /t 6 /nobreak >nul
+echo Waiting 10s for Whale (debug) to start...
+timeout /t 10 /nobreak >nul
 set CRAWL_CDP_URL=http://localhost:9222
 set CRAWL_SINCE_DAYS=1
 set CRAWL_MAX_SCROLLS=400

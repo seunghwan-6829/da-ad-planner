@@ -215,30 +215,34 @@ def _attempt_cdp(cdp_url, url, label, target, selectors, max_scrolls):
     실제 브라우저 fingerprint/세션이라 메타 봇 캡을 회피하기 가장 유리."""
     ads: dict[str, dict] = {}
     with sync_playwright() as p:
-        try:
-            browser = p.chromium.connect_over_cdp(cdp_url)
-        except Exception as e:
-            print(f"  웨일 연결 실패({e}) — 웨일을 디버깅 모드로 띄웠는지 확인하세요.", flush=True)
+        browser = None
+        for attempt in range(3):
+            try:
+                browser = p.chromium.connect_over_cdp(cdp_url)
+                break
+            except Exception as e:
+                print(f"  웨일 연결 재시도 {attempt + 1}/3 ({e})", flush=True)
+                time.sleep(3)
+        if browser is None:
+            print("  웨일 연결 실패 — 디버깅 웨일 창이 떠 있는지/포트(9222) 확인", flush=True)
             return ads
+        print(f"  [{label}] 웨일 연결됨 — 크롤 시작", flush=True)
         try:
             ctx = browser.contexts[0] if browser.contexts else browser.new_context(locale="ko-KR")
+            # 새 탭 말고 이미 떠 있는 탭(about:blank)을 그대로 이동시켜 눈에 보이게 크롤. 탭은 닫지 않고 재사용.
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
             try:
                 ctx.add_init_script(
                     "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
                 )
             except Exception:
                 pass
-            page = ctx.new_page()
             page.goto(url, wait_until="domcontentloaded", timeout=60000)
             _human_pause(2.0, 4.0)
             ads = _collect_by_scroll(page, label, target, selectors, max_scrolls)
-            try:
-                page.close()  # 탭만 닫는다(웨일은 유지 → 다음 브랜드도 같은 웨일에 다시 붙음)
-            except Exception:
-                pass
         except Exception as e:
             print(f"  [{label}] CDP 크롤 오류: {e}", flush=True)
-    # browser.close() 는 호출하지 않는다 — 사용자가 띄운 디버깅 웨일을 닫지 않기 위함. with 종료 시 연결만 끊김.
+    # browser.close() 는 호출하지 않는다 — 사용자가 띄운 디버깅 웨일을 닫지 않기 위함.
     return ads
 
 
