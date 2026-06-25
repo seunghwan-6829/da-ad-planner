@@ -254,20 +254,26 @@ def scrape_target(
             # 더 이상 늘지 않으면(끝 도달) 몇 번 확인 후 종료.
             prev_count = -1
             stagnant = 0
-            for _ in range(max_scrolls):
+            for i in range(max_scrolls):
                 for ad in extract_ads(page, selectors):
                     ad["target_label"] = label
                     ad["page_name"] = target.get("page_id") or target.get("query")
                     ads[ad["library_id"]] = ad
 
-                if len(ads) == prev_count:
+                cur = len(ads)
+                # 진행상황 출력: 수가 늘 때 + 멈춰있을 때 주기적으로(스크롤이 먹는지 콘솔에서 바로 보임)
+                if cur != prev_count or stagnant % 4 == 0:
+                    print(f"  [{label}] 스크롤 {i + 1}/{max_scrolls} → {cur}건", flush=True)
+
+                if cur == prev_count:
                     stagnant += 1
                     # 12번 연속(=약 30~40초) 안 늘어야 끝으로 판단. 느린 로드에 일찍 포기하지 않게 관대하게.
                     if stagnant >= 12:
+                        print(f"  [{label}] {cur}건에서 더 안 늘어 종료", flush=True)
                         break
                 else:
                     stagnant = 0
-                prev_count = len(ads)
+                prev_count = cur
 
                 page.evaluate(_SCROLL_JS)
                 _human_pause(2.2, 3.5)  # 다음 배치 로드 대기(넉넉히)
