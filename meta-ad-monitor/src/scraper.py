@@ -9,11 +9,9 @@
 """
 from __future__ import annotations
 
-import json
 import os
 import random
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -154,237 +152,22 @@ def extract_ads(page, selectors: dict) -> list[dict]:
         return []
 
 
-# 점진 스크롤: 맨 아래로 점프하지 않고 "한 화면씩"만 내린다.
-# (한 칸 내림 → 호출자가 광고 ID 수집 → 또 한 칸 내림 … 반복. 천천히 내려가며 lazy-load를 안정적으로 트리거)
+# 무한스크롤 트리거: window/scrollingElement + 가장 큰 내부 스크롤 컨테이너 + 마지막 카드까지 모두 내림.
+# (광고 라이브러리가 내부 div 스크롤을 쓰는 경우 window 스크롤만으론 추가 로드가 안 됨)
 _SCROLL_JS = """() => {
-  const step = Math.max(700, Math.floor(window.innerHeight * 0.9));  // 약 한 화면
-  // 광고 라이브러리는 내부 div 스크롤을 쓰기도 하므로 가장 큰 스크롤 컨테이너도 같이 한 칸 내린다.
+  try { window.scrollTo(0, document.body.scrollHeight); } catch (e) {}
+  try { if (document.scrollingElement) document.scrollingElement.scrollTop = document.scrollingElement.scrollHeight; } catch (e) {}
   let best = null, bestH = 0;
   for (const d of document.querySelectorAll('div')) {
     if (d.scrollHeight > d.clientHeight + 300 && d.clientHeight > 300 && d.scrollHeight > bestH) {
       bestH = d.scrollHeight; best = d;
     }
   }
-  if (best) {
-    try { best.scrollTop = best.scrollTop + step; } catch (e) {}
-    try { best.dispatchEvent(new Event('scroll')); } catch (e) {}
-  }
-  try { window.scrollBy(0, step); } catch (e) {}
-  try { if (document.scrollingElement) document.scrollingElement.scrollTop += step; } catch (e) {}
-  try { window.dispatchEvent(new Event('scroll')); } catch (e) {}
+  if (best) best.scrollTop = best.scrollHeight;
+  const all = document.querySelectorAll('a[href*="/ads/library"], [role="article"]');
+  if (all.length) { try { all[all.length - 1].scrollIntoView({block:'end'}); } catch (e) {} }
   return document.body.scrollHeight;
 }"""
-
-
-# ── 네트워크 가로채기: 메타 광고 라이브러리가 광고를 불러올 때 쓰는 GraphQL 응답에서 직접 추출 ──
-# (DOM 렌더/가상화와 무관하게 "서버가 내려준 모든 광고"를 잡는다 → DOM이 바뀌어도 견고)
-def _api_ad_from_node(n: dict) -> dict | None:
-    lib = n.get("ad_archive_id") or n.get("adArchiveID") or n.get("ad_archive_ID")
-    if not lib:
-        return None
-    snap = n.get("snapshot") or {}
-    page_name = n.get("page_name") or snap.get("page_name") or snap.get("current_page_name")
-
-    started = None
-    sd = n.get("start_date") or n.get("startDate") or snap.get("creation_time")
-    try:
-        if isinstance(sd, (int, float)) and sd > 0:
-            started = datetime.fromtimestamp(sd, tz=timezone.utc).strftime("%Y-%m-%d")
-    except Exception:
-        started = None
-
-    body = snap.get("body")
-    if isinstance(body, dict):
-        ad_text = body.get("text")
-    elif isinstance(body, str):
-        ad_text = body
-    else:
-        ad_text = None
-
-    imgs = snap.get("images") or []
-    vids = snap.get("videos") or []
-    cards = snap.get("cards") or []
-
-    def _img_url(d):
-        return d.get("original_image_url") or d.get("resized_image_url") or d.get("image_url") if isinstance(d, dict) else None
-
-    media_url = media_type = None
-    media_urls = None
-    if vids and isinstance(vids[0], dict):
-        v = vids[0]
-        media_url = v.get("video_hd_url") or v.get("video_sd_url")
-        media_type = "video"
-    elif len(imgs) > 1:
-        urls = [u for u in (_img_url(d) for d in imgs) if u]
-        if urls:
-            media_urls = urls[:10]
-            media_url = urls[0]
-            media_type = "carousel"
-    elif imgs:
-        media_url = _img_url(imgs[0])
-        media_type = "image" if media_url else None
-    elif cards and isinstance(cards[0], dict):
-        c = cards[0]
-        vurl = c.get("video_hd_url") or c.get("video_sd_url")
-        media_url = vurl or _img_url(c)
-        media_type = "video" if vurl else ("image" if media_url else None)
-
-    landing = snap.get("link_url") or snap.get("caption")
-    if not landing and cards and isinstance(cards[0], dict):
-        landing = cards[0].get("link_url")
-
-    return {
-        "library_id": str(lib),
-        "page_name": page_name,
-        "started_on": started,
-        "ad_text": ad_text,
-        "media_url": media_url,
-        "media_type": media_type,
-        "media_urls": media_urls,
-        "landing_url": landing,
-    }
-
-
-def _walk_for_api_ads(o, out: dict):
-    """JSON 트리를 훑어 ad_archive_id 를 가진 노드를 모두 광고로 추출."""
-    if isinstance(o, dict):
-        if o.get("ad_archive_id") or o.get("adArchiveID"):
-            ad = _api_ad_from_node(o)
-            if ad and ad.get("library_id"):
-                out[ad["library_id"]] = ad
-        for v in o.values():
-            _walk_for_api_ads(v, out)
-    elif isinstance(o, list):
-        for v in o:
-            _walk_for_api_ads(v, out)
-
-
-def _make_response_handler(api_ads: dict):
-    def _on_response(resp):
-        try:
-            u = resp.url or ""
-            if "graphql" not in u and "/api/" not in u:
-                return
-            txt = resp.text()
-            if "ad_archive_id" not in txt and "adArchiveID" not in txt:
-                return
-            s = txt[9:] if txt.startswith("for (;;);") else txt
-            # 한 응답에 JSON 객체가 줄단위로 여러 개 올 수 있음
-            for part in s.split("\n"):
-                part = part.strip()
-                if not part:
-                    continue
-                try:
-                    data = json.loads(part)
-                except Exception:
-                    continue
-                _walk_for_api_ads(data, api_ads)
-        except Exception:
-            pass
-
-    return _on_response
-
-
-def _collect_by_scroll(page, label, target, selectors, max_scrolls):
-    """무한스크롤하며 (A) DOM 추출 + (B) 네트워크 GraphQL 응답에서 광고를 모은다.
-    두 경로를 합쳐 {library_id: ad} 로 반환. 진행상황(DOM/API/합계)을 콘솔에 출력."""
-    dom_ads: dict[str, dict] = {}
-    api_ads: dict[str, dict] = {}
-
-    # 네트워크 응답 가로채기 시작
-    handler = _make_response_handler(api_ads)
-    try:
-        page.on("response", handler)
-    except Exception:
-        pass
-
-    prev_total = -1
-    stagnant = 0
-    for i in range(max_scrolls):
-        for ad in extract_ads(page, selectors):
-            ad["target_label"] = label
-            ad["page_name"] = target.get("page_id") or target.get("query")
-            dom_ads[ad["library_id"]] = ad
-
-        total = len(set(dom_ads) | set(api_ads))
-        if total != prev_total or stagnant % 4 == 0:
-            print(f"  [{label}] 스크롤 {i + 1}/{max_scrolls} → DOM {len(dom_ads)} / API {len(api_ads)} / 합 {total}건", flush=True)
-
-        if total == prev_total:
-            stagnant += 1
-            if stagnant >= 12:  # 12번 연속 안 늘면 끝으로 판단
-                print(f"  [{label}] {total}건에서 더 안 늘어 종료", flush=True)
-                break
-        else:
-            stagnant = 0
-        prev_total = total
-
-        # 실제 마우스 휠로 한 화면씩 내림(내부 스크롤 컨테이너에서도 진짜로 스크롤되어 lazy-load 트리거)
-        try:
-            page.mouse.move(680, 500)
-            page.mouse.wheel(0, 1200)
-        except Exception:
-            pass
-        page.evaluate(_SCROLL_JS)  # 보조
-        _human_pause(2.2, 3.5)
-
-    try:
-        page.remove_listener("response", handler)
-    except Exception:
-        pass
-
-    # 합치기: API(서버가 내려준 전량) 기준 + DOM 에만 있는 건/미디어 보완
-    merged: dict[str, dict] = {}
-    for lid, a in api_ads.items():
-        merged[lid] = dict(a)
-    for lid, dom_ad in dom_ads.items():
-        if lid in merged:
-            for k in ("media_url", "media_type", "media_urls", "poster_url", "ad_text", "landing_url", "started_on"):
-                if not merged[lid].get(k) and dom_ad.get(k):
-                    merged[lid][k] = dom_ad[k]
-        else:
-            merged[lid] = dom_ad
-    for a in merged.values():
-        a.setdefault("target_label", label)
-        if not a.get("page_name"):
-            a["page_name"] = target.get("page_id") or target.get("query")
-    return merged
-
-
-def _attempt_cdp(cdp_url, url, label, target, selectors, max_scrolls):
-    """이미 디버깅 포트로 떠 있는 실제 브라우저(네이버 웨일/크롬)에 붙어 크롤.
-    실제 브라우저 fingerprint/세션이라 메타 봇 캡을 회피하기 가장 유리."""
-    ads: dict[str, dict] = {}
-    with sync_playwright() as p:
-        browser = None
-        for attempt in range(3):
-            try:
-                browser = p.chromium.connect_over_cdp(cdp_url)
-                break
-            except Exception as e:
-                print(f"  웨일 연결 재시도 {attempt + 1}/3 ({e})", flush=True)
-                time.sleep(3)
-        if browser is None:
-            print("  웨일 연결 실패 — 디버깅 웨일 창이 떠 있는지/포트(9222) 확인", flush=True)
-            return ads
-        print(f"  [{label}] 웨일 연결됨 — 크롤 시작", flush=True)
-        try:
-            ctx = browser.contexts[0] if browser.contexts else browser.new_context(locale="ko-KR")
-            # 새 탭 말고 이미 떠 있는 탭(about:blank)을 그대로 이동시켜 눈에 보이게 크롤. 탭은 닫지 않고 재사용.
-            page = ctx.pages[0] if ctx.pages else ctx.new_page()
-            try:
-                ctx.add_init_script(
-                    "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
-                )
-            except Exception:
-                pass
-            page.goto(url, wait_until="domcontentloaded", timeout=60000)
-            _human_pause(2.0, 4.0)
-            ads = _collect_by_scroll(page, label, target, selectors, max_scrolls)
-        except Exception as e:
-            print(f"  [{label}] CDP 크롤 오류: {e}", flush=True)
-    # browser.close() 는 호출하지 않는다 — 사용자가 띄운 디버깅 웨일을 닫지 않기 위함.
-    return ads
 
 
 def scrape_target(
@@ -401,44 +184,15 @@ def scrape_target(
     def _attempt(use_proxy: bool) -> dict:
         ads: dict[str, dict] = {}
         with sync_playwright() as p:
-            # 자동화 티 숨김 + 백그라운드 스로틀링 차단(headful 창이 뒤에 있어도 스크롤/lazy-load가 멈추지 않게 → 끝까지 수집).
-            launch_base = dict(
-                headless=not headful,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--disable-background-timer-throttling",
-                    "--disable-backgrounding-occluded-windows",
-                    "--disable-renderer-backgrounding",
-                    "--disable-features=CalculateNativeWinOcclusion",
-                ],
-                ignore_default_args=["--enable-automation"],
-            )
-            # CRAWL_BROWSER_PATH 가 있으면 그 실제 브라우저(예: 네이버 웨일/크롬)로 실행 → 봇 탐지 회피에 유리.
-            # 실패하면(버전 비호환 등) 기본 크로미움으로 폴백.
-            browser = None
-            browser_path = (os.environ.get("CRAWL_BROWSER_PATH") or "").strip()
-            if browser_path:
-                try:
-                    browser = p.chromium.launch(executable_path=browser_path, **launch_base)
-                    print(f"  브라우저: {browser_path}", flush=True)
-                except Exception as e:
-                    print(f"  지정 브라우저 실행 실패({e}) → 기본 크로미움 사용", flush=True)
-                    browser = None
-            if browser is None:
-                browser = p.chromium.launch(**launch_base)
+            browser = p.chromium.launch(headless=not headful)
             ctx_kwargs = dict(
                 locale="ko-KR",
+                viewport={"width": 1366, "height": 1800},  # 크게 잡아 한 번에 더 많이 로드
                 user_agent=(
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
                 ),
             )
-            # headful(로컬)은 실제 창 크기를 쓴다 → 사람처럼 마우스 휠로 자연스럽게 스크롤되고 lazy-load가 정상 트리거됨.
-            # headless(클라우드)는 뷰포트를 고정.
-            if headful:
-                ctx_kwargs["no_viewport"] = True
-            else:
-                ctx_kwargs["viewport"] = {"width": 1366, "height": 1000}
             # 레지던셜 프록시(일반 IP)로 거치면 메타가 봇 차단을 안 해 전 광고를 내준다.
             if use_proxy and proxy_server:
                 proxy = {"server": proxy_server}
@@ -449,16 +203,6 @@ def scrape_target(
                 ctx_kwargs["proxy"] = proxy
                 print(f"  프록시 사용: {proxy_server}")
             ctx = browser.new_context(**ctx_kwargs)
-            # stealth: 자동화 신호(navigator.webdriver 등)를 숨겨 메타가 광고를 더 많이 내주게 한다.
-            try:
-                ctx.add_init_script(
-                    "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
-                    "Object.defineProperty(navigator,'languages',{get:()=>['ko-KR','ko','en-US','en']});"
-                    "Object.defineProperty(navigator,'plugins',{get:()=>[1,2,3,4,5]});"
-                    "window.chrome={runtime:{}};"
-                )
-            except Exception:
-                pass
             # 프록시 모드에서만 대역폭 절약(영상/폰트 차단). 직접 접속(프록시 없음)에선
             # 라우트 가로채기가 추출을 불안정하게 만들 수 있어 간섭하지 않는다.
             if use_proxy and proxy_server:
@@ -475,17 +219,30 @@ def scrape_target(
             page.goto(url, wait_until="domcontentloaded", timeout=60000)
             _human_pause(2.0, 4.0)
 
-            ads = _collect_by_scroll(page, label, target, selectors, max_scrolls)
+            # 무한스크롤: 페이지 맨 아래로 계속 내리며 매번 추출해 합친다.
+            # (가상화로 화면 밖 카드가 DOM에서 사라질 수 있어 매 스텝 추출 + dedup)
+            # 더 이상 늘지 않으면(끝 도달) 몇 번 확인 후 종료.
+            prev_count = -1
+            stagnant = 0
+            for _ in range(max_scrolls):
+                for ad in extract_ads(page, selectors):
+                    ad["target_label"] = label
+                    ad["page_name"] = target.get("page_id") or target.get("query")
+                    ads[ad["library_id"]] = ad
+
+                if len(ads) == prev_count:
+                    stagnant += 1
+                    if stagnant >= 6:  # 6번 연속 안 늘면 끝으로 판단(느린 로드 대비 여유)
+                        break
+                else:
+                    stagnant = 0
+                prev_count = len(ads)
+
+                page.evaluate(_SCROLL_JS)
+                _human_pause(2.0, 3.5)  # 다음 배치 로드 대기(넉넉히)
 
             browser.close()
         return ads
-
-    # CRAWL_CDP_URL: 디버깅 포트로 떠 있는 실제 브라우저(웨일/크롬)에 붙어서 크롤(봇 캡 회피 최강).
-    cdp_url = (os.environ.get("CRAWL_CDP_URL") or "").strip()
-    if cdp_url:
-        ads = _attempt_cdp(cdp_url, url, label, target, selectors, max_scrolls)
-        print(f"  [{label}] {len(ads)}개 광고 추출")
-        return list(ads.values())
 
     # 프록시 설정 시 우선 시도 → 실패하면 직접 접속으로 폴백(크롤이 0건으로 깨지지 않게).
     ads: dict = {}
