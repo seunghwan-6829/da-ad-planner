@@ -184,7 +184,12 @@ def scrape_target(
     def _attempt(use_proxy: bool) -> dict:
         ads: dict[str, dict] = {}
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=not headful)
+            # 자동화 티(--enable-automation, AutomationControlled)를 숨겨 메타 봇 탐지를 줄인다.
+            browser = p.chromium.launch(
+                headless=not headful,
+                args=["--disable-blink-features=AutomationControlled"],
+                ignore_default_args=["--enable-automation"],
+            )
             ctx_kwargs = dict(
                 locale="ko-KR",
                 viewport={"width": 1366, "height": 1800},  # 크게 잡아 한 번에 더 많이 로드
@@ -203,6 +208,16 @@ def scrape_target(
                 ctx_kwargs["proxy"] = proxy
                 print(f"  프록시 사용: {proxy_server}")
             ctx = browser.new_context(**ctx_kwargs)
+            # stealth: 자동화 신호(navigator.webdriver 등)를 숨겨 메타가 광고를 더 많이 내주게 한다.
+            try:
+                ctx.add_init_script(
+                    "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
+                    "Object.defineProperty(navigator,'languages',{get:()=>['ko-KR','ko','en-US','en']});"
+                    "Object.defineProperty(navigator,'plugins',{get:()=>[1,2,3,4,5]});"
+                    "window.chrome={runtime:{}};"
+                )
+            except Exception:
+                pass
             # 프록시 모드에서만 대역폭 절약(영상/폰트 차단). 직접 접속(프록시 없음)에선
             # 라우트 가로채기가 추출을 불안정하게 만들 수 있어 간섭하지 않는다.
             if use_proxy and proxy_server:
