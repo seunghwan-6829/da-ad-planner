@@ -174,6 +174,74 @@ _SCROLL_JS = """() => {
 }"""
 
 
+def _collect_by_scroll(page, label, target, selectors, max_scrolls):
+    """현재 page 에서 무한스크롤하며 광고를 모아 {library_id: ad} 로 반환.
+    실제 마우스 휠(page.mouse.wheel) + JS 보조 스크롤. 진행상황은 콘솔에 출력."""
+    ads: dict[str, dict] = {}
+    prev_count = -1
+    stagnant = 0
+    for i in range(max_scrolls):
+        for ad in extract_ads(page, selectors):
+            ad["target_label"] = label
+            ad["page_name"] = target.get("page_id") or target.get("query")
+            ads[ad["library_id"]] = ad
+
+        cur = len(ads)
+        if cur != prev_count or stagnant % 4 == 0:
+            print(f"  [{label}] 스크롤 {i + 1}/{max_scrolls} → {cur}건", flush=True)
+
+        if cur == prev_count:
+            stagnant += 1
+            if stagnant >= 12:  # 12번 연속 안 늘면 끝으로 판단(느린 로드 대비 관대하게)
+                print(f"  [{label}] {cur}건에서 더 안 늘어 종료", flush=True)
+                break
+        else:
+            stagnant = 0
+        prev_count = cur
+
+        # 실제 마우스 휠로 한 화면씩 내림(내부 스크롤 컨테이너에서도 진짜로 스크롤되어 lazy-load 트리거)
+        try:
+            page.mouse.move(680, 500)
+            page.mouse.wheel(0, 1200)
+        except Exception:
+            pass
+        page.evaluate(_SCROLL_JS)  # 보조
+        _human_pause(2.2, 3.5)
+    return ads
+
+
+def _attempt_cdp(cdp_url, url, label, target, selectors, max_scrolls):
+    """이미 디버깅 포트로 떠 있는 실제 브라우저(네이버 웨일/크롬)에 붙어 크롤.
+    실제 브라우저 fingerprint/세션이라 메타 봇 캡을 회피하기 가장 유리."""
+    ads: dict[str, dict] = {}
+    with sync_playwright() as p:
+        try:
+            browser = p.chromium.connect_over_cdp(cdp_url)
+        except Exception as e:
+            print(f"  웨일 연결 실패({e}) — 웨일을 디버깅 모드로 띄웠는지 확인하세요.", flush=True)
+            return ads
+        try:
+            ctx = browser.contexts[0] if browser.contexts else browser.new_context(locale="ko-KR")
+            try:
+                ctx.add_init_script(
+                    "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
+                )
+            except Exception:
+                pass
+            page = ctx.new_page()
+            page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            _human_pause(2.0, 4.0)
+            ads = _collect_by_scroll(page, label, target, selectors, max_scrolls)
+            try:
+                page.close()  # 탭만 닫는다(웨일은 유지 → 다음 브랜드도 같은 웨일에 다시 붙음)
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"  [{label}] CDP 크롤 오류: {e}", flush=True)
+    # browser.close() 는 호출하지 않는다 — 사용자가 띄운 디버깅 웨일을 닫지 않기 위함. with 종료 시 연결만 끊김.
+    return ads
+
+
 def scrape_target(
     target: dict,
     selectors: dict,
@@ -262,44 +330,17 @@ def scrape_target(
             page.goto(url, wait_until="domcontentloaded", timeout=60000)
             _human_pause(2.0, 4.0)
 
-            # 무한스크롤: 페이지 맨 아래로 계속 내리며 매번 추출해 합친다.
-            # (가상화로 화면 밖 카드가 DOM에서 사라질 수 있어 매 스텝 추출 + dedup)
-            # 더 이상 늘지 않으면(끝 도달) 몇 번 확인 후 종료.
-            prev_count = -1
-            stagnant = 0
-            for i in range(max_scrolls):
-                for ad in extract_ads(page, selectors):
-                    ad["target_label"] = label
-                    ad["page_name"] = target.get("page_id") or target.get("query")
-                    ads[ad["library_id"]] = ad
-
-                cur = len(ads)
-                # 진행상황 출력: 수가 늘 때 + 멈춰있을 때 주기적으로(스크롤이 먹는지 콘솔에서 바로 보임)
-                if cur != prev_count or stagnant % 4 == 0:
-                    print(f"  [{label}] 스크롤 {i + 1}/{max_scrolls} → {cur}건", flush=True)
-
-                if cur == prev_count:
-                    stagnant += 1
-                    # 12번 연속(=약 30~40초) 안 늘어야 끝으로 판단. 느린 로드에 일찍 포기하지 않게 관대하게.
-                    if stagnant >= 12:
-                        print(f"  [{label}] {cur}건에서 더 안 늘어 종료", flush=True)
-                        break
-                else:
-                    stagnant = 0
-                prev_count = cur
-
-                # 실제 마우스 휠로 한 화면씩 내림 → JS scrollTo 가 안 먹는 페이지(내부 스크롤 컨테이너)에서도
-                # 진짜로 스크롤되어 lazy-load 가 트리거된다. (사람이 휠 굴리는 것과 동일)
-                try:
-                    page.mouse.move(680, 500)
-                    page.mouse.wheel(0, 1200)
-                except Exception:
-                    pass
-                page.evaluate(_SCROLL_JS)  # 내부 컨테이너 보조 스크롤
-                _human_pause(2.2, 3.5)  # 다음 배치 로드 대기(넉넉히)
+            ads = _collect_by_scroll(page, label, target, selectors, max_scrolls)
 
             browser.close()
         return ads
+
+    # CRAWL_CDP_URL: 디버깅 포트로 떠 있는 실제 브라우저(웨일/크롬)에 붙어서 크롤(봇 캡 회피 최강).
+    cdp_url = (os.environ.get("CRAWL_CDP_URL") or "").strip()
+    if cdp_url:
+        ads = _attempt_cdp(cdp_url, url, label, target, selectors, max_scrolls)
+        print(f"  [{label}] {len(ads)}개 광고 추출")
+        return list(ads.values())
 
     # 프록시 설정 시 우선 시도 → 실패하면 직접 접속으로 폴백(크롤이 0건으로 깨지지 않게).
     ads: dict = {}

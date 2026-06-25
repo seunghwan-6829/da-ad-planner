@@ -20,7 +20,6 @@ set CRAWL_MAX_SCROLLS=400
 set PYTHONUTF8=1
 set PYTHONIOENCODING=utf-8
 chcp 65001 >nul
-set "CRAWL_BROWSER_PATH=C:\Program Files\Naver\Naver Whale\Application\whale.exe"
 echo ==========================================
 echo   Crawl ALL brands (home IP, visible browser)
 echo   May take a while. Do NOT close Chrome.
