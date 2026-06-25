@@ -189,7 +189,7 @@ def scrape_target(
         ads: dict[str, dict] = {}
         with sync_playwright() as p:
             # 자동화 티 숨김 + 백그라운드 스로틀링 차단(headful 창이 뒤에 있어도 스크롤/lazy-load가 멈추지 않게 → 끝까지 수집).
-            browser = p.chromium.launch(
+            launch_base = dict(
                 headless=not headful,
                 args=[
                     "--disable-blink-features=AutomationControlled",
@@ -200,6 +200,19 @@ def scrape_target(
                 ],
                 ignore_default_args=["--enable-automation"],
             )
+            # CRAWL_BROWSER_PATH 가 있으면 그 실제 브라우저(예: 네이버 웨일/크롬)로 실행 → 봇 탐지 회피에 유리.
+            # 실패하면(버전 비호환 등) 기본 크로미움으로 폴백.
+            browser = None
+            browser_path = (os.environ.get("CRAWL_BROWSER_PATH") or "").strip()
+            if browser_path:
+                try:
+                    browser = p.chromium.launch(executable_path=browser_path, **launch_base)
+                    print(f"  브라우저: {browser_path}", flush=True)
+                except Exception as e:
+                    print(f"  지정 브라우저 실행 실패({e}) → 기본 크로미움 사용", flush=True)
+                    browser = None
+            if browser is None:
+                browser = p.chromium.launch(**launch_base)
             ctx_kwargs = dict(
                 locale="ko-KR",
                 user_agent=(

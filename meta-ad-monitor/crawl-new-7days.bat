@@ -20,6 +20,7 @@ set CRAWL_MAX_SCROLLS=400
 set PYTHONUTF8=1
 set PYTHONIOENCODING=utf-8
 chcp 65001 >nul
+set "CRAWL_BROWSER_PATH=C:\Program Files\Naver\Naver Whale\Application\whale.exe"
 set CRAWL_SINCE_DAYS=7
 echo ==========================================
 echo   Crawl NEW brands (added in last 7 days)

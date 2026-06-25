@@ -20,6 +20,7 @@ set CRAWL_MAX_SCROLLS=400
 set PYTHONUTF8=1
 set PYTHONIOENCODING=utf-8
 chcp 65001 >nul
+set "CRAWL_BROWSER_PATH=C:\Program Files\Naver\Naver Whale\Application\whale.exe"
 set CRAWL_MAX_COUNT=35
 echo ==========================================
 echo   Crawl UNDER-FILLED brands (<=35 ads)
