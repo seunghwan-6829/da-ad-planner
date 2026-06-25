@@ -202,12 +202,17 @@ def scrape_target(
             )
             ctx_kwargs = dict(
                 locale="ko-KR",
-                viewport={"width": 1366, "height": 1800},  # 크게 잡아 한 번에 더 많이 로드
                 user_agent=(
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
                 ),
             )
+            # headful(로컬)은 실제 창 크기를 쓴다 → 사람처럼 마우스 휠로 자연스럽게 스크롤되고 lazy-load가 정상 트리거됨.
+            # headless(클라우드)는 뷰포트를 고정.
+            if headful:
+                ctx_kwargs["no_viewport"] = True
+            else:
+                ctx_kwargs["viewport"] = {"width": 1366, "height": 1000}
             # 레지던셜 프록시(일반 IP)로 거치면 메타가 봇 차단을 안 해 전 광고를 내준다.
             if use_proxy and proxy_server:
                 proxy = {"server": proxy_server}
@@ -270,7 +275,14 @@ def scrape_target(
                     stagnant = 0
                 prev_count = cur
 
-                page.evaluate(_SCROLL_JS)
+                # 실제 마우스 휠로 한 화면씩 내림 → JS scrollTo 가 안 먹는 페이지(내부 스크롤 컨테이너)에서도
+                # 진짜로 스크롤되어 lazy-load 가 트리거된다. (사람이 휠 굴리는 것과 동일)
+                try:
+                    page.mouse.move(680, 500)
+                    page.mouse.wheel(0, 1200)
+                except Exception:
+                    pass
+                page.evaluate(_SCROLL_JS)  # 내부 컨테이너 보조 스크롤
                 _human_pause(2.2, 3.5)  # 다음 배치 로드 대기(넉넉히)
 
             browser.close()
