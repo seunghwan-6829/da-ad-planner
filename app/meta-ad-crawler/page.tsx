@@ -2717,6 +2717,11 @@ function AdDetailModal({
   async function generateMindmap(clientId: string) {
     setMmGenerating(true);
     try {
+      // 영상이고 아직 나레이션 대본이 없으면 먼저 받아쓰기(STT) → 마인드맵에 '나레이션 원문'이 들어가게.
+      // best-effort(OpenAI 키 없거나 실패해도 마인드맵은 진행).
+      if (ad.media_type === "video" && !ad.transcript) {
+        try { await aiFetch("/api/meta-ad/transcript", { method: "POST", body: JSON.stringify({ library_id: ad.library_id }) }); } catch {}
+      }
       const res = await aiFetch("/api/ai/mindmap", {
         method: "POST",
         body: JSON.stringify({ library_id: ad.library_id }),

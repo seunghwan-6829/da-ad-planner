@@ -56,8 +56,11 @@ export async function POST(req: Request) {
 - 유형: ${isVideo ? '영상' : ad.media_type === 'carousel' ? '슬라이드' : '이미지'}
 - 게재 시작일: ${ad.started_on ?? '미상'}
 - 본문/자막: """${(ad.ad_text ?? '').slice(0, 1500)}"""
-${transcript ? `- 영상 나레이션 대본: """${transcript.slice(0, 1500)}"""` : ''}
+${transcript ? `- 영상 나레이션 대본(실제 음성 받아쓰기): """${transcript.slice(0, 2000)}"""` : ''}
+${ad.ai_analysis ? `- 기존 AI 상세분석(JSON, 반드시 근거로 활용): """${String(ad.ai_analysis).slice(0, 1800)}"""` : ''}
 ${mediaNote}
+
+위 [소재 정보](프레임/자막/나레이션/기존 AI 분석)를 **실제로 근거 삼아** 작성할 것. 추측만으로 대충 쓰지 말 것.
 
 아래 7개 가지(node)를 각각 채워라. items 는 구체적이고 실행가능한 짧은 문장(각 30자 내외) 2~4개씩.
 1) develop — 디벨롭할 부분: 이 소재에서 우리가 더 발전/개선시킬 수 있는 포인트
