@@ -16,6 +16,7 @@ import {
   Lightbulb,
   LogOut,
   Megaphone,
+  Network,
   Settings,
   Shield,
   User,
@@ -39,6 +40,7 @@ const navigationBottom = [
   { name: '이미지 베리에이션', href: '/image-variation', icon: ImageIcon },
   { name: '영상 베리에이션', href: '/ai-variation', icon: Video },
   { name: '기획안 제작', href: '/project-plans', icon: Clapperboard },
+  { name: '기획 마인드맵', href: '/plan-mindmap', icon: Network },
   { name: '기획안 아이디어', href: '/plan-ideas', icon: Lightbulb },
   { name: '촬영 가이드', href: '/shooting-guide', icon: Camera },
 ]

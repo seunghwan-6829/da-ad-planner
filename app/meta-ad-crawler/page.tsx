@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { aiFetch } from "@/lib/ai-fetch";
 import { getClients, type Client } from "@/lib/api/clients";
+import { createMindmap } from "@/lib/api/mindmaps";
 import {
   Megaphone,
   Settings,
@@ -38,7 +39,7 @@ import {
   FileText,
   Users,
   Link2,
-  Lock,
+  Network,
 } from "lucide-react";
 
 type Target = {
@@ -1226,6 +1227,8 @@ export default function MetaAdCrawlerPage() {
           onToggleSaved={toggleSaved}
           onOpenVariation={openDetail}
           onSeed={seedTo}
+          clients={clients}
+          mappedClientIds={detail.target_id ? (targetMap[detail.target_id]?.client_ids || []) : []}
         />
       )}
 
@@ -2499,6 +2502,8 @@ function AdDetailModal({
   onToggleSaved,
   onOpenVariation,
   onSeed,
+  clients,
+  mappedClientIds,
 }: {
   ad: Ad;
   brandName: string;
@@ -2513,6 +2518,8 @@ function AdDetailModal({
   onToggleSaved: (ad: Ad) => void;
   onOpenVariation: (ad: Ad) => void;
   onSeed: (ad: Ad, dest: "plan" | "guide") => void;
+  clients: Client[];
+  mappedClientIds: string[];
 }) {
   const [memo, setMemo] = useState(ad.memo ?? "");
   const [saving, setSaving] = useState(false);
@@ -2526,6 +2533,10 @@ function AdDetailModal({
   const [transcriptErr, setTranscriptErr] = useState<string | null>(null);
   const [confirmClose, setConfirmClose] = useState(false); // 미저장 변경 닫기 확인
   const [linkCopied, setLinkCopied] = useState(false); // 공유 링크 복사 피드백
+  const [mmPicking, setMmPicking] = useState(false); // 기획 마인드맵: 클라이언트 선택창
+  const [mmKw, setMmKw] = useState("");
+  const [mmGenerating, setMmGenerating] = useState(false);
+  const router = useRouter();
   const ended = ad.status === "ended";
 
   // 메인 영상: 그래프 드래그/클릭·프레임 클릭으로 이동+재생(AnalysisViz가 ref로 직접 제어)
@@ -2698,6 +2709,38 @@ function AdDetailModal({
       navigator.clipboard.writeText(url).then(ok).catch(() => window.prompt("공유 링크 (복사하세요)", url));
     } else {
       window.prompt("공유 링크 (복사하세요)", url);
+    }
+  }
+
+  // 기획 마인드맵 생성: 선택한 클라이언트 폴더에 저장 후 캔버스로 이동.
+  // AI 호출은 사용자 본인 Anthropic 키(aiFetch → x-user-api-key). 키 없으면 라우트가 401 반환.
+  async function generateMindmap(clientId: string) {
+    setMmGenerating(true);
+    try {
+      const res = await aiFetch("/api/ai/mindmap", {
+        method: "POST",
+        body: JSON.stringify({ library_id: ad.library_id }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(j.error || "마인드맵 생성에 실패했어요.");
+        return;
+      }
+      const capTitle = cleanCaption(ad.ad_text, brandName).replace(/\n+/g, " ").trim().slice(0, 40);
+      const mm = await createMindmap({
+        client_id: clientId,
+        library_id: ad.library_id,
+        title: capTitle ? `${brandName} · ${capTitle}` : brandName,
+        source_brand: brandName,
+        source_thumb: posterThumb(ad) || brandImage || null,
+        data: j.data,
+      });
+      router.push(`/plan-mindmap/${mm.id}`);
+    } catch {
+      alert("마인드맵 생성 중 오류가 발생했어요.");
+    } finally {
+      setMmGenerating(false);
+      setMmPicking(false);
     }
   }
 
@@ -2965,11 +3008,11 @@ function AdDetailModal({
               <div className="mb-2 text-xs font-bold uppercase tracking-wide text-gray-400">이 소재로 만들기</div>
               <div className="flex flex-wrap gap-2">
                 <button
-                  disabled
-                  title="추후 디벨롭 예정"
-                  className="flex cursor-not-allowed items-center gap-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800/50 px-3 py-2 text-sm font-medium text-gray-400 dark:text-gray-500"
+                  onClick={() => setMmPicking(true)}
+                  title="이 소재를 7갈래 기획 마인드맵으로 분해 (본인 Anthropic 키 필요)"
+                  className="flex items-center gap-1.5 rounded-lg border border-yellow-300 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-900/20 px-3 py-2 text-sm font-medium text-yellow-700 dark:text-yellow-300 hover:bg-yellow-100 dark:hover:bg-yellow-900/40"
                 >
-                  <Lock className="h-3.5 w-3.5" /> 기획안 아이디어
+                  <Network className="h-4 w-4" /> 기획 마인드맵 <ArrowUpRight className="h-3.5 w-3.5" />
                 </button>
                 <button
                   onClick={() => onSeed(ad, "guide")}
@@ -3005,6 +3048,64 @@ function AdDetailModal({
                 저장하여 닫기
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 기획 마인드맵: 저장할 브랜드(클라이언트) 선택 */}
+      {mmPicking && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
+          onClick={(e) => { e.stopPropagation(); if (!mmGenerating) setMmPicking(false); }}
+        >
+          <div className="w-full max-w-md rounded-2xl bg-white dark:bg-gray-900 p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-1 flex items-center gap-1.5 text-sm font-bold text-gray-900 dark:text-gray-100">
+              <Network className="h-4 w-4 text-primary" /> 어느 브랜드에 저장할까요?
+            </div>
+            <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">선택한 &apos;기획안 제작&apos; 브랜드 폴더에 마인드맵이 저장됩니다.</p>
+            {mmGenerating ? (
+              <div className="flex flex-col items-center gap-2 py-10 text-sm text-gray-500">
+                <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                AI가 마인드맵을 만드는 중… (수십 초 걸려요)
+              </div>
+            ) : (
+              <>
+                <input
+                  value={mmKw}
+                  onChange={(e) => setMmKw(e.target.value)}
+                  placeholder="브랜드 검색…"
+                  className="mb-2 w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm dark:text-gray-200"
+                />
+                <div className="max-h-64 space-y-1 overflow-y-auto">
+                  {clients.length === 0 ? (
+                    <p className="py-6 text-center text-xs text-gray-400">&apos;기획안 제작&apos;에서 브랜드를 먼저 추가하세요.</p>
+                  ) : (
+                    clients
+                      .filter((c) => !mmKw || c.name.toLowerCase().includes(mmKw.toLowerCase()))
+                      .sort((a, b) => (mappedClientIds.includes(b.id) ? 1 : 0) - (mappedClientIds.includes(a.id) ? 1 : 0))
+                      .map((c) => (
+                        <button
+                          key={c.id}
+                          onClick={() => generateMindmap(c.id)}
+                          className="flex w-full items-center gap-2 rounded-lg border border-gray-200 dark:border-gray-700 px-3 py-2 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-800"
+                        >
+                          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: c.color || "#3B82F6" }} />
+                          <span className="flex-1 truncate dark:text-gray-200">{c.name}</span>
+                          {mappedClientIds.includes(c.id) && (
+                            <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-bold text-primary">매핑됨</span>
+                          )}
+                        </button>
+                      ))
+                  )}
+                </div>
+                <button
+                  onClick={() => setMmPicking(false)}
+                  className="mt-3 w-full rounded-lg border border-gray-200 dark:border-gray-700 px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800"
+                >
+                  취소
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}

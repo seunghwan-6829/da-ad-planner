@@ -2,29 +2,18 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { 
-  FileText, 
-  Users, 
-  FileCode, 
-  Plus, 
-  ArrowRight,
-  Image,
-  Video,
-  TrendingUp
-} from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { getPlans } from '@/lib/api/plans'
-import { getAdvertisers } from '@/lib/api/advertisers'
-import { getTemplates } from '@/lib/api/templates'
-import { AdPlan, Advertiser, Template } from '@/lib/supabase'
+import { Megaphone, Clapperboard, Network, Sparkles, TrendingUp, ArrowRight, Loader2, Folder } from 'lucide-react'
+import { getClients, Client } from '@/lib/api/clients'
+
+type Target = { id: string; label: string; category?: string | null }
 
 export default function DashboardPage() {
-  const [plans, setPlans] = useState<AdPlan[]>([])
-  const [advertisers, setAdvertisers] = useState<Advertiser[]>([])
-  const [templates, setTemplates] = useState<Template[]>([])
   const [loading, setLoading] = useState(true)
+  const [change, setChange] = useState<{ newCount: number; endedCount: number }>({ newCount: 0, endedCount: 0 })
+  const [total, setTotal] = useState(0)
+  const [counts, setCounts] = useState<Record<string, number>>({})
+  const [targets, setTargets] = useState<Target[]>([])
+  const [clients, setClients] = useState<Client[]>([])
 
   useEffect(() => {
     loadData()
@@ -32,284 +21,162 @@ export default function DashboardPage() {
 
   async function loadData() {
     try {
-      const [plansData, advertisersData, templatesData] = await Promise.all([
-        getPlans(),
-        getAdvertisers(),
-        getTemplates()
+      const [chg, stats, tgs, cls] = await Promise.all([
+        fetch('/api/meta-ad/changes?days=7').then((r) => (r.ok ? r.json() : { newCount: 0, endedCount: 0 })).catch(() => ({ newCount: 0, endedCount: 0 })),
+        fetch('/api/meta-ad/stats').then((r) => (r.ok ? r.json() : { counts: {}, total: 0 })).catch(() => ({ counts: {}, total: 0 })),
+        fetch('/api/meta-ad/targets').then((r) => (r.ok ? r.json() : [])).catch(() => []),
+        getClients().catch(() => [] as Client[]),
       ])
-      setPlans(plansData)
-      setAdvertisers(advertisersData)
-      setTemplates(templatesData)
-    } catch (error) {
-      console.error('데이터 로드 실패:', error)
+      setChange({ newCount: chg.newCount || 0, endedCount: chg.endedCount || 0 })
+      setTotal(stats.total || 0)
+      setCounts(stats.counts || {})
+      setTargets(Array.isArray(tgs) ? tgs : [])
+      setClients(cls || [])
+    } catch (e) {
+      console.error('대시보드 로드 실패:', e)
     } finally {
       setLoading(false)
     }
   }
 
-  const imagePlans = plans.filter(p => p.media_type === 'image').length
-  const videoPlans = plans.filter(p => p.media_type === 'video').length
-  const recentPlans = plans.slice(0, 5)
+  const labelOf = (id: string) => targets.find((t) => t.id === id)?.label || '(브랜드)'
+  const topBrands = Object.entries(counts)
+    .map(([id, n]) => ({ id, label: labelOf(id), n }))
+    .sort((a, b) => b.n - a.n)
+    .slice(0, 8)
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <p className="text-muted-foreground">로딩 중...</p>
+      <div className="flex h-64 items-center justify-center text-gray-400">
+        <Loader2 className="mr-2 h-5 w-5 animate-spin" /> 불러오는 중…
       </div>
     )
   }
 
   return (
     <div className="space-y-8">
-      {/* Header */}
+      {/* 헤더 */}
       <div>
-        <h1 className="text-3xl font-bold">컨텐츠 디벨로퍼</h1>
-        <p className="text-muted-foreground mt-2">
-          이미지/영상 광고 소재 기획을 효율적으로 관리하세요
-        </p>
+        <h1 className="text-3xl font-bold dark:text-gray-100">컨텐츠 디벨로퍼</h1>
+        <p className="mt-2 text-gray-500 dark:text-gray-400">경쟁사 광고 수집부터 기획까지 한눈에 관리하세요</p>
       </div>
 
-      {/* Quick Actions */}
+      {/* 빠른 이동 */}
       <div className="grid gap-4 md:grid-cols-3">
-        <Link href="/plans/new">
-          <Card className="hover:shadow-lg transition-shadow cursor-pointer border-primary/20 hover:border-primary">
-            <CardContent className="p-6">
-              <div className="flex items-center gap-4">
-                <div className="p-3 rounded-full bg-primary/10">
-                  <Plus className="h-6 w-6 text-primary" />
-                </div>
-                <div>
-                  <h3 className="font-semibold">새 기획서 작성</h3>
-                  <p className="text-sm text-muted-foreground">
-                    광고 소재 기획서를 작성합니다
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </Link>
-
-        <Link href="/advertisers/new">
-          <Card className="hover:shadow-lg transition-shadow cursor-pointer">
-            <CardContent className="p-6">
-              <div className="flex items-center gap-4">
-                <div className="p-3 rounded-full bg-green-100">
-                  <Users className="h-6 w-6 text-green-600" />
-                </div>
-                <div>
-                  <h3 className="font-semibold">광고주 등록</h3>
-                  <p className="text-sm text-muted-foreground">
-                    브랜드 가이드라인을 등록합니다
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </Link>
-
-        <Link href="/templates">
-          <Card className="hover:shadow-lg transition-shadow cursor-pointer">
-            <CardContent className="p-6">
-              <div className="flex items-center gap-4">
-                <div className="p-3 rounded-full bg-purple-100">
-                  <FileCode className="h-6 w-6 text-purple-600" />
-                </div>
-                <div>
-                  <h3 className="font-semibold">템플릿 관리</h3>
-                  <p className="text-sm text-muted-foreground">
-                    기획서 템플릿을 관리합니다
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </Link>
+        <QuickCard href="/meta-ad-crawler" icon={<Megaphone className="h-6 w-6 text-primary" />} bg="bg-primary/10" title="메타 광고 크롤러" desc="경쟁사 광고 수집·열람" />
+        <QuickCard href="/project-plans" icon={<Clapperboard className="h-6 w-6 text-indigo-600" />} bg="bg-indigo-100 dark:bg-indigo-900/30" title="기획안 제작" desc="브랜드별 기획안 관리" />
+        <QuickCard href="/plan-mindmap" icon={<Network className="h-6 w-6 text-violet-600" />} bg="bg-violet-100 dark:bg-violet-900/30" title="기획 마인드맵" desc="소재를 7갈래로 분해" />
       </div>
 
-      {/* Stats */}
+      {/* 통계 */}
       <div className="grid gap-4 md:grid-cols-4">
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">전체 기획서</p>
-                <p className="text-3xl font-bold">{plans.length}</p>
-              </div>
-              <FileText className="h-8 w-8 text-muted-foreground" />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">이미지 소재</p>
-                <p className="text-3xl font-bold text-blue-600">{imagePlans}</p>
-              </div>
-              <Image className="h-8 w-8 text-blue-500" />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">영상 소재</p>
-                <p className="text-3xl font-bold text-purple-600">{videoPlans}</p>
-              </div>
-              <Video className="h-8 w-8 text-purple-500" />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">등록 광고주</p>
-                <p className="text-3xl font-bold text-green-600">{advertisers.length}</p>
-              </div>
-              <Users className="h-8 w-8 text-green-500" />
-            </div>
-          </CardContent>
-        </Card>
+        <StatCard label="이번 주 신규 광고" value={change.newCount} accent="text-green-600" icon={<Sparkles className="h-7 w-7 text-green-500" />} />
+        <StatCard label="전체 수집 광고" value={total} accent="text-blue-600" icon={<Megaphone className="h-7 w-7 text-blue-500" />} />
+        <StatCard label="추적 브랜드" value={targets.length} accent="text-violet-600" icon={<TrendingUp className="h-7 w-7 text-violet-500" />} />
+        <StatCard label="등록 클라이언트" value={clients.length} accent="text-amber-600" icon={<Folder className="h-7 w-7 text-amber-500" />} />
       </div>
 
-      {/* Recent Plans & Advertisers */}
+      {/* 2단: 브랜드별 수집 / 클라이언트 */}
       <div className="grid gap-6 lg:grid-cols-2">
-        {/* Recent Plans */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
+        {/* 브랜드별 수집 광고 Top */}
+        <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-5 shadow-sm">
+          <div className="mb-4 flex items-center justify-between">
             <div>
-              <CardTitle>최근 기획서</CardTitle>
-              <CardDescription>최근 작성된 기획서 목록</CardDescription>
+              <h2 className="text-lg font-bold dark:text-gray-100">브랜드별 수집 광고</h2>
+              <p className="text-xs text-gray-400">
+                이번 주 신규 <b className="text-green-600">{change.newCount}</b>
+                {change.endedCount > 0 && (
+                  <>
+                    {' '}· 종료 <b className="text-gray-500">{change.endedCount}</b>
+                  </>
+                )}
+              </p>
             </div>
-            <Link href="/plans">
-              <Button variant="ghost" size="sm">
-                전체보기 <ArrowRight className="ml-1 h-4 w-4" />
-              </Button>
+            <Link href="/meta-ad-crawler" className="flex items-center gap-1 text-sm text-primary hover:underline">
+              전체보기 <ArrowRight className="h-4 w-4" />
             </Link>
-          </CardHeader>
-          <CardContent>
-            {recentPlans.length === 0 ? (
-              <div className="text-center py-8">
-                <p className="text-muted-foreground mb-4">작성된 기획서가 없습니다</p>
-                <Link href="/plans/new">
-                  <Button variant="outline" size="sm">
-                    첫 기획서 작성하기
-                  </Button>
-                </Link>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {recentPlans.map((plan) => (
-                  <Link key={plan.id} href={`/plans/${plan.id}`}>
-                    <div className="flex items-center justify-between p-3 rounded-lg hover:bg-muted transition-colors">
-                      <div className="flex items-center gap-3">
-                        {plan.media_type === 'video' ? (
-                          <Video className="h-4 w-4 text-purple-500" />
-                        ) : (
-                          <Image className="h-4 w-4 text-blue-500" />
-                        )}
-                        <div>
-                          <p className="font-medium">{plan.title}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {new Date(plan.created_at).toLocaleDateString('ko-KR')}
-                          </p>
-                        </div>
-                      </div>
-                      <Badge variant={plan.media_type === 'video' ? 'secondary' : 'default'}>
-                        {plan.media_type === 'video' ? '영상' : '이미지'}
-                      </Badge>
+          </div>
+          {topBrands.length === 0 ? (
+            <p className="py-8 text-center text-sm text-gray-400">아직 수집된 광고가 없습니다.</p>
+          ) : (
+            <div className="space-y-2">
+              {topBrands.map((b) => {
+                const max = topBrands[0].n || 1
+                return (
+                  <div key={b.id} className="flex items-center gap-3">
+                    <span className="w-28 shrink-0 truncate text-sm text-gray-700 dark:text-gray-200" title={b.label}>
+                      {b.label}
+                    </span>
+                    <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
+                      <div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(4, (b.n / max) * 100)}%` }} />
                     </div>
-                  </Link>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                    <span className="w-10 shrink-0 text-right text-sm font-semibold tabular-nums text-gray-600 dark:text-gray-300">{b.n}</span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
 
-        {/* Advertisers */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
+        {/* 클라이언트(기획안 제작) */}
+        <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-5 shadow-sm">
+          <div className="mb-4 flex items-center justify-between">
             <div>
-              <CardTitle>광고주 목록</CardTitle>
-              <CardDescription>등록된 광고주 및 브랜드 가이드라인</CardDescription>
+              <h2 className="text-lg font-bold dark:text-gray-100">기획안 제작 · 마인드맵</h2>
+              <p className="text-xs text-gray-400">등록 클라이언트 {clients.length}곳</p>
             </div>
-            <Link href="/advertisers">
-              <Button variant="ghost" size="sm">
-                전체보기 <ArrowRight className="ml-1 h-4 w-4" />
-              </Button>
+            <Link href="/project-plans" className="flex items-center gap-1 text-sm text-primary hover:underline">
+              전체보기 <ArrowRight className="h-4 w-4" />
             </Link>
-          </CardHeader>
-          <CardContent>
-            {advertisers.length === 0 ? (
-              <div className="text-center py-8">
-                <p className="text-muted-foreground mb-4">등록된 광고주가 없습니다</p>
-                <Link href="/advertisers/new">
-                  <Button variant="outline" size="sm">
-                    첫 광고주 등록하기
-                  </Button>
-                </Link>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {advertisers.slice(0, 5).map((advertiser) => (
-                  <Link key={advertiser.id} href={`/advertisers/${advertiser.id}`}>
-                    <div className="flex items-center justify-between p-3 rounded-lg hover:bg-muted transition-colors">
-                      <div className="flex items-center gap-3">
-                        {advertiser.brand_color && (
-                          <div 
-                            className="w-4 h-4 rounded-full border"
-                            style={{ backgroundColor: advertiser.brand_color }}
-                          />
-                        )}
-                        <div>
-                          <p className="font-medium">{advertiser.name}</p>
-                          {advertiser.tone_manner && (
-                            <p className="text-xs text-muted-foreground line-clamp-1">
-                              {advertiser.tone_manner}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                      <ArrowRight className="h-4 w-4 text-muted-foreground" />
-                    </div>
+          </div>
+          {clients.length === 0 ? (
+            <p className="py-8 text-center text-sm text-gray-400">등록된 클라이언트가 없습니다.</p>
+          ) : (
+            <div className="space-y-1">
+              {clients.slice(0, 8).map((c) => (
+                <div key={c.id} className="flex items-center gap-2 rounded-lg p-2 hover:bg-gray-50 dark:hover:bg-gray-800">
+                  <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: c.color || '#3B82F6' }} />
+                  <span className="flex-1 truncate text-sm dark:text-gray-200">{c.name}</span>
+                  <Link href={`/project-plans?client=${c.id}`} className="rounded px-2 py-0.5 text-xs text-gray-400 hover:bg-gray-100 hover:text-primary dark:hover:bg-gray-700">
+                    기획안
                   </Link>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Templates Quick Access */}
-      {templates.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>빠른 기획서 작성</CardTitle>
-            <CardDescription>템플릿을 선택하여 빠르게 기획서를 작성하세요</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-wrap gap-3">
-              {templates.map((template) => (
-                <Link key={template.id} href={`/plans/new?template=${template.id}`}>
-                  <Button variant="outline">
-                    {template.media_type === 'video' ? (
-                      <Video className="mr-2 h-4 w-4 text-purple-500" />
-                    ) : (
-                      <Image className="mr-2 h-4 w-4 text-blue-500" />
-                    )}
-                    {template.name}
-                  </Button>
-                </Link>
+                  <Link href="/plan-mindmap" className="rounded px-2 py-0.5 text-xs text-gray-400 hover:bg-gray-100 hover:text-violet-600 dark:hover:bg-gray-700">
+                    마인드맵
+                  </Link>
+                </div>
               ))}
             </div>
-          </CardContent>
-        </Card>
-      )}
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function QuickCard({ href, icon, bg, title, desc }: { href: string; icon: React.ReactNode; bg: string; title: string; desc: string }) {
+  return (
+    <Link href={href}>
+      <div className="flex cursor-pointer items-center gap-4 rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-6 shadow-sm transition-shadow hover:border-primary hover:shadow-lg">
+        <div className={`rounded-full p-3 ${bg}`}>{icon}</div>
+        <div>
+          <h3 className="font-semibold dark:text-gray-100">{title}</h3>
+          <p className="text-sm text-gray-500 dark:text-gray-400">{desc}</p>
+        </div>
+      </div>
+    </Link>
+  )
+}
+
+function StatCard({ label, value, accent, icon }: { label: string; value: number; accent: string; icon: React.ReactNode }) {
+  return (
+    <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-6 shadow-sm">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm text-gray-500 dark:text-gray-400">{label}</p>
+          <p className={`text-3xl font-bold ${accent}`}>{value.toLocaleString()}</p>
+        </div>
+        {icon}
+      </div>
     </div>
   )
 }

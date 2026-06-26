@@ -8,8 +8,9 @@ import { Input } from '@/components/ui/input'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { useAuth } from '@/lib/auth-context'
-import { 
-  getClients, 
+import { supabase } from '@/lib/supabase'
+import {
+  getClients,
   getClientsForUser, 
   getDeletedClients,
   createClient, 
@@ -47,6 +48,11 @@ export default function ProjectPlansPage() {
   const [selectedClient, setSelectedClient] = useState<Client | null>(null)
   const [plans, setPlans] = useState<ProjectPlan[]>([])
   const [plansLoading, setPlansLoading] = useState(false)
+
+  // 브랜드 브리프(어떤 브랜드/강점/소구점) — 관리자만 편집
+  const [brief, setBrief] = useState({ brand_brief: '', strengths: '', selling_points: '' })
+  const [briefEdit, setBriefEdit] = useState(false)
+  const [briefSaving, setBriefSaving] = useState(false)
   
   // 휴지통 모드
   const [showTrash, setShowTrash] = useState(false)
@@ -113,6 +119,12 @@ export default function ProjectPlansPage() {
     setSelectedClient(client)
     setPlansLoading(true)
     setShowTrash(false)
+    setBriefEdit(false)
+    setBrief({
+      brand_brief: client.brand_brief || '',
+      strengths: client.strengths || '',
+      selling_points: client.selling_points || '',
+    })
     try {
       const plansData = await getProjectPlans(client.id)
       setPlans(plansData)
@@ -120,6 +132,33 @@ export default function ProjectPlansPage() {
       console.error('기획안 로드 실패:', error)
     } finally {
       setPlansLoading(false)
+    }
+  }
+
+  // 브랜드 브리프 저장 — 관리자만(서버에서도 강제 검증). Bearer 토큰으로 호출.
+  async function saveBrief() {
+    if (!selectedClient || !isAdmin) return
+    setBriefSaving(true)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const token = session?.access_token
+      const res = await fetch(`/api/clients/${selectedClient.id}/brief`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(brief),
+      })
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}))
+        alert(j.error || '브리프 저장에 실패했습니다.')
+        return
+      }
+      setClients((prev) => prev.map((c) => (c.id === selectedClient.id ? { ...c, ...brief } : c)))
+      setSelectedClient((sc) => (sc ? { ...sc, ...brief } : sc))
+      setBriefEdit(false)
+    } catch {
+      alert('브리프 저장 중 오류가 발생했습니다.')
+    } finally {
+      setBriefSaving(false)
     }
   }
 
@@ -634,6 +673,57 @@ export default function ProjectPlansPage() {
               </div>
             </div>
 
+            {/* 브랜드 브리프 (어떤 브랜드 / 강점 / 소구점) — 관리자만 편집 */}
+            <div className="border-b dark:border-gray-800 bg-white dark:bg-gray-950 px-6 py-4">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-xs font-bold uppercase tracking-wide text-gray-400">브랜드 브리프</span>
+                {isAdmin && !briefEdit && (
+                  <Button size="sm" variant="outline" className="h-7" onClick={() => setBriefEdit(true)}>
+                    <Edit2 className="h-3 w-3 mr-1" /> 편집
+                  </Button>
+                )}
+                {isAdmin && briefEdit && (
+                  <div className="flex gap-1">
+                    <Button size="sm" className="h-7" onClick={saveBrief} disabled={briefSaving}>
+                      {briefSaving ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Check className="h-3 w-3 mr-1" />} 저장
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7"
+                      onClick={() => {
+                        setBriefEdit(false)
+                        setBrief({
+                          brand_brief: selectedClient.brand_brief || '',
+                          strengths: selectedClient.strengths || '',
+                          selling_points: selectedClient.selling_points || '',
+                        })
+                      }}
+                    >
+                      취소
+                    </Button>
+                  </div>
+                )}
+              </div>
+              {briefEdit ? (
+                <div className="grid gap-2 md:grid-cols-3">
+                  <BriefField label="어떤 브랜드" value={brief.brand_brief} onChange={(v) => setBrief((b) => ({ ...b, brand_brief: v }))} />
+                  <BriefField label="강점" value={brief.strengths} onChange={(v) => setBrief((b) => ({ ...b, strengths: v }))} />
+                  <BriefField label="소구점" value={brief.selling_points} onChange={(v) => setBrief((b) => ({ ...b, selling_points: v }))} />
+                </div>
+              ) : brief.brand_brief || brief.strengths || brief.selling_points ? (
+                <div className="grid gap-3 md:grid-cols-3 text-sm">
+                  <BriefRead label="어떤 브랜드" value={brief.brand_brief} />
+                  <BriefRead label="강점" value={brief.strengths} />
+                  <BriefRead label="소구점" value={brief.selling_points} />
+                </div>
+              ) : (
+                <p className="text-xs text-gray-400">
+                  {isAdmin ? '편집을 눌러 브랜드·강점·소구점을 기록하세요. (관리자만 수정 가능)' : '등록된 브리프가 없습니다.'}
+                </p>
+              )}
+            </div>
+
             {/* 기획안 목록 */}
             <div className="flex-1 overflow-y-auto p-6">
               {plansLoading ? (
@@ -805,6 +895,31 @@ export default function ProjectPlansPage() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function BriefField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  return (
+    <div>
+      <div className="mb-1 text-[11px] font-bold text-gray-400">{label}</div>
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        rows={3}
+        className="w-full resize-y rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-2 text-sm dark:text-gray-200"
+      />
+    </div>
+  )
+}
+
+function BriefRead({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="mb-1 text-[11px] font-bold text-gray-400">{label}</div>
+      <p className="whitespace-pre-wrap rounded-lg bg-gray-50 dark:bg-gray-800/50 p-2.5 text-gray-700 dark:text-gray-200">
+        {value || '—'}
+      </p>
     </div>
   )
 }

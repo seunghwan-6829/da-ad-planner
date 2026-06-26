@@ -8,6 +8,10 @@ export interface Client {
   sort_order: number
   deleted_at: string | null
   created_at: string
+  // 브랜드 브리프(관리자만 편집) — plan-mindmap-schema.sql
+  brand_brief?: string | null
+  strengths?: string | null
+  selling_points?: string | null
 }
 
 export interface ClientPermission {

@@ -2,8 +2,8 @@ name: Crawl Meta Ad Library
 
 on:
   schedule:
-    # 5일마다 UTC 18:00(KST 새벽 03:00) — 매월 1,6,11,16,21,26,31일에 실행
-    - cron: "0 18 */5 * *"
+    # 매주 화·목 KST 오전 9시 (UTC 화·목 00:00). 상위 ~30개씩 갱신.
+    - cron: "0 0 * * 2,4"
   workflow_dispatch:
     inputs:
       target_id:
