@@ -39,6 +39,7 @@ export interface MMNode {
   w?: number
   title?: string
   text?: string
+  items?: string[]
   color?: string
   key?: string
   media_url?: string | null
