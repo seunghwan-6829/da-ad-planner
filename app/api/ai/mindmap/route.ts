@@ -68,6 +68,10 @@ ${mediaNote}
 6) weakness — 못한 점: 이 소재의 약점/아쉬운 점(우리가 피하거나 보완할 것)
 7) strength — 잘한 점: 이 소재가 잘한 점(반드시 살릴 강점)
 
+또한 "charts" 에 시각화용 추정 데이터 2개를 만들어라(수치는 추정):
+- 첫째: 소재 진행(0~100%) 대비 시청자 몰입도 곡선(line, 5~7포인트).
+- 둘째: 후킹/전개/혜택/CTA 등 구성 비중(bar, 3~5개, 합 100 근처).
+
 규칙: 한국어. 추정이어도 좋음. summary 는 한 줄 총평. 반드시 "완결된 JSON" 하나만, 마크다운/설명 금지.
 
 아래 형식만 출력:
@@ -79,6 +83,9 @@ ${mediaNote}
 {"key":"segment","label":"세그먼트","items":["...","..."]},
 {"key":"weakness","label":"못한 점","items":["...","..."]},
 {"key":"strength","label":"잘한 점","items":["...","..."]}
+],"charts":[
+{"title":"구간별 몰입도","kind":"line","data":[{"label":"0%","value":60},{"label":"25%","value":85},{"label":"50%","value":70},{"label":"75%","value":78},{"label":"100%","value":65}]},
+{"title":"구성 비중","kind":"bar","data":[{"label":"후킹","value":25},{"label":"전개","value":40},{"label":"혜택","value":20},{"label":"CTA","value":15}]}
 ]}`
 
   type Block = { type: 'text'; text: string } | { type: 'image'; source: { type: 'url'; url: string } }
@@ -109,12 +116,15 @@ ${mediaNote}
     const text = data.content?.find((b: { type: string }) => b.type === 'text')?.text?.trim() ?? ''
     const m = text.match(/\{[\s\S]*\}/)
     if (!m) return NextResponse.json({ error: '마인드맵 생성 결과를 해석하지 못했어요.' }, { status: 502 })
-    let parsed: unknown
+    let parsed: Record<string, unknown>
     try {
       parsed = JSON.parse(m[0])
     } catch {
       return NextResponse.json({ error: '마인드맵 JSON 파싱 실패' }, { status: 502 })
     }
+    // 나레이션은 AI 생성이 아니라 실제 영상 대본(transcript) 원문을 그대로 싣는다.
+    parsed.narration = transcript || ''
+    parsed.media = { url: ad.media_url ?? null, type: ad.media_type ?? null, poster: ad.poster_url ?? null }
     return NextResponse.json({ data: parsed })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)

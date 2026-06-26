@@ -16,9 +16,46 @@ export interface MindmapNode {
   items: string[]
 }
 
+// AI(생성/레거시) 출력 형태
 export interface MindmapData {
   summary?: string
   nodes: MindmapNode[]
+  charts?: { title?: string; kind?: 'bar' | 'line'; data?: { label: string; value: number }[] }[]
+  narration?: string
+  media?: { url?: string | null; type?: string | null; poster?: string | null }
+}
+
+// ── v2 편집 캔버스 그래프 모델(노드 좌표 + 연결선) ──
+export type MMNodeType = 'center' | 'category' | 'item' | 'note' | 'chart' | 'narration'
+export interface MMChart {
+  kind: 'bar' | 'line'
+  data: { label: string; value: number }[]
+}
+export interface MMNode {
+  id: string
+  type: MMNodeType
+  x: number
+  y: number
+  w?: number
+  title?: string
+  text?: string
+  color?: string
+  key?: string
+  media_url?: string | null
+  media_type?: string | null
+  poster?: string | null
+  chart?: MMChart
+}
+export interface MMEdge {
+  id: string
+  from: string
+  to: string
+}
+export interface MMDoc {
+  version: 2
+  summary?: string
+  nodes: MMNode[]
+  edges: MMEdge[]
 }
 
 export interface Mindmap {
@@ -28,7 +65,7 @@ export interface Mindmap {
   title: string | null
   source_brand: string | null
   source_thumb: string | null
-  data: MindmapData
+  data: MindmapData | MMDoc
   created_by: string | null
   created_at: string
   updated_at: string
@@ -40,7 +77,7 @@ export interface CreateMindmapInput {
   title?: string | null
   source_brand?: string | null
   source_thumb?: string | null
-  data: MindmapData
+  data: MindmapData | MMDoc
   created_by?: string | null
 }
 
