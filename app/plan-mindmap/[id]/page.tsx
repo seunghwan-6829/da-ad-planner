@@ -516,7 +516,7 @@ export default function MindmapCanvasPage() {
       {/* 우측 패널 */}
       {panelOpen && (
         <div className="absolute bottom-0 right-0 top-12 z-30 flex w-[340px] flex-col border-l border-gray-200 bg-white shadow-xl dark:border-gray-800 dark:bg-gray-900">
-          <div className="flex items-center justify-between border-b px-4 py-3 dark:border-gray-800">
+          <div className="flex items-center justify-between border-b px-4 pb-3.5 pt-5 dark:border-gray-800">
             <span className="flex items-center gap-1.5 text-sm font-bold dark:text-gray-100"><Sparkles className="h-4 w-4 text-violet-500" /> 마인드맵 → 기획안</span>
             <button onClick={() => setPanelOpen(false)} className="rounded p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"><X className="h-4 w-4" /></button>
           </div>
