@@ -103,7 +103,7 @@ export default function MindmapCanvasPage() {
   const lastPan = useRef({ x: 0, y: 0 })
   const nodeDrag = useRef<{ ids: string[]; lastX: number; lastY: number; moved: boolean } | null>(null)
   const marqueeRef = useRef<{ sx: number; sy: number } | null>(null)
-  const resizing = useRef<{ id: string; startW: number; startX: number } | null>(null)
+  const resizing = useRef<{ id: string; startW: number; startX: number; moved: boolean } | null>(null)
 
   // ── 로드 ──
   useEffect(() => {
@@ -215,8 +215,7 @@ export default function MindmapCanvasPage() {
 
   function onResizeStart(e: React.MouseEvent, n: MMNode) {
     e.stopPropagation()
-    beginHistory()
-    resizing.current = { id: n.id, startW: n.w || 200, startX: e.clientX }
+    resizing.current = { id: n.id, startW: n.w || 200, startX: e.clientX, moved: false }
   }
 
   useEffect(() => {
