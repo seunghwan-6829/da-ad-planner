@@ -7,11 +7,26 @@
 from __future__ import annotations
 
 import os
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 
 from supabase import Client, create_client
 
 from . import media
+
+# 워커 스레드마다 독립 Supabase 클라이언트(httpx 연결 풀 분리).
+# 같은 클라이언트를 여러 스레드가 공유하면 업로드 시 SSL 소켓 충돌
+# ("EOF occurred in violation of protocol" / "Server disconnected")이 난다.
+_tl = threading.local()
+
+
+def _media_client() -> Client:
+    c = getattr(_tl, "client", None)
+    if c is None:
+        c = get_client()
+        _tl.client = c
+    return c
 
 
 def get_client() -> Client:
@@ -56,8 +71,34 @@ def fetch_ad_counts(client: Client) -> dict[str, int]:
     return counts
 
 
+def _ad_row(target: dict, a: dict, now: str) -> dict:
+    """am_ads upsert 한 줄. first_seen_at 은 제외(신규 INSERT 시 DB 기본값만 기록되게)."""
+    return {
+        "library_id": a.get("library_id"),
+        "target_id": target.get("id"),
+        "page_name": a.get("page_name"),
+        "started_on": a.get("started_on"),
+        "ad_text": a.get("ad_text"),
+        "media_type": a.get("media_type"),
+        "landing_url": a.get("landing_url"),
+        "status": "active",
+        "ended_at": None,
+        "last_seen_at": now,
+        "media_url": a.get("media_url"),
+        "media_urls": a.get("media_urls"),
+        "poster_url": a.get("poster_url"),
+        "frames": a.get("frames"),
+        "media_path": a.get("media_path"),
+        "downloaded": bool(a.get("downloaded")),
+    }
+
+
 def save_ads(client: Client, target: dict, ads: list[dict]) -> tuple[int, int]:
-    """반환: (신규 개수, 추출 총 개수). first_seen_at 은 신규일 때만 기록되도록
+    """반환: (신규 개수, 추출 총 개수).
+
+    3단계로 빠르게: ①메타데이터 즉시 upsert(미디어는 임시 CDN URL → 갤러리에 바로 보임)
+    → ②미디어를 스레드로 병렬 다운로드/보관(I/O 바운드라 수백 개도 빠름)
+    → ③다운로드 성공분만 영구 URL 로 재upsert. first_seen_at 은 신규일 때만 기록되도록
     payload 에서 제외 → 기존 광고는 last_seen_at 만 갱신됨."""
     scraped_ids = [a["library_id"] for a in ads if a.get("library_id")]
     if not scraped_ids:
@@ -74,49 +115,50 @@ def save_ads(client: Client, target: dict, ads: list[dict]) -> tuple[int, int]:
     existing = set(existing_map.keys())
 
     now = datetime.now(timezone.utc).isoformat()
-    payload = []
-    for a in ads:
-        lib = a.get("library_id")
-        if not lib:
-            continue
-        ex = existing_map.get(lib)
+    valid = [a for a in ads if a.get("library_id")]
+
+    # 이미 보관된 광고는 저장된 영구 미디어 그대로 복원, 나머지는 다운로드 대상(todo)
+    todo: list[dict] = []
+    for a in valid:
+        ex = existing_map.get(a["library_id"])
         if ex and ex.get("downloaded"):
-            # 이미 우리 스토리지에 보관됨 → 재다운로드 X, 저장된 영구 미디어 그대로 유지
-            media_fields = {
-                "media_url": ex.get("media_url"),
-                "media_urls": ex.get("media_urls"),
-                "poster_url": ex.get("poster_url"),
-                "frames": ex.get("frames"),
-                "media_path": ex.get("media_path"),
-                "downloaded": True,
-            }
+            a["media_url"] = ex.get("media_url")
+            a["media_urls"] = ex.get("media_urls")
+            a["poster_url"] = ex.get("poster_url")
+            a["frames"] = ex.get("frames")
+            a["media_path"] = ex.get("media_path")
+            a["downloaded"] = True
         else:
-            # 신규(또는 아직 미보관) → 파일 다운로드해 스토리지에 보관(실패 시 CDN URL 유지)
-            media.ensure_media(client, a)
-            media_fields = {
-                "media_url": a.get("media_url"),
-                "media_urls": a.get("media_urls"),
-                "poster_url": a.get("poster_url"),
-                "frames": a.get("frames"),
-                "media_path": a.get("media_path"),
-                "downloaded": bool(a.get("downloaded")),
-            }
-        payload.append(
-            {
-                "library_id": lib,
-                "target_id": target.get("id"),
-                "page_name": a.get("page_name"),
-                "started_on": a.get("started_on"),
-                "ad_text": a.get("ad_text"),
-                "media_type": a.get("media_type"),
-                "landing_url": a.get("landing_url"),
-                "status": "active",
-                "ended_at": None,
-                "last_seen_at": now,
-                **media_fields,
-            }
-        )
-    client.table("am_ads").upsert(payload, on_conflict="library_id").execute()
+            todo.append(a)
+
+    # ── 1단계: 메타데이터 즉시 저장(미디어는 임시 CDN URL) → 갤러리에 바로 노출 ──
+    client.table("am_ads").upsert(
+        [_ad_row(target, a, now) for a in valid], on_conflict="library_id"
+    ).execute()
+
+    # ── 2단계: 미디어 병렬 다운로드/보관(I/O 바운드 → 스레드로 수배 빠르게) ──
+    #   각 워커는 _media_client()로 자기 전용 클라이언트를 써서 연결 충돌을 피한다.
+    if todo:
+        total = len(todo)
+        workers = max(1, int(os.environ.get("MEDIA_WORKERS") or "6"))
+        done = 0
+
+        def _store_one(ad: dict) -> None:
+            media.ensure_media(_media_client(), ad)
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(_store_one, a) for a in todo]
+            for _ in as_completed(futures):
+                done += 1
+                if done % 20 == 0 or done == total:
+                    print(f"  미디어 {done}/{total} 보관…", flush=True)
+
+        # ── 3단계: 다운로드 성공분만 영구 URL 로 재저장 ──
+        downloaded = [a for a in todo if a.get("downloaded")]
+        if downloaded:
+            client.table("am_ads").upsert(
+                [_ad_row(target, a, now) for a in downloaded], on_conflict="library_id"
+            ).execute()
 
     # ⚠️ '종료' 표기는 여기서 하지 않는다.
     #   메타가 headless 크롤에 광고를 매번 다른 부분집합(30~40개)만 내주기 때문에,

@@ -27,7 +27,6 @@ import {
   Star,
   Activity,
   Layers,
-  Lightbulb,
   Camera,
   ArrowUpRight,
   Play,
@@ -38,6 +37,8 @@ import {
   ChevronDown,
   FileText,
   Users,
+  Link2,
+  Lock,
 } from "lucide-react";
 
 type Target = {
@@ -246,7 +247,7 @@ function MediaView({
         playsInline
         preload="metadata"
         onClick={(e) => e.stopPropagation()}
-        className={`h-full w-full bg-black object-cover ${r}`}
+        className={`h-full w-full bg-black object-contain ${r}`}
       />
     );
   }
@@ -260,7 +261,7 @@ function MediaView({
   return (
     <div className={`relative h-full w-full overflow-hidden bg-gray-100 dark:bg-gray-800 ${r}`}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={urls[idx]} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
+      <img src={urls[idx]} alt="" loading="lazy" decoding="async" className={`h-full w-full ${card ? "object-cover" : "object-contain"}`} />
       {urls.length > 1 && (
         <>
           <button
@@ -2523,10 +2524,29 @@ function AdDetailModal({
   const [transcript, setTranscript] = useState<string | null>(ad.transcript ?? null);
   const [transcribing, setTranscribing] = useState(false);
   const [transcriptErr, setTranscriptErr] = useState<string | null>(null);
+  const [confirmClose, setConfirmClose] = useState(false); // 미저장 변경 닫기 확인
+  const [linkCopied, setLinkCopied] = useState(false); // 공유 링크 복사 피드백
   const ended = ad.status === "ended";
 
   // 메인 영상: 그래프 드래그/클릭·프레임 클릭으로 이동+재생(AnalysisViz가 ref로 직접 제어)
   const mainVideoRef = useRef<HTMLVideoElement | null>(null);
+
+  // 스페이스바 → 영상 재생/정지 토글. 단, 입력란(메모 등) 작성 중이면 원래 띄어쓰기로 동작.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.code !== "Space" && e.key !== " ") return;
+      const t = e.target as HTMLElement | null;
+      const tag = (t?.tagName || "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select" || t?.isContentEditable) return;
+      const v = mainVideoRef.current;
+      if (!v) return; // 영상 광고가 아니면 무시(스크롤 등 기본동작 유지)
+      e.preventDefault();
+      if (v.paused) v.play().catch(() => {});
+      else v.pause();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // 상세 지연 로딩으로 ad.memo / ad.ai_analysis 가 나중에 채워지면 동기화
   useEffect(() => {
@@ -2579,6 +2599,27 @@ function AdDetailModal({
     }
   }, [memo]);
 
+  // AI 분석을 DB에 저장(공용). silent=true 면 실패해도 alert 안 띄움(자동저장/닫기저장용).
+  async function persistAnalysis(value: string, silent = false): Promise<boolean> {
+    try {
+      const res = await fetch(`/api/meta-ad/ads/${ad.library_id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ai_analysis: value }),
+      });
+      if (res.ok) {
+        setAnalysisSaved(true);
+        onAnalyzed(ad.library_id, value);
+        return true;
+      }
+      if (!silent) alert("분석 저장 실패");
+      return false;
+    } catch {
+      if (!silent) alert("분석 저장 실패");
+      return false;
+    }
+  }
+
   async function runAnalyze() {
     setAnalyzing(true);
     try {
@@ -2592,8 +2633,10 @@ function AdDetailModal({
         alert("AI 분석 실패: " + (j.error ?? res.status));
         return;
       }
-      setAnalysis(j.analysis || "분석 결과가 없습니다.");
-      setAnalysisSaved(false); // 저장 전 상태
+      const result = j.analysis || "분석 결과가 없습니다.";
+      setAnalysis(result);
+      // 생성 즉시 자동 저장 — 사용자가 따로 '저장'을 안 눌러도 보존됨.
+      await persistAnalysis(result, true);
     } finally {
       setAnalyzing(false);
     }
@@ -2603,17 +2646,7 @@ function AdDetailModal({
     if (!analysis) return;
     setSavingAnalysis(true);
     try {
-      const res = await fetch(`/api/meta-ad/ads/${ad.library_id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ai_analysis: analysis }),
-      });
-      if (res.ok) {
-        setAnalysisSaved(true);
-        onAnalyzed(ad.library_id, analysis);
-      } else {
-        alert("분석 저장 실패");
-      }
+      await persistAnalysis(analysis);
     } finally {
       setSavingAnalysis(false);
     }
@@ -2639,8 +2672,37 @@ function AdDetailModal({
     }
   }
 
+  // 미저장 변경 여부: 메모가 바뀌었거나, AI 분석/마커가 저장 안 됨
+  const isDirty = () => memo !== (ad.memo ?? "") || (!!analysis && !analysisSaved);
+
+  // X/바깥 클릭 시: 변경 없으면 바로 닫고, 있으면 안내(저장하여 닫기/닫기)
+  function requestClose() {
+    if (isDirty()) setConfirmClose(true);
+    else onClose();
+  }
+
+  async function saveAndClose() {
+    if (memo !== (ad.memo ?? "")) await saveMemo();
+    if (analysis && !analysisSaved) await persistAnalysis(analysis, true);
+    onClose();
+  }
+
+  // 외부 공개 링크(로그인 없이 클라이언트·프리랜서가 보는 페이지) 복사
+  function copyShareLink() {
+    const url = `${window.location.origin}/meta-ad/share/${ad.library_id}`;
+    const ok = () => {
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 1800);
+    };
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(url).then(ok).catch(() => window.prompt("공유 링크 (복사하세요)", url));
+    } else {
+      window.prompt("공유 링크 (복사하세요)", url);
+    }
+  }
+
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4" onClick={requestClose}>
       <div className="my-4 flex max-h-[92vh] w-[94vw] max-w-6xl flex-col overflow-hidden rounded-2xl bg-white dark:bg-gray-900 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b dark:border-gray-800 px-5 py-3">
           <div className="flex items-center gap-2.5 min-w-0">
@@ -2675,17 +2737,29 @@ function AdDetailModal({
               <Star className={`h-3.5 w-3.5 ${ad.saved ? "fill-amber-400 text-amber-400" : ""}`} />
               {ad.saved ? "저장됨" : "스와이프"}
             </button>
+            <button
+              onClick={copyShareLink}
+              title="외부 공개 링크 복사 (로그인 없이 클라이언트·프리랜서가 볼 수 있는 페이지)"
+              className={`flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium ${
+                linkCopied
+                  ? "border-green-300 bg-green-50 text-green-700 dark:border-green-700 dark:bg-green-900/30 dark:text-green-300"
+                  : "border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
+              }`}
+            >
+              {linkCopied ? <Check className="h-3.5 w-3.5" /> : <Link2 className="h-3.5 w-3.5" />}
+              {linkCopied ? "복사됨" : "공유 URL"}
+            </button>
             <a href={sourceLink(ad)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 rounded-lg border border-gray-200 dark:border-gray-700 px-2.5 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800">
               <ExternalLink className="h-3.5 w-3.5" /> 광고 라이브러리
             </a>
-            <button onClick={onClose} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"><X className="h-5 w-5" /></button>
+            <button onClick={requestClose} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"><X className="h-5 w-5" /></button>
           </div>
         </div>
 
         <div className="grid flex-1 overflow-hidden md:grid-cols-2">
           {/* 좌: 미디어 + T&D (소재 바로 밑) */}
           <div className="space-y-4 overflow-y-auto border-b p-4 dark:border-gray-800 md:border-b-0 md:border-r">
-            <div className="relative mx-auto aspect-[4/5] w-full max-w-md overflow-hidden rounded-xl bg-black/[0.03] dark:bg-black/30">
+            <div className="relative mx-auto aspect-[9/16] w-full max-w-[320px] overflow-hidden rounded-xl bg-black dark:bg-black">
               <MediaView ad={ad} rounded="rounded-xl" videoRef={mainVideoRef} />
             </div>
             <div>
@@ -2891,10 +2965,11 @@ function AdDetailModal({
               <div className="mb-2 text-xs font-bold uppercase tracking-wide text-gray-400">이 소재로 만들기</div>
               <div className="flex flex-wrap gap-2">
                 <button
-                  onClick={() => onSeed(ad, "plan")}
-                  className="flex items-center gap-1.5 rounded-lg border border-yellow-300 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-900/20 px-3 py-2 text-sm font-medium text-yellow-700 dark:text-yellow-300 hover:bg-yellow-100 dark:hover:bg-yellow-900/40"
+                  disabled
+                  title="추후 디벨롭 예정"
+                  className="flex cursor-not-allowed items-center gap-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800/50 px-3 py-2 text-sm font-medium text-gray-400 dark:text-gray-500"
                 >
-                  <Lightbulb className="h-4 w-4" /> 기획안 아이디어 <ArrowUpRight className="h-3.5 w-3.5" />
+                  <Lock className="h-3.5 w-3.5" /> 기획안 아이디어
                 </button>
                 <button
                   onClick={() => onSeed(ad, "guide")}
@@ -2908,6 +2983,31 @@ function AdDetailModal({
           </div>
         </div>
       </div>
+
+      {confirmClose && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4" onClick={(e) => { e.stopPropagation(); setConfirmClose(false); }}>
+          <div className="w-full max-w-sm rounded-2xl bg-white dark:bg-gray-900 p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="text-sm font-bold text-gray-900 dark:text-gray-100">저장하지 않은 변경이 있어요</div>
+            <p className="mt-1.5 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+              메모나 분석 마커가 아직 저장되지 않았어요. 저장하고 닫을까요?
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => { setConfirmClose(false); onClose(); }}
+                className="rounded-lg border border-gray-200 dark:border-gray-700 px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
+              >
+                닫기
+              </button>
+              <button
+                onClick={async () => { setConfirmClose(false); await saveAndClose(); }}
+                className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white hover:opacity-90"
+              >
+                저장하여 닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

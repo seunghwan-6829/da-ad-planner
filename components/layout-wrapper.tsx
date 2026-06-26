@@ -10,10 +10,11 @@ export function LayoutWrapper({ children }: { children: React.ReactNode }) {
   const isLoginPage = pathname === '/login'
   const isPublicVideoSharePage = pathname.startsWith('/video-board/share/')
   const isPublicGuidePage = pathname.startsWith('/guide/')
+  const isPublicAdSharePage = pathname.startsWith('/meta-ad/share/')
 
   return (
     <AuthProvider>
-      {isLoginPage || isPublicVideoSharePage || isPublicGuidePage ? (
+      {isLoginPage || isPublicVideoSharePage || isPublicGuidePage || isPublicAdSharePage ? (
         <>{children}</>
       ) : (
         <AuthGuard>

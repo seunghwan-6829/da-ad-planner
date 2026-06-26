@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import tempfile
+import time
 
 import requests
 
@@ -23,14 +24,19 @@ _HEADERS = {
 }
 
 
-def _download(url: str) -> bytes | None:
-    try:
-        r = requests.get(url, headers=_HEADERS, timeout=90)
-        if r.status_code == 200 and r.content:
-            return r.content
-        print(f"  다운로드 응답 이상({r.status_code})")
-    except Exception as e:
-        print(f"  다운로드 실패: {e}")
+def _download(url: str, attempts: int = 3) -> bytes | None:
+    for i in range(attempts):
+        try:
+            r = requests.get(url, headers=_HEADERS, timeout=90)
+            if r.status_code == 200 and r.content:
+                return r.content
+            print(f"  다운로드 응답 이상({r.status_code})")
+            return None
+        except Exception as e:
+            if i == attempts - 1:
+                print(f"  다운로드 실패: {e}")
+            else:
+                time.sleep(1.0 * (i + 1))
     return None
 
 
@@ -46,18 +52,23 @@ def _public_url(client, path: str) -> str | None:
     return None
 
 
-def _upload(client, path: str, data: bytes, content_type: str) -> str | None:
+def _upload(client, path: str, data: bytes, content_type: str, attempts: int = 3) -> str | None:
     opts = {"content-type": content_type, "upsert": "true"}
-    try:
-        client.storage.from_(BUCKET).upload(path, data, opts)
-    except Exception:
-        # 이미 존재 등 → update 로 재시도
+    for i in range(attempts):
         try:
-            client.storage.from_(BUCKET).update(path, data, opts)
-        except Exception as e2:
-            print(f"  업로드 실패({path}): {e2}")
-            return None
-    return _public_url(client, path)
+            client.storage.from_(BUCKET).upload(path, data, opts)
+            return _public_url(client, path)
+        except Exception:
+            # 이미 존재 등 → update 로 한 번 시도
+            try:
+                client.storage.from_(BUCKET).update(path, data, opts)
+                return _public_url(client, path)
+            except Exception as e2:
+                if i == attempts - 1:
+                    print(f"  업로드 실패({path}): {e2}")
+                    return None
+                time.sleep(1.0 * (i + 1))  # 일시적 연결 끊김 → 백오프 후 재시도
+    return None
 
 
 def _extract_frames(client, lib: str, video: bytes, n: int = 5) -> list[str]:
