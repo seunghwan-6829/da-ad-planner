@@ -26,7 +26,7 @@ export interface MindmapData {
 }
 
 // ── v2 편집 캔버스 그래프 모델(노드 좌표 + 연결선) ──
-export type MMNodeType = 'center' | 'category' | 'item' | 'note' | 'chart' | 'narration'
+export type MMNodeType = 'center' | 'category' | 'item' | 'note' | 'chart' | 'narration' | 'image'
 export interface MMChart {
   kind: 'bar' | 'line'
   data: { label: string; value: number }[]
@@ -37,6 +37,7 @@ export interface MMNode {
   x: number
   y: number
   w?: number
+  h?: number
   title?: string
   text?: string
   items?: string[]

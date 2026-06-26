@@ -70,6 +70,7 @@ ${mediaNote}
 5) segment — 세그먼트: 이 소재에 반응이 좋을 타겟. 제작자가 의도했을 타겟을 역추적해 추정(연령/관심사/상황)
 6) weakness — 못한 점: 이 소재의 약점/아쉬운 점(우리가 피하거나 보완할 것)
 7) strength — 잘한 점: 이 소재가 잘한 점(반드시 살릴 강점)
+8) segment2 — 추가 세그먼트: 위 세그먼트와는 다른 또 하나의 반응 좋을 타겟을 더 깊이 조사해 추정(연령/관심사/상황/맥락이 5번과 겹치지 않게)
 
 또한 "charts" 에 시각화용 추정 데이터 2개를 만들어라(수치는 추정):
 - 첫째: 소재 진행(0~100%) 대비 시청자 몰입도 곡선(line, 5~7포인트).
@@ -85,7 +86,8 @@ ${mediaNote}
 {"key":"plan","label":"기획안","items":["...","..."]},
 {"key":"segment","label":"세그먼트","items":["...","..."]},
 {"key":"weakness","label":"못한 점","items":["...","..."]},
-{"key":"strength","label":"잘한 점","items":["...","..."]}
+{"key":"strength","label":"잘한 점","items":["...","..."]},
+{"key":"segment2","label":"추가 세그먼트","items":["...","..."]}
 ],"charts":[
 {"title":"구간별 몰입도","kind":"line","data":[{"label":"0%","value":60},{"label":"25%","value":85},{"label":"50%","value":70},{"label":"75%","value":78},{"label":"100%","value":65}]},
 {"title":"구성 비중","kind":"bar","data":[{"label":"후킹","value":25},{"label":"전개","value":40},{"label":"혜택","value":20},{"label":"CTA","value":15}]}
