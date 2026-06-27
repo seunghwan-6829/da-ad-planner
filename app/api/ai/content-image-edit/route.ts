@@ -5,6 +5,15 @@ export const maxDuration = 120 // 이미지 편집도 느림(Vercel Pro 권장, 
 
 const OPENAI_EDIT_URL = 'https://api.openai.com/v1/images/edits'
 
+// 모델별 출력 사이즈. gpt-image-2는 네이티브 9:16(1152x2048, 16배수·비율 정확)을 지원,
+// gpt-image-1은 세로 최대가 1024x1536(2:3)뿐이라 폴백 시 그걸로(클라이언트가 9:16 크롭).
+function sizeFor(model: string, ratio: string): string {
+  const g2 = model === 'gpt-image-2'
+  if (ratio === '1:1') return '1024x1024'
+  if (ratio === '16:9') return g2 ? '2048x1152' : '1536x1024'
+  return g2 ? '1152x2048' : '1024x1536' // 9:16 기본
+}
+
 // POST { image_url, prompt, ratio?, sanitize? } → 기존 이미지를 "수정 프롬프트"대로 편집(image-to-image).
 // gpt-image-2(미권한 계정은 gpt-image-1) 의 images/edits 엔드포인트 사용. 생성(content-image)과는 다른 API.
 // 사용자 본인 OpenAI 키(x-user-openai-key). NSFW 차단 시 { nsfw:true } 반환.
@@ -24,8 +33,6 @@ export async function POST(req: Request) {
   const refUrls: string[] = Array.isArray(body.ref_urls) ? (body.ref_urls as string[]).filter(Boolean).slice(0, 4) : []
   if (!imageUrl) return NextResponse.json({ error: '편집할 이미지가 없어요.' }, { status: 400 })
   if (!prompt.trim()) return NextResponse.json({ error: '수정 프롬프트를 입력해 주세요.' }, { status: 400 })
-
-  const size = ratio === '1:1' ? '1024x1024' : ratio === '16:9' ? '1536x1024' : '1024x1536'
 
   let editPrompt: string
   if (recreate) {
@@ -75,7 +82,7 @@ export async function POST(req: Request) {
     const fd = new FormData()
     fd.append('model', model)
     fd.append('prompt', editPrompt)
-    fd.append('size', size)
+    fd.append('size', sizeFor(model, ratio))
     fd.append('n', '1')
     fd.append('quality', 'medium')
     // 참고 이미지가 있으면 image[] 배열로(원본 먼저, 참고 뒤), 없으면 단일 image

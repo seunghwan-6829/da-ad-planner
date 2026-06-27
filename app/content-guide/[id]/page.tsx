@@ -16,13 +16,15 @@ function b64ToBlob(b64: string, type = 'image/png'): Blob {
   return new Blob([arr], { type })
 }
 
-// gpt-image 는 9:16 출력을 못 함(최대 세로 1024x1536=2:3). 받은 이미지를 9:16(1080x1920)으로 센터 크롭.
+// gpt-image-2는 네이티브 9:16을 주지만, gpt-image-1 폴백은 2:3으로 옴.
+// 이미 9:16이면 원본 그대로 저장(네이티브 해상도 보존), 아니면 9:16(1080x1920)으로 센터 크롭.
 function cropTo916Blob(b64: string): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const img = new Image()
     img.onload = () => {
       const targetAspect = 9 / 16
       const iw = img.naturalWidth, ih = img.naturalHeight
+      if (Math.abs(iw / ih - targetAspect) < 0.01) { resolve(b64ToBlob(b64)); return } // 이미 9:16 → 손대지 않음
       let sx = 0, sy = 0, sw = iw, sh = ih
       if (iw / ih > targetAspect) {
         // 가로가 9:16보다 넓음(보통 2:3) → 좌우를 잘라 세로 구도 유지

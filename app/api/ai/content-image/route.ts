@@ -5,6 +5,14 @@ export const maxDuration = 120 // 이미지 생성은 느림(Vercel Pro 권장, 
 
 const OPENAI_IMAGE_URL = 'https://api.openai.com/v1/images/generations'
 
+// 모델별 출력 사이즈. gpt-image-2는 네이티브 9:16(1152x2048), gpt-image-1은 2:3(1024x1536)이 세로 최대.
+function sizeFor(model: string, ratio: string): string {
+  const g2 = model === 'gpt-image-2'
+  if (ratio === '1:1') return '1024x1024'
+  if (ratio === '16:9') return g2 ? '2048x1152' : '1536x1024'
+  return g2 ? '1152x2048' : '1024x1536' // 9:16 기본
+}
+
 // POST { prompt, ratio?, sanitize? } → gpt-image-2 로 1장 생성(클라이언트가 여러 번 호출해 N장).
 // 계정에 gpt-image-2 권한이 없으면 gpt-image-1 으로 자동 폴백.
 // 사용자 본인 OpenAI 키(x-user-openai-key). NSFW(콘텐츠 정책)로 막히면 { nsfw:true } 반환 → 프론트가 '순화 후 재생성' 유도.
@@ -18,9 +26,6 @@ export async function POST(req: Request) {
   const ratio: string = (body.ratio || '9:16').toString()
   const sanitize = !!body.sanitize
   if (!prompt.trim()) return NextResponse.json({ error: '프롬프트가 비어 있어요.' }, { status: 400 })
-
-  // 프리뷰 비율에 맞춰 생성
-  const size = ratio === '1:1' ? '1024x1024' : ratio === '16:9' ? '1536x1024' : '1024x1536'
 
   // 자막/텍스트는 무시하고 생성. 순화 요청 시 선정적 요소 제거.
   let finalPrompt = sanitize
@@ -36,7 +41,7 @@ export async function POST(req: Request) {
     const res = await fetch(OPENAI_IMAGE_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model, prompt: finalPrompt, size, quality: 'medium', n: 1 }),
+      body: JSON.stringify({ model, prompt: finalPrompt, size: sizeFor(model, ratio), quality: 'medium', n: 1 }),
     })
     const data = await res.json().catch(() => ({}))
     return { res, data }
