@@ -408,9 +408,28 @@ export default function MindmapCanvasPage() {
           brand_name: client?.name || mm?.source_brand || '우리 브랜드',
         }),
       })
-      const j = await res.json().catch(() => ({}))
-      if (!res.ok) { alert(j.error || '기획안 생성 실패'); return }
-      setPlan(j.plan || '')
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}))
+        alert(j.error || '기획안 생성 실패')
+        return
+      }
+      // 스트리밍 응답을 실시간으로 받아 타이핑(긴 출력에도 타임아웃 없이 진행됨)
+      if (res.body) {
+        const reader = res.body.getReader()
+        const decoder = new TextDecoder()
+        let acc = ''
+        setPlan('')
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          acc += decoder.decode(value, { stream: true })
+          setPlan(acc)
+        }
+        if (!acc.trim()) setPlan('생성된 내용이 없어요. 다시 시도해 주세요.')
+      } else {
+        const j = await res.json().catch(() => ({}))
+        setPlan(j.plan || '')
+      }
     } catch { alert('기획안 생성 중 오류가 발생했어요.') }
     finally { setPlanLoading(false) }
   }

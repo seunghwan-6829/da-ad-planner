@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+export const maxDuration = 300 // 긴 기획안 스트리밍 여유(Pro 플랜 기준, Hobby 는 60으로 자동 제한)
 
 const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages'
 const MODEL = 'claude-sonnet-4-6'
@@ -62,24 +62,59 @@ ${briefBlock || '(브리프 미입력 — 일반적인 베스트 프랙티스로
   ## 촬영 메모
 - 한국어. 실제 제작에 쓸 수 있게 구체적으로. 마크다운만 출력(코드펜스 금지).`
 
+  // 스트리밍: 토큰을 받는 즉시 클라이언트로 흘려보낸다(긴 출력에도 타임아웃/실패 없이 실시간 타이핑).
+  let upstream: Response
   try {
-    const res = await fetch(ANTHROPIC_BASE, {
+    upstream = await fetch(ANTHROPIC_BASE, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({ model: MODEL, max_tokens: 8000, messages: [{ role: 'user', content: prompt }] }),
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: MODEL, max_tokens: 8000, stream: true, messages: [{ role: 'user', content: prompt }] }),
     })
-    const data = await res.json()
-    if (!res.ok) {
-      return NextResponse.json({ error: data.error?.message ?? 'Anthropic API 오류' }, { status: res.status })
-    }
-    const plan = data.content?.find((b: { type: string }) => b.type === 'text')?.text?.trim() ?? ''
-    return NextResponse.json({ plan })
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    return NextResponse.json({ error: msg }, { status: 500 })
+    return NextResponse.json({ error: e instanceof Error ? e.message : '요청 실패' }, { status: 500 })
   }
+
+  if (!upstream.ok || !upstream.body) {
+    const err = await upstream.json().catch(() => ({}))
+    return NextResponse.json({ error: err.error?.message ?? 'Anthropic API 오류' }, { status: upstream.status })
+  }
+
+  // Anthropic SSE → 텍스트 델타만 평문으로 재스트림
+  const reader = upstream.body.getReader()
+  const decoder = new TextDecoder()
+  const encoder = new TextEncoder()
+  const stream = new ReadableStream({
+    async start(controller) {
+      let buf = ''
+      try {
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buf += decoder.decode(value, { stream: true })
+          const lines = buf.split('\n')
+          buf = lines.pop() || ''
+          for (const line of lines) {
+            const t = line.trim()
+            if (!t.startsWith('data:')) continue
+            const payload = t.slice(5).trim()
+            if (!payload || payload === '[DONE]') continue
+            try {
+              const ev = JSON.parse(payload)
+              if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta' && ev.delta.text) {
+                controller.enqueue(encoder.encode(ev.delta.text))
+              }
+            } catch {
+              /* 부분 라인 무시 */
+            }
+          }
+        }
+      } finally {
+        controller.close()
+      }
+    },
+  })
+
+  return new Response(stream, {
+    headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', 'X-Accel-Buffering': 'no' },
+  })
 }
