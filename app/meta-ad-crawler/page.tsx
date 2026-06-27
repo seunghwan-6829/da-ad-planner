@@ -26,8 +26,8 @@ import {
   Check,
   Star,
   Layers,
-  Camera,
   ArrowUpRight,
+  Film,
   Play,
   MapPin,
   ClipboardList,
@@ -609,7 +609,6 @@ export default function MetaAdCrawlerPage() {
     const parsed = parseAnalysis(ad.ai_analysis ?? null);
     const offer = parsed?.offer || "";
     const strengths = parsed?.strengths || [];
-    const phases = parsed?.phases || [];
 
     if (dest === "plan") {
       const lines = [
@@ -629,17 +628,11 @@ export default function MetaAdCrawlerPage() {
       return;
     }
 
-    // guide: 컷 칩 시드 (구간이 있으면 구간별 컷, 없으면 카피 기반 1컷)
-    const cuts =
-      phases.length > 0
-        ? phases.map((p) => `${p.name}${p.desc ? ` — ${p.desc}` : ""}`)
-        : caption && caption !== "—"
-        ? [`${brand} 레퍼런스 컷: ${caption.slice(0, 80)}`]
-        : [`${brand} 스타일 레퍼런스 컷`];
+    // guide: 컨텐츠 가이드로 — 소재 id 를 넘겨 그 영상의 장면별 스토리보드를 생성.
     try {
-      sessionStorage.setItem("shooting-guide-seed", JSON.stringify(cuts));
+      sessionStorage.setItem("content-guide-seed", ad.library_id);
     } catch {}
-    router.push("/shooting-guide");
+    router.push("/content-guide");
   }
 
   const pageCount = Math.max(1, Math.ceil(filteredAds.length / PAGE_SIZE));
@@ -2895,7 +2888,7 @@ function AdDetailModal({
                   onClick={() => onSeed(ad, "guide")}
                   className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/10"
                 >
-                  <Camera className="h-4 w-4" /> 촬영 가이드 <ArrowUpRight className="h-3.5 w-3.5" />
+                  <Film className="h-4 w-4" /> 컨텐츠 가이드 <ArrowUpRight className="h-3.5 w-3.5" />
                 </button>
               </div>
               <p className="mt-1.5 text-[11px] text-gray-400">이 광고의 소구점·카피(분석 시 구간)를 입력값으로 채워 해당 페이지로 이동합니다.</p>

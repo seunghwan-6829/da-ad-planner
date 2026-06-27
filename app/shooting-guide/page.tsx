@@ -361,7 +361,7 @@ export default function ShootingGuidePage() {
           <div className="p-4 border-b dark:border-gray-800">
             <div className="flex items-center gap-2">
               <Camera className="h-5 w-5 text-primary" />
-              <h1 className="text-lg font-bold dark:text-white">촬영 가이드</h1>
+              <h1 className="text-lg font-bold dark:text-white">모델 촬영 가이드</h1>
             </div>
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">브랜드별 모델 촬영 샷 리스트</p>
           </div>
