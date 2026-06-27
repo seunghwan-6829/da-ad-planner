@@ -63,7 +63,7 @@ async function extractSceneFrames(videoUrl: string): Promise<string[]> {
   const STEP = Math.max(0.3, duration / 80);
   const THRESH = 18;   // 씬 전환 민감도(저해상도라 '큰 변화'만 잡힘 → 미세 이동/글자변화 무시)
   const MIN_GAP = 1.0; // 직전 씬과 최소 간격(초) — 빠른 자막 깜빡임을 새 씬으로 안 봄
-  const SAFE_MAX = 80; // 안전 상한(정상 광고면 도달 안 함)
+  const SAFE_MAX = 60; // 안전 상한(스트로브/글리치 영상 폭주 방지 — 정상 광고면 도달 안 함)
   const times: number[] = [];
   let prevSig: Uint8ClampedArray | null = null;
   let lastT = -99;
@@ -78,14 +78,8 @@ async function extractSceneFrames(videoUrl: string): Promise<string[]> {
   }
   if (!times.length) times.push(0.1);
 
-  // ── 너무 많으면 균등 다운샘플(처음·끝 포함, 최대 TARGET) ──
-  const TARGET = 12;
-  let picked = times;
-  if (times.length > TARGET) {
-    const ds: number[] = [];
-    for (let i = 0; i < TARGET; i++) ds.push(times[Math.round((i * (times.length - 1)) / (TARGET - 1))]);
-    picked = Array.from(new Set(ds));
-  }
+  // 씬 개수는 dedup(유사씬 통합)이 정한다 — 임의로 자르지 않고 '실제로 다른 씬'은 전부 사용.
+  const picked = times;
 
   // ── 2차: 선택된 시점에서 풀해상도 캡처 + 업로드 ──
   const urls: string[] = [];
