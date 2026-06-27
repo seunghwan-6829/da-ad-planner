@@ -6,6 +6,7 @@ import { useAuth } from "@/lib/auth-context";
 import { aiFetch } from "@/lib/ai-fetch";
 import { getClients, type Client } from "@/lib/api/clients";
 import { createMindmap } from "@/lib/api/mindmaps";
+import { createContentGuide } from "@/lib/api/content-guides";
 import {
   Megaphone,
   Settings,
@@ -602,39 +603,6 @@ export default function MetaAdCrawlerPage() {
     return sims.slice(0, 8);
   }
 
-  // #9 시드: 경쟁 소재 → 기획안 아이디어 / 촬영 가이드 입력값으로 넘김
-  function seedTo(ad: Ad, dest: "plan" | "guide") {
-    const brand = brandNameOfAd(ad);
-    const caption = cleanCaption(ad.ad_text, brand).replace(/\n+/g, " ").slice(0, 240);
-    const parsed = parseAnalysis(ad.ai_analysis ?? null);
-    const offer = parsed?.offer || "";
-    const strengths = parsed?.strengths || [];
-
-    if (dest === "plan") {
-      const lines = [
-        `경쟁사 "${brand}" 광고를 참고해, 우리 브랜드에 맞는 새 숏폼/릴스 대본 아이디어를 만들어줘.`,
-        ``,
-        `[참고 광고 핵심]`,
-        offer ? `- 소구점/오퍼: ${offer}` : "",
-        caption && caption !== "—" ? `- 카피: ${caption}` : "",
-        ...strengths.slice(0, 4).map((s) => `- 잘된 점: ${s}`),
-        ``,
-        `위 장점은 살리되 그대로 베끼지 말고 우리만의 차별화 포인트로 변주해줘.`,
-      ].filter(Boolean);
-      try {
-        sessionStorage.setItem("plan-idea-seed", lines.join("\n"));
-      } catch {}
-      router.push("/plan-ideas");
-      return;
-    }
-
-    // guide: 컨텐츠 가이드로 — 소재 id 를 넘겨 그 영상의 장면별 스토리보드를 생성.
-    try {
-      sessionStorage.setItem("content-guide-seed", ad.library_id);
-    } catch {}
-    router.push("/content-guide");
-  }
-
   const pageCount = Math.max(1, Math.ceil(filteredAds.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount);
   const pageAds = filteredAds.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
@@ -1194,7 +1162,6 @@ export default function MetaAdCrawlerPage() {
           onTranscribed={onTranscribed}
           onToggleSaved={toggleSaved}
           onOpenVariation={openDetail}
-          onSeed={seedTo}
           clients={clients}
           mappedClientIds={detail.target_id ? (targetMap[detail.target_id]?.client_ids || []) : []}
         />
@@ -2366,7 +2333,6 @@ function AdDetailModal({
   onTranscribed,
   onToggleSaved,
   onOpenVariation,
-  onSeed,
   clients,
   mappedClientIds,
 }: {
@@ -2382,7 +2348,6 @@ function AdDetailModal({
   onTranscribed: (libraryId: string, transcript: string) => void;
   onToggleSaved: (ad: Ad) => void;
   onOpenVariation: (ad: Ad) => void;
-  onSeed: (ad: Ad, dest: "plan" | "guide") => void;
   clients: Client[];
   mappedClientIds: string[];
 }) {
@@ -2401,6 +2366,8 @@ function AdDetailModal({
   const [mmPicking, setMmPicking] = useState(false); // 기획 마인드맵: 클라이언트 선택창
   const [mmKw, setMmKw] = useState("");
   const [mmGenerating, setMmGenerating] = useState(false);
+  const [cgPicking, setCgPicking] = useState(false); // 컨텐츠 가이드: 클라이언트 선택창
+  const [cgGenerating, setCgGenerating] = useState(false);
   const router = useRouter();
   const ended = ad.status === "ended";
 
@@ -2611,6 +2578,37 @@ function AdDetailModal({
     } finally {
       setMmGenerating(false);
       setMmPicking(false);
+    }
+  }
+
+  // 컨텐츠 가이드 생성: 선택한 클라이언트 폴더에 스토리보드 저장 후 개별 페이지로 이동.
+  async function generateContentGuide(clientId: string) {
+    setCgGenerating(true);
+    try {
+      const res = await aiFetch("/api/ai/content-guide", {
+        method: "POST",
+        body: JSON.stringify({ library_id: ad.library_id }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(j.error || "컨텐츠 가이드 생성에 실패했어요.");
+        return;
+      }
+      const capTitle = cleanCaption(ad.ad_text, brandName).replace(/\n+/g, " ").trim().slice(0, 40);
+      const cg = await createContentGuide({
+        client_id: clientId,
+        library_id: ad.library_id,
+        title: capTitle ? `${brandName} · ${capTitle}` : brandName,
+        source_brand: brandName,
+        source_thumb: posterThumb(ad) || brandImage || null,
+        data: { scenes: j.scenes || [], brand: j.brand || brandName },
+      });
+      router.push(`/content-guide/${cg.id}`);
+    } catch {
+      alert("컨텐츠 가이드 생성 중 오류가 발생했어요.");
+    } finally {
+      setCgGenerating(false);
+      setCgPicking(false);
     }
   }
 
@@ -2885,7 +2883,8 @@ function AdDetailModal({
                   <Network className="h-4 w-4" /> 기획 마인드맵 <ArrowUpRight className="h-3.5 w-3.5" />
                 </button>
                 <button
-                  onClick={() => onSeed(ad, "guide")}
+                  onClick={() => setCgPicking(true)}
+                  title="이 소재의 장면별 스토리보드(프롬프트·설명·주의점) 생성 (본인 Anthropic 키 필요)"
                   className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/10"
                 >
                   <Film className="h-4 w-4" /> 컨텐츠 가이드 <ArrowUpRight className="h-3.5 w-3.5" />
@@ -2970,6 +2969,64 @@ function AdDetailModal({
                 </div>
                 <button
                   onClick={() => setMmPicking(false)}
+                  className="mt-3 w-full rounded-lg border border-gray-200 dark:border-gray-700 px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800"
+                >
+                  취소
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 컨텐츠 가이드: 저장할 브랜드(클라이언트) 선택 */}
+      {cgPicking && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
+          onClick={(e) => { e.stopPropagation(); if (!cgGenerating) setCgPicking(false); }}
+        >
+          <div className="w-full max-w-md rounded-2xl bg-white dark:bg-gray-900 p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-1 flex items-center gap-1.5 text-sm font-bold text-gray-900 dark:text-gray-100">
+              <Film className="h-4 w-4 text-primary" /> 어느 브랜드에 저장할까요?
+            </div>
+            <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">선택한 &apos;기획안 제작&apos; 브랜드 폴더에 컨텐츠 가이드가 저장됩니다.</p>
+            {cgGenerating ? (
+              <div className="flex flex-col items-center gap-2 py-10 text-sm text-gray-500">
+                <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                AI가 장면별 스토리보드를 만드는 중… (수십 초)
+              </div>
+            ) : (
+              <>
+                <input
+                  value={mmKw}
+                  onChange={(e) => setMmKw(e.target.value)}
+                  placeholder="브랜드 검색…"
+                  className="mb-2 w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm dark:text-gray-200"
+                />
+                <div className="max-h-64 space-y-1 overflow-y-auto">
+                  {clients.length === 0 ? (
+                    <p className="py-6 text-center text-xs text-gray-400">&apos;기획안 제작&apos;에서 브랜드를 먼저 추가하세요.</p>
+                  ) : (
+                    clients
+                      .filter((c) => !mmKw || c.name.toLowerCase().includes(mmKw.toLowerCase()))
+                      .sort((a, b) => (mappedClientIds.includes(b.id) ? 1 : 0) - (mappedClientIds.includes(a.id) ? 1 : 0))
+                      .map((c) => (
+                        <button
+                          key={c.id}
+                          onClick={() => generateContentGuide(c.id)}
+                          className="flex w-full items-center gap-2 rounded-lg border border-gray-200 dark:border-gray-700 px-3 py-2 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-800"
+                        >
+                          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: c.color || "#3B82F6" }} />
+                          <span className="flex-1 truncate dark:text-gray-200">{c.name}</span>
+                          {mappedClientIds.includes(c.id) && (
+                            <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-bold text-primary">매핑됨</span>
+                          )}
+                        </button>
+                      ))
+                  )}
+                </div>
+                <button
+                  onClick={() => setCgPicking(false)}
                   className="mt-3 w-full rounded-lg border border-gray-200 dark:border-gray-700 px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800"
                 >
                   취소
