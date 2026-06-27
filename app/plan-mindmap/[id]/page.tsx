@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import {
   ArrowLeft, ExternalLink, Plus, Minus, Maximize2, Loader2, Save, Undo2, Redo2,
-  Trash2, Type, Link2, Unlink, ImagePlus, Copy, Sparkles, X, ChevronsLeft, ChevronsRight, Check, BoxSelect, PanelLeftOpen,
+  Trash2, Type, Link2, Unlink, ImagePlus, Sparkles, X, ChevronsLeft, ChevronsRight, BoxSelect, PanelLeftOpen,
 } from 'lucide-react'
 import { getMindmap, updateMindmap, Mindmap, MMDoc, MMNode, MMEdge, MindmapData } from '@/lib/api/mindmaps'
 import { getClient, Client } from '@/lib/api/clients'
@@ -15,6 +15,17 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 const uid = () => Math.random().toString(36).slice(2, 9)
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x))
 const SOURCE_W = 360
+
+// 기획안 섹션(각각 병렬 스트리밍 → 동시 타이핑). 대본은 우측 한 면.
+const PLAN_LEFT = [
+  { key: 'concept', label: '한 줄 컨셉' },
+  { key: 'target', label: '타겟 세그먼트' },
+  { key: 'selling', label: '핵심 소구점' },
+  { key: 'hook', label: '후킹 (0~3초)' },
+  { key: 'flow', label: '전개' },
+  { key: 'cta', label: 'CTA' },
+]
+const PLAN_KEYS = [...PLAN_LEFT.map((s) => s.key), 'script']
 
 const CAT_COLOR: Record<string, string> = {
   develop: '#3B82F6', storytelling: '#8B5CF6', script: '#10B981', plan: '#F59E0B',
@@ -111,9 +122,9 @@ export default function MindmapCanvasPage() {
 
   const [panelOpen, setPanelOpen] = useState(false)
   const [client, setClient] = useState<Client | null>(null)
-  const [plan, setPlan] = useState<string | null>(null)
-  const [planLoading, setPlanLoading] = useState(false)
-  const [planCopied, setPlanCopied] = useState(false)
+  const [planModal, setPlanModal] = useState(false)
+  const [sections, setSections] = useState<Record<string, string>>({})
+  const [secLoading, setSecLoading] = useState<Record<string, boolean>>({})
 
   const viewportRef = useRef<HTMLDivElement>(null)
   const centerVideoRef = useRef<HTMLVideoElement | null>(null)
@@ -393,8 +404,9 @@ export default function MindmapCanvasPage() {
   function requestLeave() { dirty ? setConfirmLeave(true) : router.push('/plan-mindmap') }
   useEffect(() => { function bu(e: BeforeUnloadEvent) { if (dirty) { e.preventDefault(); e.returnValue = '' } } window.addEventListener('beforeunload', bu); return () => window.removeEventListener('beforeunload', bu) }, [dirty])
 
-  async function generatePlan() {
-    setPlanLoading(true)
+  // 한 섹션을 스트리밍으로 받아 해당 박스에 실시간 타이핑
+  async function streamSection(key: string) {
+    setSecLoading((s) => ({ ...s, [key]: true }))
     try {
       const cur = docRef.current
       const cats = cur.nodes.filter((n) => n.type === 'category')
@@ -403,35 +415,39 @@ export default function MindmapCanvasPage() {
       const res = await aiFetch('/api/ai/plan-from-mindmap', {
         method: 'POST',
         body: JSON.stringify({
+          section: key,
           mindmap: { summary: cur.summary, nodes: [...nodesForPlan, ...notes] },
           brief: { selling_points: client?.selling_points || '', segment: client?.segment || '' },
           brand_name: client?.name || mm?.source_brand || '우리 브랜드',
         }),
       })
-      if (!res.ok) {
+      if (!res.ok || !res.body) {
         const j = await res.json().catch(() => ({}))
-        alert(j.error || '기획안 생성 실패')
+        setSections((s) => ({ ...s, [key]: j.error || '생성 실패' }))
         return
       }
-      // 스트리밍 응답을 실시간으로 받아 타이핑(긴 출력에도 타임아웃 없이 진행됨)
-      if (res.body) {
-        const reader = res.body.getReader()
-        const decoder = new TextDecoder()
-        let acc = ''
-        setPlan('')
-        for (;;) {
-          const { done, value } = await reader.read()
-          if (done) break
-          acc += decoder.decode(value, { stream: true })
-          setPlan(acc)
-        }
-        if (!acc.trim()) setPlan('생성된 내용이 없어요. 다시 시도해 주세요.')
-      } else {
-        const j = await res.json().catch(() => ({}))
-        setPlan(j.plan || '')
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let acc = ''
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        acc += decoder.decode(value, { stream: true })
+        setSections((s) => ({ ...s, [key]: acc }))
       }
-    } catch { alert('기획안 생성 중 오류가 발생했어요.') }
-    finally { setPlanLoading(false) }
+    } catch {
+      setSections((s) => ({ ...s, [key]: '오류가 발생했어요.' }))
+    } finally {
+      setSecLoading((s) => ({ ...s, [key]: false }))
+    }
+  }
+
+  // 모든 섹션을 "동시에" 병렬 생성(각 박스가 동시에 타이핑됨 → 시간 절감)
+  function generatePlan() {
+    setPlanModal(true)
+    setSections({})
+    setSecLoading({})
+    PLAN_KEYS.forEach((k) => streamSection(k))
   }
 
   if (state === 'loading') return <div className="flex h-full items-center justify-center text-gray-400"><Loader2 className="mr-2 h-5 w-5 animate-spin" /> 마인드맵 불러오는 중…</div>
@@ -577,16 +593,31 @@ export default function MindmapCanvasPage() {
                 </div>
               ) : <p className="text-gray-400">브리프가 비어 있어요. <button onClick={() => router.push('/project-plans')} className="text-primary underline">기획안 제작</button>에서 먼저 입력하면 더 정확해져요.</p>}
             </div>
-            <button onClick={generatePlan} disabled={planLoading} className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-violet-600 px-3 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50">{planLoading ? <><Loader2 className="h-4 w-4 animate-spin" /> 생성 중…</> : <><Sparkles className="h-4 w-4" /> 이 마인드맵으로 기획안 생성</>}</button>
-            {plan && (
-              <div>
-                <div className="mb-1 flex items-center justify-between">
-                  <span className="text-xs font-bold text-gray-400">생성된 기획안</span>
-                  <button onClick={() => { navigator.clipboard?.writeText(plan); setPlanCopied(true); setTimeout(() => setPlanCopied(false), 1500) }} className="flex items-center gap-1 text-xs text-primary hover:underline">{planCopied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />} {planCopied ? '복사됨' : '복사'}</button>
-                </div>
-                <pre className="whitespace-pre-wrap rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs leading-relaxed text-gray-700 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-200" style={{ fontFamily: 'inherit' }}>{plan}</pre>
+            <button onClick={generatePlan} className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-violet-600 px-3 py-2.5 text-sm font-semibold text-white hover:bg-violet-700"><Sparkles className="h-4 w-4" /> 이 마인드맵으로 기획안 생성</button>
+            <p className="text-[11px] text-gray-400">생성을 누르면 별도 창에서 섹션별로 동시에 작성돼요.</p>
+          </div>
+        </div>
+      )}
+
+      {/* 기획안 플로팅 — 섹션별 박스 동시 타이핑, 대본은 우측 한 면 */}
+      {planModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4" onClick={() => setPlanModal(false)}>
+          <div className="flex max-h-[90vh] w-[94vw] max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b px-5 py-3 dark:border-gray-800">
+              <span className="flex items-center gap-1.5 text-sm font-bold dark:text-gray-100"><Sparkles className="h-4 w-4 text-violet-500" /> 기획안 · {client?.name || mm?.source_brand || ''}</span>
+              <div className="flex items-center gap-2">
+                <button onClick={generatePlan} className="rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">다시 생성</button>
+                <button onClick={() => setPlanModal(false)} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"><X className="h-5 w-5" /></button>
               </div>
-            )}
+            </div>
+            <div className="grid flex-1 gap-3 overflow-hidden p-4 md:grid-cols-2">
+              <div className="grid auto-rows-min gap-3 overflow-y-auto pr-1 sm:grid-cols-2">
+                {PLAN_LEFT.map((s) => <PlanBox key={s.key} label={s.label} text={sections[s.key] || ''} loading={!!secLoading[s.key]} />)}
+              </div>
+              <div className="overflow-y-auto">
+                <PlanBox label="대본 (나레이션)" text={sections.script || ''} loading={!!secLoading.script} tall />
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -610,6 +641,19 @@ export default function MindmapCanvasPage() {
 
 function ToolBtn({ children, onClick, disabled, active, title }: { children: React.ReactNode; onClick: () => void; disabled?: boolean; active?: boolean; title?: string }) {
   return <button onClick={onClick} disabled={disabled} title={title} className={`rounded-lg p-2 transition-colors disabled:opacity-30 ${active ? 'bg-violet-600 text-white' : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'}`}>{children}</button>
+}
+
+function PlanBox({ label, text, loading, tall }: { label: string; text: string; loading: boolean; tall?: boolean }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <div className={`flex flex-col rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/40 ${tall ? 'h-full min-h-[320px]' : ''}`}>
+      <div className="mb-1 flex items-center justify-between">
+        <span className="flex items-center gap-1 text-xs font-bold text-gray-500 dark:text-gray-300">{label}{loading && <Loader2 className="h-3 w-3 animate-spin" />}</span>
+        {text && <button onClick={() => { navigator.clipboard?.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1200) }} className="text-[11px] text-primary hover:underline">{copied ? '복사됨' : '복사'}</button>}
+      </div>
+      <pre className="flex-1 whitespace-pre-wrap text-[12px] leading-relaxed text-gray-700 dark:text-gray-200" style={{ fontFamily: 'inherit' }}>{text || (loading ? '작성 중…' : '—')}</pre>
+    </div>
+  )
 }
 
 // 8방향 크기조절 핸들(노드 가장자리/모서리). 모서리는 비율 유지.
