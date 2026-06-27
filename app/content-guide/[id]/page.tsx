@@ -113,6 +113,7 @@ function SceneRow({ idx, scene, onSave, onSend, onGenerated }: { idx: number; sc
   const [generating, setGenerating] = useState(false)
   const [nsfw, setNsfw] = useState(false)
   const [gen, setGen] = useState<string[]>(scene.generated || [])
+  const [promptText, setPromptText] = useState(scene.prompt || '')
 
   async function uploadGen(b64: string): Promise<string> {
     const path = `content-img/${uid()}.png`
@@ -125,8 +126,9 @@ function SceneRow({ idx, scene, onSave, onSend, onGenerated }: { idx: number; sc
     setGenerating(true)
     setNsfw(false)
     try {
+      const usePrompt = promptText.trim() || scene.prompt
       const calls = Array.from({ length: count }, () =>
-        aiFetch('/api/ai/content-image', { method: 'POST', body: JSON.stringify({ prompt: scene.prompt, ratio: '9:16', sanitize }) })
+        aiFetch('/api/ai/content-image', { method: 'POST', body: JSON.stringify({ prompt: usePrompt, ratio: '9:16', sanitize }) })
       )
       const ress = await Promise.all(calls)
       const newUrls: string[] = []
@@ -178,19 +180,31 @@ function SceneRow({ idx, scene, onSave, onSend, onGenerated }: { idx: number; sc
         </div>
       </div>
 
-      {/* 우: 이미지 생성 */}
+      {/* 우: 이미지 생성 (프롬프트 입력칸 + 컴팩트 컨트롤) */}
       <div className="space-y-2.5 lg:border-l lg:border-gray-100 lg:pl-4 dark:lg:border-gray-800">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="flex items-center gap-1 text-xs font-bold text-gray-500 dark:text-gray-300"><Wand2 className="h-3.5 w-3.5 text-violet-500" /> 이미지 생성 (gpt-image-1, 9:16)</span>
-          <div className="ml-auto flex items-center gap-1">
-            {[1, 2, 4].map((n) => (
-              <button key={n} onClick={() => setCount(n)} className={`rounded-md border px-2 py-0.5 text-[11px] ${count === n ? 'border-violet-400 bg-violet-50 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300' : 'border-gray-200 text-gray-500 dark:border-gray-700'}`}>{n}장</button>
-            ))}
+        <span className="flex items-center gap-1 text-xs font-bold text-gray-500 dark:text-gray-300"><Wand2 className="h-3.5 w-3.5 text-violet-500" /> 이미지 생성 (gpt-image-2, 9:16)</span>
+        {/* 프롬프트(수정 가능 — 비워도 위 프롬프트가 기본으로 들어가 있음) */}
+        <div className="rounded-xl border border-gray-200 bg-gray-50/60 p-2.5 dark:border-gray-700 dark:bg-gray-800/40">
+          <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-gray-400">프롬프트</div>
+          <textarea
+            value={promptText}
+            onChange={(e) => setPromptText(e.target.value)}
+            rows={4}
+            placeholder="이미지를 설명하세요 — 비우면 위 프롬프트로 생성됩니다"
+            className="w-full resize-none rounded-lg border border-gray-200 bg-white p-2 text-[12px] leading-relaxed text-gray-700 outline-none focus:border-violet-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+          />
+          <div className="mt-2 flex items-center gap-2">
+            <div className="flex items-center gap-1">
+              {[1, 2, 4].map((n) => (
+                <button key={n} onClick={() => setCount(n)} className={`rounded-md border px-2 py-0.5 text-[11px] ${count === n ? 'border-violet-400 bg-violet-50 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300' : 'border-gray-200 text-gray-500 dark:border-gray-700'}`}>{n}장</button>
+              ))}
+            </div>
+            <span className="rounded-md border border-gray-200 px-2 py-0.5 text-[11px] text-gray-500 dark:border-gray-700 dark:text-gray-400">9:16</span>
+            <button onClick={() => generate(false)} disabled={generating} className="ml-auto flex items-center gap-1.5 rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50">
+              {generating ? <><Loader2 className="h-4 w-4 animate-spin" /> 생성 중…</> : <><Wand2 className="h-4 w-4" /> 생성</>}
+            </button>
           </div>
         </div>
-        <button onClick={() => generate(false)} disabled={generating} className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-violet-600 px-3 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50">
-          {generating ? <><Loader2 className="h-4 w-4 animate-spin" /> 만드는 중…</> : <><Wand2 className="h-4 w-4" /> 이 프롬프트로 이미지 생성</>}
-        </button>
         {nsfw && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
             <div className="mb-1.5 flex items-center gap-1 font-bold"><AlertTriangle className="h-3.5 w-3.5" /> 선정적 이슈로 생성되지 않았어요.</div>

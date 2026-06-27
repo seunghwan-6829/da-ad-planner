@@ -5,7 +5,8 @@ export const maxDuration = 120 // 이미지 생성은 느림(Vercel Pro 권장, 
 
 const OPENAI_IMAGE_URL = 'https://api.openai.com/v1/images/generations'
 
-// POST { prompt, ratio?, sanitize? } → gpt-image-1 로 1장 생성(클라이언트가 여러 번 호출해 N장).
+// POST { prompt, ratio?, sanitize? } → gpt-image-2 로 1장 생성(클라이언트가 여러 번 호출해 N장).
+// 계정에 gpt-image-2 권한이 없으면 gpt-image-1 으로 자동 폴백.
 // 사용자 본인 OpenAI 키(x-user-openai-key). NSFW(콘텐츠 정책)로 막히면 { nsfw:true } 반환 → 프론트가 '순화 후 재생성' 유도.
 export async function POST(req: Request) {
   const apiKey = req.headers.get('x-user-openai-key') || process.env.OPENAI_API_KEY
@@ -27,13 +28,25 @@ export async function POST(req: Request) {
     : prompt
   finalPrompt += ' — 화면 안에 어떤 글자/자막/워터마크도 넣지 말 것. 사실적인 광고 레퍼런스 이미지 스타일.'
 
-  try {
+  const genOnce = async (model: string) => {
     const res = await fetch(OPENAI_IMAGE_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: 'gpt-image-1', prompt: finalPrompt, size, quality: 'medium', n: 1 }),
+      body: JSON.stringify({ model, prompt: finalPrompt, size, quality: 'medium', n: 1 }),
     })
-    const data = await res.json()
+    const data = await res.json().catch(() => ({}))
+    return { res, data }
+  }
+
+  try {
+    let { res, data } = await genOnce('gpt-image-2')
+    // 계정에 gpt-image-2 권한이 없거나 모델 미인식이면 gpt-image-1 로 폴백
+    if (!res.ok) {
+      const code: string = data.error?.code ?? ''
+      const msg: string = data.error?.message ?? ''
+      const modelIssue = res.status === 404 || /model/i.test(code) || /model[^.]*(not found|does not exist|unsupported|do not have access|not available)/i.test(msg)
+      if (modelIssue) ({ res, data } = await genOnce('gpt-image-1'))
+    }
     if (!res.ok) {
       const msg: string = data.error?.message ?? 'OpenAI 이미지 생성 오류'
       const code: string = data.error?.code ?? ''

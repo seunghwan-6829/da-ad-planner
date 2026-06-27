@@ -32,9 +32,13 @@ async function extractSceneFrames(videoUrl: string): Promise<string[]> {
   canvas.width = W;
   canvas.height = H;
   const ctx = canvas.getContext("2d")!;
+
+  // 저해상도 시그니처(텍스트·미세 카메라 이동에 둔감하게) — 하단 자막 영역은 비교에서 제외
+  const SW = 24, SH = 14;
+  const ROWS = Math.max(1, Math.floor(SH * 0.72)); // 상단 72%만 비교(하단 자막 변화 무시)
   const sc = document.createElement("canvas");
-  sc.width = 32;
-  sc.height = 18;
+  sc.width = SW;
+  sc.height = SH;
   const sctx = sc.getContext("2d")!;
 
   const seekTo = (t: number) =>
@@ -44,30 +48,55 @@ async function extractSceneFrames(videoUrl: string): Promise<string[]> {
       video.currentTime = Math.min(t, duration - 0.05);
       setTimeout(() => reject(new Error("seek timeout")), 8000);
     });
-  const smallData = () => { sctx.drawImage(video, 0, 0, 32, 18); return sctx.getImageData(0, 0, 32, 18).data; };
-  const diff = (a: Uint8ClampedArray, b: Uint8ClampedArray) => {
-    let s = 0;
-    for (let i = 0; i < a.length; i += 4) s += Math.abs((a[i] + a[i + 1] + a[i + 2]) / 3 - (b[i] + b[i + 1] + b[i + 2]) / 3);
-    return s / (a.length / 4);
+  const sig = () => { sctx.drawImage(video, 0, 0, SW, SH); return sctx.getImageData(0, 0, SW, SH).data; };
+  // 상단 영역만 비교 → 자막/하단 글자가 바뀌어도 배경 같으면 같은 씬으로 본다
+  const diffTop = (a: Uint8ClampedArray, b: Uint8ClampedArray) => {
+    let s = 0; const n = SW * ROWS;
+    for (let p = 0; p < n; p++) {
+      const i = p * 4;
+      s += Math.abs((a[i] + a[i + 1] + a[i + 2]) / 3 - (b[i] + b[i + 1] + b[i + 2]) / 3);
+    }
+    return s / n;
   };
 
-  const STEP = Math.max(0.5, duration / 60); // 최대 ~60샘플
-  const THRESH = 16; // 씬 전환 민감도
-  const MAX = 14;
-  const urls: string[] = [];
-  let prev: Uint8ClampedArray | null = null;
-  for (let t = 0.1; t < duration && urls.length < MAX; t += STEP) {
+  // ── 1차: 영상 전체를 끝까지 훑어 '씬 시작 시점'만 수집(조기 종료 없음) ──
+  const STEP = Math.max(0.3, duration / 80);
+  const THRESH = 18;   // 씬 전환 민감도(저해상도라 '큰 변화'만 잡힘 → 미세 이동/글자변화 무시)
+  const MIN_GAP = 1.0; // 직전 씬과 최소 간격(초) — 빠른 자막 깜빡임을 새 씬으로 안 봄
+  const SAFE_MAX = 80; // 안전 상한(정상 광고면 도달 안 함)
+  const times: number[] = [];
+  let prevSig: Uint8ClampedArray | null = null;
+  let lastT = -99;
+  for (let t = 0.1; t < duration && times.length < SAFE_MAX; t += STEP) {
     await seekTo(t);
-    const cur = smallData();
-    if (!prev || diff(prev, cur) > THRESH) {
-      ctx.drawImage(video, 0, 0, W, H);
-      const blob: Blob | null = await new Promise((res) => canvas.toBlob((b) => res(b), "image/jpeg", 0.82));
-      if (blob) {
-        const path = `content-frames/${Math.random().toString(36).slice(2, 9)}.jpg`;
-        const { error } = await supabase.storage.from("shooting-guides").upload(path, blob, { contentType: "image/jpeg", upsert: true });
-        if (!error) urls.push(supabase.storage.from("shooting-guides").getPublicUrl(path).data.publicUrl);
-      }
-      prev = cur;
+    const cur = sig();
+    if (!prevSig || (diffTop(prevSig, cur) > THRESH && t - lastT >= MIN_GAP)) {
+      times.push(t);
+      prevSig = cur;
+      lastT = t;
+    }
+  }
+  if (!times.length) times.push(0.1);
+
+  // ── 너무 많으면 균등 다운샘플(처음·끝 포함, 최대 TARGET) ──
+  const TARGET = 12;
+  let picked = times;
+  if (times.length > TARGET) {
+    const ds: number[] = [];
+    for (let i = 0; i < TARGET; i++) ds.push(times[Math.round((i * (times.length - 1)) / (TARGET - 1))]);
+    picked = Array.from(new Set(ds));
+  }
+
+  // ── 2차: 선택된 시점에서 풀해상도 캡처 + 업로드 ──
+  const urls: string[] = [];
+  for (const t of picked) {
+    await seekTo(t);
+    ctx.drawImage(video, 0, 0, W, H);
+    const blob: Blob | null = await new Promise((res) => canvas.toBlob((b) => res(b), "image/jpeg", 0.82));
+    if (blob) {
+      const path = `content-frames/${Math.random().toString(36).slice(2, 9)}.jpg`;
+      const { error } = await supabase.storage.from("shooting-guides").upload(path, blob, { contentType: "image/jpeg", upsert: true });
+      if (!error) urls.push(supabase.storage.from("shooting-guides").getPublicUrl(path).data.publicUrl);
     }
   }
   return urls;
