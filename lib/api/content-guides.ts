@@ -1,12 +1,20 @@
 import { supabase } from '@/lib/supabase'
 
+// 생성 이미지 한 칸 = 레이어 스택(편집 시 새 버전을 위로 쌓음). 구버전 데이터는 단일 URL(string).
+export type CGGenItem = string | string[]
+
 export interface CGScene {
   image: string
   prompt: string
   description: string
   caution: string
-  // 생성된 이미지(저장) — 씬별 여러 장
-  generated?: string[]
+  // 생성된 이미지(저장) — 씬별 여러 칸, 각 칸은 레이어 스택([과거…, 최신])
+  generated?: CGGenItem[]
+}
+
+// 저장값(string | string[])을 항상 레이어 스택(string[][])으로 정규화
+export function toStacks(g?: CGGenItem[]): string[][] {
+  return (g || []).map((x) => (Array.isArray(x) ? x.filter(Boolean) : [x])).filter((s) => s.length)
 }
 
 export interface ContentGuideData {

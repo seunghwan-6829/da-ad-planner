@@ -3,8 +3,9 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { Loader2, Copy, Check, Sparkles } from 'lucide-react'
+import { toStacks, CGGenItem } from '@/lib/api/content-guides'
 
-type Scene = { image: string; prompt: string; description: string; caution: string; generated?: string[] }
+type Scene = { image: string; prompt: string; description: string; caution: string; generated?: CGGenItem[] }
 type Guide = { title: string | null; source_brand: string | null; data: { scenes: Scene[] } }
 
 export default function ContentGuideSharePage() {
@@ -73,13 +74,13 @@ function ShareScene({ idx, scene }: { idx: number; scene: Scene }) {
         </div>
         <div className="text-[12px]"><span className="font-bold text-gray-400">설명 </span><span className="text-gray-700">{scene.description || '—'}</span></div>
         <div className="rounded-lg bg-amber-50 p-2 text-[12px] text-amber-700"><b>주의</b> {scene.caution || '—'}</div>
-        {scene.generated && scene.generated.length > 0 && (
+        {toStacks(scene.generated).length > 0 && (
           <div>
             <div className="mb-1 text-[11px] font-bold text-gray-400">생성 이미지</div>
             <div className="grid grid-cols-3 gap-2">
-              {scene.generated.map((u, k) => (
+              {toStacks(scene.generated).map((st, k) => (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img key={k} src={u} alt="" className="aspect-[9/16] w-full rounded-lg border border-gray-200 object-cover" />
+                <img key={k} src={st[st.length - 1]} alt="" className="aspect-[9/16] w-full rounded-lg border border-gray-200 object-cover" />
               ))}
             </div>
           </div>
