@@ -2655,15 +2655,41 @@ function AdDetailModal({
       if (ad.media_type === "video" && ad.media_url) {
         try { frames = await extractSceneFrames(ad.media_url); } catch {}
       }
-      const res = await aiFetch("/api/ai/content-guide", {
-        method: "POST",
-        body: JSON.stringify({ library_id: ad.library_id, frames }),
-      });
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        alert(j.error || "컨텐츠 가이드 생성에 실패했어요.");
-        return;
+
+      type CScene = { image: string; prompt: string; description: string; caution: string };
+      let scenes: CScene[] = [];
+      let brand = brandName;
+
+      if (frames.length) {
+        // 장면별로 "따로따로 병렬 생성"(동시 4개). 각 호출은 1이미지·작은 출력 → 타임아웃/맥스토큰 제약 없음.
+        const out: CScene[] = new Array(frames.length);
+        let idx = 0;
+        const worker = async () => {
+          while (idx < frames.length) {
+            const i = idx++;
+            const img = frames[i];
+            try {
+              const r = await aiFetch("/api/ai/content-guide", { method: "POST", body: JSON.stringify({ library_id: ad.library_id, image: img }) });
+              const j = await r.json().catch(() => ({}));
+              out[i] = { image: img, prompt: j.prompt || "", description: j.description || "", caution: j.caution || "" };
+            } catch {
+              out[i] = { image: img, prompt: "", description: "", caution: "" };
+            }
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(4, frames.length) }, worker));
+        scenes = out;
+      } else {
+        // 폴백: 서버 프레임(≤5) 배치
+        const res = await aiFetch("/api/ai/content-guide", { method: "POST", body: JSON.stringify({ library_id: ad.library_id }) });
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok) { alert(j.error || "컨텐츠 가이드 생성에 실패했어요."); return; }
+        scenes = j.scenes || [];
+        brand = j.brand || brandName;
       }
+
+      if (!scenes.length) { alert("장면을 만들지 못했어요. 다시 시도해 주세요."); return; }
+
       const capTitle = cleanCaption(ad.ad_text, brandName).replace(/\n+/g, " ").trim().slice(0, 40);
       const cg = await createContentGuide({
         client_id: clientId,
@@ -2671,7 +2697,7 @@ function AdDetailModal({
         title: capTitle ? `${brandName} · ${capTitle}` : brandName,
         source_brand: brandName,
         source_thumb: posterThumb(ad) || brandImage || null,
-        data: { scenes: j.scenes || [], brand: j.brand || brandName },
+        data: { scenes, brand },
       });
       router.push(`/content-guide/${cg.id}`);
     } catch {

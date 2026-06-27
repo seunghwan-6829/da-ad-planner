@@ -23,6 +23,38 @@ export async function POST(req: Request) {
   if (error) ({ data: ad, error } = await supabaseAdmin.from('am_ads').select(cols).eq('library_id', libraryId).single())
   if (error || !ad) return NextResponse.json({ error: '광고를 찾을 수 없습니다.' }, { status: 404 })
 
+  // ── 단일 장면 모드: { image } 한 장만 처리(클라이언트가 장면마다 병렬 호출) ──
+  //    1이미지 + 작은 출력이라 함수 타임아웃/맥스토큰 제약을 받지 않는다.
+  const single = (body.image || '').toString()
+  if (single) {
+    const p1 = `너는 숏폼 광고 컨텐츠 디렉터다. 첨부된 "한 장면(스크린샷)"을 보고, 이 화면과 비슷한 이미지를 AI 이미지 생성 도구로 다시 만들기 위한 것을 작성해라.
+[참고] 브랜드: ${ad.page_name ?? '미상'} / 본문·자막: """${(ad.ad_text ?? '').slice(0, 600)}"""
+JSON 으로만 작성:
+- prompt: 이 화면을 만들 한국어 이미지 생성 프롬프트(피사체/구도/조명/분위기/스타일/카메라 앵글, 2~4문장)
+- description: 장면 간략 설명(20자 내외)
+- caution: 만들 때 주의점(25자 내외)
+완결된 JSON 하나만: {"prompt":"...","description":"...","caution":"..."}`
+    try {
+      let r = await fetch(ANTHROPIC_BASE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({ model: MODEL, max_tokens: 1200, messages: [{ role: 'user', content: [{ type: 'text', text: p1 }, { type: 'image', source: { type: 'url', url: single } }] }] }),
+      })
+      if (!r.ok) {
+        r = await fetch(ANTHROPIC_BASE, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }, body: JSON.stringify({ model: MODEL, max_tokens: 1200, messages: [{ role: 'user', content: [{ type: 'text', text: p1 }] }] }) })
+      }
+      const d = await r.json()
+      if (!r.ok) return NextResponse.json({ error: d.error?.message ?? 'Anthropic API 오류' }, { status: r.status })
+      const t = d.content?.find((b: { type: string }) => b.type === 'text')?.text?.trim() ?? ''
+      const mm = t.match(/\{[\s\S]*\}/)
+      let one: { prompt?: string; description?: string; caution?: string } = {}
+      if (mm) { try { one = JSON.parse(mm[0]) } catch {} }
+      return NextResponse.json({ prompt: one.prompt || '', description: one.description || '', caution: one.caution || '', brand: ad.page_name ?? null })
+    } catch (e) {
+      return NextResponse.json({ error: e instanceof Error ? e.message : '생성 실패' }, { status: 500 })
+    }
+  }
+
   // 장면 이미지: 영상=추출 프레임, 그 외=캐러셀/포스터
   const frames: string[] = Array.isArray(ad.frames) ? (ad.frames as string[]).filter(Boolean) : []
   // 클라이언트가 영상에서 직접 추출한 씬 프레임(배경 변화 감지)을 우선 사용. 없으면 서버 프레임/포스터 폴백.
