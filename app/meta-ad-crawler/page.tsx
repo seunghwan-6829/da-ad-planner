@@ -14,7 +14,6 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
-  FileDown,
   X,
   Pencil,
   Trash2,
@@ -26,7 +25,6 @@ import {
   Save,
   Check,
   Star,
-  Activity,
   Layers,
   Camera,
   ArrowUpRight,
@@ -312,7 +310,6 @@ export default function MetaAdCrawlerPage() {
   const [mediaFilter, setMediaFilter] = useState<"all" | "image" | "carousel" | "video">("all");
   const [savedOnly, setSavedOnly] = useState(false);
   const [workedOnly, setWorkedOnly] = useState(false);
-  const [showFeed, setShowFeed] = useState(false);
   const [page, setPage] = useState(1);
   const [jumpPage, setJumpPage] = useState(""); // 페이지 직접 입력
   const [detail, setDetail] = useState<Ad | null>(null);
@@ -752,23 +749,6 @@ export default function MetaAdCrawlerPage() {
     loadAll();
   }
 
-  function exportCsv() {
-    const header = ["library_id", "page_name", "started_on", "status", "media_type", "media_url", "landing_url", "first_seen_at", "last_seen_at", "memo", "ad_text"];
-    const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const rows = filteredAds.map((a) =>
-      [a.library_id, brandNameOfAd(a), a.started_on, a.status, a.media_type, a.media_url, a.landing_url, a.first_seen_at, a.last_seen_at, a.memo, a.ad_text]
-        .map(esc)
-        .join(",")
-    );
-    const blob = new Blob(["﻿" + [header.join(","), ...rows].join("\n")], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `ads-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
   function onMemoSaved(libraryId: string, memo: string) {
     setAds((prev) => prev.map((a) => (a.library_id === libraryId ? { ...a, memo } : a)));
     setDetail((d) => (d && d.library_id === libraryId ? { ...d, memo } : d));
@@ -1014,14 +994,6 @@ export default function MetaAdCrawlerPage() {
               </button>
             ))}
           </div>
-          {/* #5 변화 피드 */}
-          <button
-            onClick={() => setShowFeed(true)}
-            className="flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-1.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800"
-          >
-            <Activity className="h-4 w-4" />
-            변화 피드
-          </button>
           {/* #7 스와이프 파일 */}
           <button
             onClick={() => {
@@ -1052,14 +1024,6 @@ export default function MetaAdCrawlerPage() {
           >
             <ClipboardList className="h-4 w-4" />
             메모·분석 {workedCount > 0 && `(${workedCount})`}
-          </button>
-          <button
-            onClick={exportCsv}
-            disabled={filteredAds.length === 0}
-            className="flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-1.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40"
-          >
-            <FileDown className="h-4 w-4" />
-            CSV
           </button>
         </div>
       </div>
@@ -1293,19 +1257,6 @@ export default function MetaAdCrawlerPage() {
           displayNames={brandDisplayName}
           onToggle={setBrandClient}
           onClose={() => setShowClientMap(false)}
-        />
-      )}
-
-      {/* #5 변화 피드 모달 */}
-      {showFeed && (
-        <ChangeFeedModal
-          ads={ads}
-          brandNameOf={brandNameOfAd}
-          onClose={() => setShowFeed(false)}
-          onOpen={(ad) => {
-            setShowFeed(false);
-            openDetail(ad);
-          }}
         />
       )}
 
@@ -2393,96 +2344,6 @@ function ClientMapModal({
             </div>
           </>
         )}
-      </div>
-    </div>
-  );
-}
-
-/* ── #5 변화 피드: 최근 신규 / 종료 소재 타임라인 ── */
-function ChangeFeedModal({
-  ads,
-  brandNameOf,
-  onClose,
-  onOpen,
-}: {
-  ads: Ad[];
-  brandNameOf: (ad: Ad) => string;
-  onClose: () => void;
-  onOpen: (ad: Ad) => void;
-}) {
-  const WINDOW_MS = 14 * 24 * 3600 * 1000;
-  const now = Date.now();
-  const fresh = [...ads]
-    .filter((a) => a.first_seen_at && now - new Date(a.first_seen_at).getTime() < WINDOW_MS)
-    .sort((a, b) => new Date(b.first_seen_at).getTime() - new Date(a.first_seen_at).getTime())
-    .slice(0, 60);
-  const ended = ads
-    .filter((a) => a.status === "ended" && a.ended_at)
-    .sort((a, b) => new Date(b.ended_at!).getTime() - new Date(a.ended_at!).getTime())
-    .slice(0, 60);
-
-  const typeLabel = (ad: Ad) =>
-    ad.media_type === "video" ? "영상" : ad.media_type === "carousel" || (ad.media_urls && ad.media_urls.length > 1) ? "슬라이드" : "이미지";
-
-  const Row = ({ ad, when }: { ad: Ad; when: string | null | undefined }) => (
-    <button
-      onClick={() => onOpen(ad)}
-      className="flex w-full items-center gap-2.5 rounded-lg border border-gray-100 dark:border-gray-800 p-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800"
-    >
-      <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-md bg-gray-100 dark:bg-gray-800">
-        {posterThumb(ad) ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={posterThumb(ad)!} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
-        ) : (
-          <Megaphone className="h-4 w-4 text-gray-300 dark:text-gray-600" />
-        )}
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-xs font-bold dark:text-gray-100">{brandNameOf(ad)}</div>
-        <div className="truncate text-[11px] text-gray-400">
-          {typeLabel(ad)} · {fmtDate(when)}
-        </div>
-      </div>
-    </button>
-  );
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4" onClick={onClose}>
-      <div className="my-8 w-full max-w-3xl rounded-2xl bg-white dark:bg-gray-900 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b dark:border-gray-800 px-5 py-3.5">
-          <h2 className="flex items-center gap-2 text-base font-bold dark:text-white">
-            <Activity className="h-4 w-4 text-primary" /> 변화 피드 <span className="text-xs font-normal text-gray-400">최근 14일</span>
-          </h2>
-          <button onClick={onClose} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-        <div className="grid max-h-[75vh] gap-4 overflow-y-auto p-5 sm:grid-cols-2">
-          <div>
-            <div className="mb-2 flex items-center gap-1.5 text-sm font-bold text-green-600">
-              <span className="h-2 w-2 rounded-full bg-green-500" /> 신규 등장 ({fresh.length})
-            </div>
-            <div className="space-y-1.5">
-              {fresh.length === 0 ? (
-                <p className="text-sm text-gray-400">최근 신규 소재가 없습니다.</p>
-              ) : (
-                fresh.map((ad) => <Row key={ad.library_id} ad={ad} when={ad.first_seen_at} />)
-              )}
-            </div>
-          </div>
-          <div>
-            <div className="mb-2 flex items-center gap-1.5 text-sm font-bold text-gray-500">
-              <span className="h-2 w-2 rounded-full bg-gray-400" /> 내려간 소재 ({ended.length})
-            </div>
-            <div className="space-y-1.5">
-              {ended.length === 0 ? (
-                <p className="text-sm text-gray-400">최근 종료된 소재가 없습니다.</p>
-              ) : (
-                ended.map((ad) => <Row key={ad.library_id} ad={ad} when={ad.ended_at} />)
-              )}
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   );

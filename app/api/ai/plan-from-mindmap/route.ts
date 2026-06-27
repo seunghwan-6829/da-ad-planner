@@ -70,7 +70,7 @@ ${briefBlock || '(브리프 미입력 — 일반적인 베스트 프랙티스로
         'x-api-key': apiKey,
         'anthropic-version': '2023-06-01',
       },
-      body: JSON.stringify({ model: MODEL, max_tokens: 4000, messages: [{ role: 'user', content: prompt }] }),
+      body: JSON.stringify({ model: MODEL, max_tokens: 8000, messages: [{ role: 'user', content: prompt }] }),
     })
     const data = await res.json()
     if (!res.ok) {

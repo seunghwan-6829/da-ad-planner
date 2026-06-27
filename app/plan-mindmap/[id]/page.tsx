@@ -50,7 +50,7 @@ function buildDoc(raw: MindmapData | MMDoc | undefined, mm: Mindmap): MMDoc {
   const order: B[] = []
   cats.forEach((cat) => {
     order.push({ kind: 'category', cat })
-    if (cat.key === 'script' && legacy.narration && legacy.narration.trim()) order.push({ kind: 'narration' })
+    if (cat.key === 'script') order.push({ kind: 'narration' }) // 항상 생성(없으면 안내문)
     if (cat.key === 'segment' && seg2) order.push({ kind: 'segment2' })
   })
   ;(legacy.charts || []).forEach((ch) => order.push({ kind: 'chart', ch }))
@@ -107,6 +107,7 @@ export default function MindmapCanvasPage() {
   const [centerAspect, setCenterAspect] = useState(9 / 16)
   const [sourceTabOpen, setSourceTabOpen] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [adMeta, setAdMeta] = useState<{ started_on?: string; first_seen_at?: string; last_seen_at?: string; country?: string; status?: string; media_type?: string; landing_url?: string } | null>(null)
 
   const [panelOpen, setPanelOpen] = useState(false)
   const [client, setClient] = useState<Client | null>(null)
@@ -133,28 +134,26 @@ export default function MindmapCanvasPage() {
         if (!alive) return
         if (!d) { setState('notfound'); return }
         setMm(d)
+        // 소재 광고 메타데이터(별도 탭에서 보여줌 + 미디어/나레이션 보강)
+        let ad: { media_url?: string; media_type?: string; poster_url?: string; transcript?: string; started_on?: string; first_seen_at?: string; last_seen_at?: string; country?: string; status?: string; landing_url?: string } | null = null
+        if (d.library_id) {
+          try { ad = await fetch(`/api/meta-ad/public/${d.library_id}`).then((r) => (r.ok ? r.json() : null)) } catch {}
+        }
+        if (ad && alive) setAdMeta(ad)
         const isV2 = !!d.data && (d.data as MMDoc).version === 2
         let raw = d.data as MindmapData | MMDoc | undefined
-        if (!isV2 && d.library_id) {
-          try {
-            const ad = await fetch(`/api/meta-ad/public/${d.library_id}`).then((r) => (r.ok ? r.json() : null))
-            if (ad) {
-              const r = { ...((raw as MindmapData) || { nodes: [] }) } as MindmapData
-              r.media = r.media || { url: ad.media_url, type: ad.media_type, poster: ad.poster_url }
-              if (!r.narration && ad.transcript) r.narration = ad.transcript
-              raw = r
-            }
-          } catch {}
+        if (!isV2) {
+          const r = { ...((raw as MindmapData) || { nodes: [] }) } as MindmapData
+          if (ad) {
+            r.media = r.media || { url: ad.media_url, type: ad.media_type, poster: ad.poster_url }
+            if (!r.narration && ad.transcript) r.narration = ad.transcript
+          }
+          raw = r
         }
         const built = buildDoc(raw, d)
         if (isV2) {
           const center = built.nodes.find((n) => n.type === 'center')
-          if (center && !center.media_url && d.library_id) {
-            try {
-              const ad = await fetch(`/api/meta-ad/public/${d.library_id}`).then((r) => (r.ok ? r.json() : null))
-              if (ad && alive) { center.media_url = ad.media_url || null; center.media_type = ad.media_type || null; center.poster = center.poster || ad.poster_url || null }
-            } catch {}
-          }
+          if (center && !center.media_url && ad) { center.media_url = ad.media_url || null; center.media_type = ad.media_type || null; center.poster = center.poster || ad.poster_url || null }
         }
         setDoc(built)
         setState('ready')
@@ -218,7 +217,22 @@ export default function MindmapCanvasPage() {
     e.stopPropagation()
     if (connectFrom) {
       if (connectFrom === 'pick') { setConnectFrom(n.id); return }
-      if (connectFrom !== n.id) mutate((d) => { if (!d.edges.some((ed) => (ed.from === connectFrom && ed.to === n.id) || (ed.from === n.id && ed.to === connectFrom))) d.edges.push({ id: uid(), from: connectFrom, to: n.id }); return d })
+      if (connectFrom !== n.id) mutate((d) => {
+        if (!d.edges.some((ed) => (ed.from === connectFrom && ed.to === n.id) || (ed.from === n.id && ed.to === connectFrom)))
+          d.edges.push({ id: uid(), from: connectFrom, to: n.id })
+        // 색상 상속: 기본색(회색 #64748B) 노드 ↔ 색 있는 노드 연결 시, 회색 노드가 부모 색을 복사.
+        // 이미 둘 다 색이 있으면(카테고리끼리) 변경하지 않음.
+        const DEF = '#64748B'
+        const fromN = d.nodes.find((x) => x.id === connectFrom)
+        const toN = d.nodes.find((x) => x.id === n.id)
+        if (fromN && toN) {
+          const fromDef = !fromN.color || fromN.color === DEF
+          const toDef = !toN.color || toN.color === DEF
+          if (fromDef && !toDef) fromN.color = toN.color
+          else if (toDef && !fromDef) toN.color = fromN.color
+        }
+        return d
+      })
       setConnectFrom(null); return
     }
     if (disconnectFrom) {
@@ -455,6 +469,20 @@ export default function MindmapCanvasPage() {
               ) : <div className="flex h-full w-full items-center justify-center text-xs text-gray-400">소재 없음</div>}
             </div>
             <p className="mt-3 text-sm font-semibold dark:text-gray-100">{center?.title}</p>
+            {adMeta && (
+              <div className="mt-3 space-y-2 rounded-lg border border-gray-200 p-3 text-xs dark:border-gray-700">
+                <div className="grid grid-cols-2 gap-y-2">
+                  <div><div className="text-[10px] text-gray-400">시작일</div><div className="font-medium text-gray-700 dark:text-gray-200">{adMeta.started_on || '—'}</div></div>
+                  <div><div className="text-[10px] text-gray-400">국가</div><div className="font-medium text-gray-700 dark:text-gray-200">{adMeta.country || '—'}</div></div>
+                  <div><div className="text-[10px] text-gray-400">상태</div><div className="font-medium text-gray-700 dark:text-gray-200">{adMeta.status === 'ended' ? '종료' : '활성'}</div></div>
+                  <div><div className="text-[10px] text-gray-400">유형</div><div className="font-medium text-gray-700 dark:text-gray-200">{adMeta.media_type === 'video' ? '영상' : adMeta.media_type === 'carousel' ? '슬라이드' : '이미지'}</div></div>
+                </div>
+                <div className="space-y-1 border-t pt-2 dark:border-gray-700">
+                  {mm.library_id && <a href={`https://www.facebook.com/ads/library/?id=${mm.library_id}`} target="_blank" rel="noopener noreferrer" className="block truncate text-blue-600 underline">광고 라이브러리 ↗</a>}
+                  {adMeta.landing_url ? <a href={adMeta.landing_url} target="_blank" rel="noopener noreferrer" className="block truncate text-blue-600 underline">랜딩 페이지 ↗</a> : <span className="block text-gray-400">랜딩 페이지 없음</span>}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -616,10 +644,11 @@ function NodeView({
   }
 
   if (n.type === 'image') {
+    // 투명 PNG/GIF 그대로(흰 배경 X). 비율 유지(object-contain).
     return (
-      <div data-node className={`${base} border border-gray-200 bg-white p-1 dark:border-gray-700 dark:bg-gray-900`} style={style} onMouseDown={onMouseDown}>
+      <div data-node className={`${base} border-2 border-transparent bg-transparent p-0 shadow-none`} style={style} onMouseDown={onMouseDown}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={n.media_url || ''} alt="" draggable={false} className="h-full w-full rounded-lg object-cover" />
+        <img src={n.media_url || ''} alt="" draggable={false} className="block w-full rounded-lg" style={n.h ? { height: '100%', objectFit: 'contain' } : { height: 'auto' }} />
         <Handles onStart={onResizeStart} />
       </div>
     )
@@ -627,9 +656,11 @@ function NodeView({
 
   if (n.type === 'chart') {
     return (
-      <div data-node className={`${base} border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-900`} style={style} onMouseDown={onMouseDown}>
-        <div className="mb-1.5 text-xs font-bold text-gray-700 dark:text-gray-200">📊 {n.title}</div>
-        <Chart chart={n.chart} width={(n.w || 280) - 36} />
+      <div data-node className={`${base} flex flex-col border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-900`} style={style} onMouseDown={onMouseDown}>
+        <div className="mb-1.5 shrink-0 text-xs font-bold text-gray-700 dark:text-gray-200">📊 {n.title}</div>
+        <div className="min-h-0 flex-1">
+          <Chart chart={n.chart} width={(n.w || 280) - 30} height={n.h ? n.h - 48 : undefined} />
+        </div>
         <Handles onStart={onResizeStart} />
       </div>
     )
@@ -637,13 +668,14 @@ function NodeView({
 
   if (n.type === 'narration') {
     return (
-      <div data-node className={`${base} border border-violet-200 bg-violet-50/70 p-3 dark:border-violet-900 dark:bg-violet-950/30`} style={style} onMouseDown={onMouseDown} onDoubleClick={onDoubleClick}>
-        <div className="mb-1 flex items-center justify-between">
-          <span className="text-xs font-bold text-violet-700 dark:text-violet-300">🎙️ {n.title}</span>
-          <button onMouseDown={(e) => e.stopPropagation()} onClick={() => navigator.clipboard?.writeText(n.text || '')} className="text-[10px] text-violet-600 hover:underline">복사</button>
+      <div data-node className={`${base} border-2 border-violet-300 bg-white p-2.5 dark:border-violet-800 dark:bg-gray-900`} style={style} onMouseDown={onMouseDown} onDoubleClick={onDoubleClick}>
+        <div className="mb-1.5 flex items-center justify-between">
+          <span className="flex items-center gap-1.5 text-[13px] font-bold text-gray-900 dark:text-gray-100"><span className="h-2.5 w-2.5 shrink-0 rounded-full bg-violet-500" />{n.title}</span>
+          {n.text ? <button onMouseDown={(e) => e.stopPropagation()} onClick={() => navigator.clipboard?.writeText(n.text || '')} className="text-[10px] text-violet-600 hover:underline">복사</button> : null}
         </div>
-        {editing ? <EditBox val={val} setVal={setVal} onCommit={() => onCommit(val)} onCancel={onCancel} rows={6} />
-          : <p className="max-h-44 overflow-y-auto whitespace-pre-wrap text-[12px] leading-snug text-gray-700 dark:text-gray-200">{n.text || '(나레이션 없음)'}</p>}
+        {editing ? <EditBox val={val} setVal={setVal} onCommit={() => onCommit(val)} onCancel={onCancel} />
+          : n.text ? <p className="max-h-44 overflow-y-auto whitespace-pre-wrap text-[12px] leading-snug text-gray-700 dark:text-gray-200">{n.text}</p>
+            : <p className="text-[12px] italic leading-snug text-gray-400">나레이션이 없는 소재입니다</p>}
         <Handles onStart={onResizeStart} />
       </div>
     )
@@ -657,7 +689,7 @@ function NodeView({
           <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: accent }} />
           <span className="text-[13px] font-bold text-gray-900 dark:text-gray-100">{n.title}</span>
         </div>
-        {editing ? <EditBox val={val} setVal={setVal} onCommit={() => onCommit(val)} onCancel={onCancel} rows={Math.max(3, (n.items || []).length)} />
+        {editing ? <EditBox val={val} setVal={setVal} onCommit={() => onCommit(val)} onCancel={onCancel} />
           : <ul className="space-y-0.5">{(n.items || []).map((it, i) => <li key={i} className="flex gap-1 text-[12px] leading-snug text-gray-600 dark:text-gray-300"><span style={{ color: accent }}>·</span><span>{it}</span></li>)}</ul>}
         <Handles onStart={onResizeStart} />
       </div>
@@ -665,25 +697,37 @@ function NodeView({
   }
 
   return (
-    <div data-node className={`${base} border-2 border-slate-300 bg-white p-2.5 dark:bg-gray-900`} style={style} onMouseDown={onMouseDown} onDoubleClick={onDoubleClick}>
-      {editing ? <EditBox val={val} setVal={setVal} onCommit={() => onCommit(val)} onCancel={onCancel} rows={2} />
+    <div data-node className={`${base} border-2 bg-white p-2.5 dark:bg-gray-900`} style={{ ...style, borderColor: n.color && n.color !== '#64748B' ? n.color : '#CBD5E1' }} onMouseDown={onMouseDown} onDoubleClick={onDoubleClick}>
+      {editing ? <EditBox val={val} setVal={setVal} onCommit={() => onCommit(val)} onCancel={onCancel} />
         : <p className="whitespace-pre-wrap text-[12px] leading-snug text-gray-600 dark:text-gray-300">{n.text}</p>}
       <Handles onStart={onResizeStart} />
     </div>
   )
 }
 
-function EditBox({ val, setVal, onCommit, onCancel, rows }: { val: string; setVal: (v: string) => void; onCommit: () => void; onCancel: () => void; rows: number }) {
+function EditBox({ val, setVal, onCommit, onCancel }: { val: string; setVal: (v: string) => void; onCommit: () => void; onCancel: () => void }) {
+  const ref = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    const el = ref.current
+    if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; el.focus(); el.setSelectionRange(el.value.length, el.value.length) }
+  }, [])
+  // 테두리/배경 없이 제자리에서 편집(촌스러운 검정 박스 X) + 내용에 맞춰 자동 높이(글자 다 보임)
   return (
-    <textarea autoFocus value={val} rows={rows} onMouseDown={(e) => e.stopPropagation()} onChange={(e) => setVal(e.target.value)} onBlur={onCommit}
+    <textarea
+      ref={ref}
+      value={val}
+      onMouseDown={(e) => e.stopPropagation()}
+      onChange={(e) => { setVal(e.target.value); const el = e.currentTarget; el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px' }}
+      onBlur={onCommit}
       onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onCommit() } if (e.key === 'Escape') onCancel() }}
-      className="w-full resize-none rounded border border-primary/40 bg-white p-1 text-[12px] dark:bg-gray-800 dark:text-gray-100" />
+      className="w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-[12px] leading-snug text-gray-700 outline-none ring-0 focus:outline-none focus:ring-0 dark:text-gray-200"
+    />
   )
 }
 
-function Chart({ chart, width }: { chart?: { kind: 'bar' | 'line'; data: { label: string; value: number }[] }; width?: number }) {
+function Chart({ chart, width, height }: { chart?: { kind: 'bar' | 'line'; data: { label: string; value: number }[] }; width?: number; height?: number }) {
   if (!chart || !chart.data?.length) return <p className="text-[11px] text-gray-400">데이터 없음</p>
-  const W = Math.max(180, width || 254), H = 92, pad = 6
+  const W = Math.max(150, width || 254), H = Math.max(60, height || 92), pad = 6
   const max = Math.max(1, ...chart.data.map((d) => d.value))
   if (chart.kind === 'line') {
     const stepX = (W - pad * 2) / Math.max(1, chart.data.length - 1)
