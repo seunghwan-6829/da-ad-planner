@@ -58,6 +58,7 @@ export interface MMDoc {
   summary?: string
   nodes: MMNode[]
   edges: MMEdge[]
+  plan?: Record<string, string> // 생성한 기획안 섹션(저장 → 다시 열기용)
 }
 
 export interface Mindmap {

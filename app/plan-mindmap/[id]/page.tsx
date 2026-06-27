@@ -167,6 +167,7 @@ export default function MindmapCanvasPage() {
           if (center && !center.media_url && ad) { center.media_url = ad.media_url || null; center.media_type = ad.media_type || null; center.poster = center.poster || ad.poster_url || null }
         }
         setDoc(built)
+        if (built.plan && Object.keys(built.plan).length) setSections(built.plan)
         setState('ready')
         if (d.client_id) getClient(d.client_id).then((c) => alive && setClient(c)).catch(() => {})
       })
@@ -404,27 +405,30 @@ export default function MindmapCanvasPage() {
   function requestLeave() { dirty ? setConfirmLeave(true) : router.push('/plan-mindmap') }
   useEffect(() => { function bu(e: BeforeUnloadEvent) { if (dirty) { e.preventDefault(); e.returnValue = '' } } window.addEventListener('beforeunload', bu); return () => window.removeEventListener('beforeunload', bu) }, [dirty])
 
-  // 한 섹션을 스트리밍으로 받아 해당 박스에 실시간 타이핑
-  async function streamSection(key: string) {
+  // 한 섹션을 스트리밍으로 받아 해당 박스에 실시간 타이핑. 완료 텍스트를 반환(저장용).
+  async function streamSection(key: string): Promise<string> {
     setSecLoading((s) => ({ ...s, [key]: true }))
     try {
       const cur = docRef.current
       const cats = cur.nodes.filter((n) => n.type === 'category')
       const nodesForPlan = cats.map((c) => ({ label: c.title, items: c.items || [] }))
       const notes = cur.nodes.filter((n) => n.type === 'note' && n.text).map((n) => ({ label: '메모', items: [n.text!] }))
+      const narration = cur.nodes.find((n) => n.type === 'narration')?.text || ''
       const res = await aiFetch('/api/ai/plan-from-mindmap', {
         method: 'POST',
         body: JSON.stringify({
           section: key,
           mindmap: { summary: cur.summary, nodes: [...nodesForPlan, ...notes] },
+          reference_narration: narration,
           brief: { selling_points: client?.selling_points || '', segment: client?.segment || '' },
           brand_name: client?.name || mm?.source_brand || '우리 브랜드',
         }),
       })
       if (!res.ok || !res.body) {
         const j = await res.json().catch(() => ({}))
-        setSections((s) => ({ ...s, [key]: j.error || '생성 실패' }))
-        return
+        const msg = j.error || '생성 실패'
+        setSections((s) => ({ ...s, [key]: msg }))
+        return msg
       }
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
@@ -435,19 +439,28 @@ export default function MindmapCanvasPage() {
         acc += decoder.decode(value, { stream: true })
         setSections((s) => ({ ...s, [key]: acc }))
       }
+      return acc
     } catch {
-      setSections((s) => ({ ...s, [key]: '오류가 발생했어요.' }))
+      const msg = '오류가 발생했어요.'
+      setSections((s) => ({ ...s, [key]: msg }))
+      return msg
     } finally {
       setSecLoading((s) => ({ ...s, [key]: false }))
     }
   }
 
-  // 모든 섹션을 "동시에" 병렬 생성(각 박스가 동시에 타이핑됨 → 시간 절감)
-  function generatePlan() {
+  // 모든 섹션을 "동시에" 병렬 생성 → 완료되면 doc.plan 에 저장(닫아도 다시 열기 가능)
+  async function generatePlan() {
     setPlanModal(true)
     setSections({})
     setSecLoading({})
-    PLAN_KEYS.forEach((k) => streamSection(k))
+    const results = await Promise.all(PLAN_KEYS.map(async (k) => [k, await streamSection(k)] as const))
+    const final = Object.fromEntries(results) as Record<string, string>
+    if (mm) {
+      const newDoc = { ...docRef.current, plan: final }
+      setDoc(newDoc)
+      try { await updateMindmap(mm.id, { data: newDoc }); setDirty(false) } catch {}
+    }
   }
 
   if (state === 'loading') return <div className="flex h-full items-center justify-center text-gray-400"><Loader2 className="mr-2 h-5 w-5 animate-spin" /> 마인드맵 불러오는 중…</div>
@@ -593,8 +606,15 @@ export default function MindmapCanvasPage() {
                 </div>
               ) : <p className="text-gray-400">브리프가 비어 있어요. <button onClick={() => router.push('/project-plans')} className="text-primary underline">기획안 제작</button>에서 먼저 입력하면 더 정확해져요.</p>}
             </div>
-            <button onClick={generatePlan} className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-violet-600 px-3 py-2.5 text-sm font-semibold text-white hover:bg-violet-700"><Sparkles className="h-4 w-4" /> 이 마인드맵으로 기획안 생성</button>
-            <p className="text-[11px] text-gray-400">생성을 누르면 별도 창에서 섹션별로 동시에 작성돼요.</p>
+            {Object.keys(sections).length ? (
+              <div className="flex gap-2">
+                <button onClick={() => setPlanModal(true)} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-violet-600 px-3 py-2.5 text-sm font-semibold text-white hover:bg-violet-700"><Sparkles className="h-4 w-4" /> 기획안 보기</button>
+                <button onClick={generatePlan} title="다시 생성" className="rounded-lg border border-gray-200 px-3 py-2.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">다시</button>
+              </div>
+            ) : (
+              <button onClick={generatePlan} className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-violet-600 px-3 py-2.5 text-sm font-semibold text-white hover:bg-violet-700"><Sparkles className="h-4 w-4" /> 이 마인드맵으로 기획안 생성</button>
+            )}
+            <p className="text-[11px] text-gray-400">별도 창에서 섹션별로 동시에 작성돼요. 생성 후 자동 저장 — 닫아도 &apos;기획안 보기&apos;로 다시 열 수 있어요.</p>
           </div>
         </div>
       )}
@@ -646,12 +666,12 @@ function ToolBtn({ children, onClick, disabled, active, title }: { children: Rea
 function PlanBox({ label, text, loading, tall }: { label: string; text: string; loading: boolean; tall?: boolean }) {
   const [copied, setCopied] = useState(false)
   return (
-    <div className={`flex flex-col rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/40 ${tall ? 'h-full min-h-[320px]' : ''}`}>
+    <div className={`flex flex-col rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/40 ${tall ? 'h-full min-h-[320px]' : 'h-[240px]'}`}>
       <div className="mb-1 flex items-center justify-between">
         <span className="flex items-center gap-1 text-xs font-bold text-gray-500 dark:text-gray-300">{label}{loading && <Loader2 className="h-3 w-3 animate-spin" />}</span>
         {text && <button onClick={() => { navigator.clipboard?.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1200) }} className="text-[11px] text-primary hover:underline">{copied ? '복사됨' : '복사'}</button>}
       </div>
-      <pre className="flex-1 whitespace-pre-wrap text-[12px] leading-relaxed text-gray-700 dark:text-gray-200" style={{ fontFamily: 'inherit' }}>{text || (loading ? '작성 중…' : '—')}</pre>
+      <pre className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap text-[12px] leading-relaxed text-gray-700 dark:text-gray-200" style={{ fontFamily: 'inherit' }}>{text || (loading ? '작성 중…' : '—')}</pre>
     </div>
   )
 }
@@ -730,13 +750,13 @@ function NodeView({
 
   if (n.type === 'narration') {
     return (
-      <div data-node className={`${base} border-2 border-violet-300 bg-white p-2.5 dark:border-violet-800 dark:bg-gray-900`} style={style} onMouseDown={onMouseDown} onDoubleClick={onDoubleClick}>
-        <div className="mb-1.5 flex items-center justify-between">
+      <div data-node className={`${base} flex flex-col border-2 border-violet-300 bg-white p-2.5 dark:border-violet-800 dark:bg-gray-900`} style={style} onMouseDown={onMouseDown} onDoubleClick={onDoubleClick}>
+        <div className="mb-1.5 flex shrink-0 items-center justify-between">
           <span className="flex items-center gap-1.5 text-[13px] font-bold text-gray-900 dark:text-gray-100"><span className="h-2.5 w-2.5 shrink-0 rounded-full bg-violet-500" />{n.title}</span>
           {n.text ? <button onMouseDown={(e) => e.stopPropagation()} onClick={() => navigator.clipboard?.writeText(n.text || '')} className="text-[10px] text-violet-600 hover:underline">복사</button> : null}
         </div>
         {editing ? <EditBox val={val} setVal={setVal} onCommit={() => onCommit(val)} onCancel={onCancel} />
-          : n.text ? <p className="max-h-44 overflow-y-auto whitespace-pre-wrap text-[12px] leading-snug text-gray-700 dark:text-gray-200">{n.text}</p>
+          : n.text ? <p className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap text-[12px] leading-snug text-gray-700 dark:text-gray-200">{n.text}</p>
             : <p className="text-[12px] italic leading-snug text-gray-400">나레이션이 없는 소재입니다</p>}
         <Handles onStart={onResizeStart} />
       </div>

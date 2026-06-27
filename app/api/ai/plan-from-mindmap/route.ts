@@ -22,6 +22,7 @@ export async function POST(req: Request) {
   const brief = body.brief || {}
   const brandName: string = (body.brand_name || '우리 브랜드').toString()
   const section: string = (body.section || '').toString()
+  const refNarration: string = (body.reference_narration || '').toString().slice(0, 2500)
 
   // 섹션별 지시(각 섹션을 별도 요청으로 병렬 생성 → 동시 타이핑·시간 절감, 장황 X)
   const SECTIONS: Record<string, string> = {
@@ -50,12 +51,20 @@ export async function POST(req: Request) {
     .filter(Boolean)
     .join('\n')
 
+  const refBlock = refNarration.trim()
+    ? `
+
+[★ 레퍼런스 나레이션 원문 — 반드시 이 "화법·문장 구조·말투·스토리텔링 전개 방식"을 비슷하게 모사해라]
+"""${refNarration}"""
+(주의: 내용은 우리 브랜드/소구점에 맞게 바꾸되, 위 원문의 어투·리듬·문장 길이·전개 순서·구어체 느낌은 최대한 비슷하게 살릴 것. 특히 대본은 원문 화법을 강하게 모사.)`
+    : ''
+
   const ctx = `[경쟁 소재 마인드맵]
 ${mindmap.summary ? `총평: ${mindmap.summary}` : ''}
 ${nodeLines.join('\n')}
 
 [우리 브랜드(${brandName}) 브리프]
-${briefBlock || '(브리프 미입력 — 일반적인 베스트 프랙티스 가정)'}`
+${briefBlock || '(브리프 미입력 — 일반적인 베스트 프랙티스 가정)'}${refBlock}`
 
   const prompt = section && SECTIONS[section]
     ? `너는 숏폼 광고 기획 디렉터다. 아래 컨텍스트를 바탕으로 우리 브랜드(${brandName})용 기획안 중 "한 섹션만" 작성해라. 제목/머리말/다른 섹션 없이 그 내용만, 간결하게(장황 금지).
