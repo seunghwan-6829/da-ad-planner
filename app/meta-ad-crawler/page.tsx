@@ -7,6 +7,71 @@ import { aiFetch } from "@/lib/ai-fetch";
 import { getClients, type Client } from "@/lib/api/clients";
 import { createMindmap } from "@/lib/api/mindmaps";
 import { createContentGuide } from "@/lib/api/content-guides";
+import { supabase } from "@/lib/supabase";
+
+// 영상에서 "배경(씬)이 바뀔 때마다" 프레임을 떠서(화면 변화 감지) 스토리지에 올린 뒤 URL 반환.
+// CORS/디코딩 실패 시 throw → 호출부에서 서버 프레임(5장)으로 폴백.
+async function extractSceneFrames(videoUrl: string): Promise<string[]> {
+  const video = document.createElement("video");
+  video.crossOrigin = "anonymous";
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = "auto";
+  video.src = videoUrl;
+  await new Promise<void>((resolve, reject) => {
+    video.onloadedmetadata = () => resolve();
+    video.onerror = () => reject(new Error("video load fail"));
+    setTimeout(() => reject(new Error("timeout")), 15000);
+  });
+  const duration = video.duration;
+  if (!isFinite(duration) || duration <= 0) throw new Error("no duration");
+
+  const W = video.videoWidth || 540;
+  const H = video.videoHeight || 960;
+  const canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext("2d")!;
+  const sc = document.createElement("canvas");
+  sc.width = 32;
+  sc.height = 18;
+  const sctx = sc.getContext("2d")!;
+
+  const seekTo = (t: number) =>
+    new Promise<void>((resolve, reject) => {
+      const onSeeked = () => { video.removeEventListener("seeked", onSeeked); resolve(); };
+      video.addEventListener("seeked", onSeeked);
+      video.currentTime = Math.min(t, duration - 0.05);
+      setTimeout(() => reject(new Error("seek timeout")), 8000);
+    });
+  const smallData = () => { sctx.drawImage(video, 0, 0, 32, 18); return sctx.getImageData(0, 0, 32, 18).data; };
+  const diff = (a: Uint8ClampedArray, b: Uint8ClampedArray) => {
+    let s = 0;
+    for (let i = 0; i < a.length; i += 4) s += Math.abs((a[i] + a[i + 1] + a[i + 2]) / 3 - (b[i] + b[i + 1] + b[i + 2]) / 3);
+    return s / (a.length / 4);
+  };
+
+  const STEP = Math.max(0.5, duration / 60); // 최대 ~60샘플
+  const THRESH = 16; // 씬 전환 민감도
+  const MAX = 14;
+  const urls: string[] = [];
+  let prev: Uint8ClampedArray | null = null;
+  for (let t = 0.1; t < duration && urls.length < MAX; t += STEP) {
+    await seekTo(t);
+    const cur = smallData();
+    if (!prev || diff(prev, cur) > THRESH) {
+      ctx.drawImage(video, 0, 0, W, H);
+      const blob: Blob | null = await new Promise((res) => canvas.toBlob((b) => res(b), "image/jpeg", 0.82));
+      if (blob) {
+        const path = `content-frames/${Math.random().toString(36).slice(2, 9)}.jpg`;
+        const { error } = await supabase.storage.from("shooting-guides").upload(path, blob, { contentType: "image/jpeg", upsert: true });
+        if (!error) urls.push(supabase.storage.from("shooting-guides").getPublicUrl(path).data.publicUrl);
+      }
+      prev = cur;
+    }
+  }
+  return urls;
+}
 import {
   Megaphone,
   Settings,
@@ -2585,9 +2650,14 @@ function AdDetailModal({
   async function generateContentGuide(clientId: string) {
     setCgGenerating(true);
     try {
+      // 영상이면 브라우저에서 씬(배경 변화) 프레임을 추출(실패 시 서버 5프레임 폴백)
+      let frames: string[] = [];
+      if (ad.media_type === "video" && ad.media_url) {
+        try { frames = await extractSceneFrames(ad.media_url); } catch {}
+      }
       const res = await aiFetch("/api/ai/content-guide", {
         method: "POST",
-        body: JSON.stringify({ library_id: ad.library_id }),
+        body: JSON.stringify({ library_id: ad.library_id, frames }),
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {

@@ -25,10 +25,14 @@ export async function POST(req: Request) {
 
   // 장면 이미지: 영상=추출 프레임, 그 외=캐러셀/포스터
   const frames: string[] = Array.isArray(ad.frames) ? (ad.frames as string[]).filter(Boolean) : []
-  let images: string[] = frames.length
-    ? frames
-    : (Array.isArray(ad.media_urls) && ad.media_urls.length ? (ad.media_urls as string[]) : [ad.poster_url || ad.media_url].filter(Boolean) as string[])
-  images = images.slice(0, 6)
+  // 클라이언트가 영상에서 직접 추출한 씬 프레임(배경 변화 감지)을 우선 사용. 없으면 서버 프레임/포스터 폴백.
+  const clientFrames: string[] = Array.isArray(body.frames) ? (body.frames as string[]).filter(Boolean) : []
+  let images: string[] = clientFrames.length
+    ? clientFrames
+    : frames.length
+      ? frames
+      : (Array.isArray(ad.media_urls) && ad.media_urls.length ? (ad.media_urls as string[]) : ([ad.poster_url || ad.media_url].filter(Boolean) as string[]))
+  images = images.slice(0, 14)
   if (!images.length) return NextResponse.json({ error: '장면으로 쓸 이미지가 없는 소재예요(프레임 추출 전일 수 있어요).' }, { status: 400 })
 
   const transcript = typeof ad.transcript === 'string' ? ad.transcript : ''
