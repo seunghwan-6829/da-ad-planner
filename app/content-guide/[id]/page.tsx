@@ -16,8 +16,8 @@ function b64ToBlob(b64: string, type = 'image/png'): Blob {
   return new Blob([arr], { type })
 }
 
-// gpt-image-2는 네이티브 9:16을 주지만, gpt-image-1 폴백은 2:3으로 옴.
-// 이미 9:16이면 원본 그대로 저장(네이티브 해상도 보존), 아니면 9:16(1080x1920)으로 센터 크롭.
+// gpt-image-2는 네이티브 9:16(1152x2048)을 줌. 안전망: 이미 9:16이면 원본 그대로 저장,
+// 혹시 다른 비율이 오면 9:16(1080x1920)으로 센터 크롭.
 function cropTo916Blob(b64: string): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const img = new Image()

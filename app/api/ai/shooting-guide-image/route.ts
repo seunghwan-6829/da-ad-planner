@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: 'gpt-image-1',
+        model: 'gpt-image-2',
         prompt: finalPrompt,
         size: '1024x1536',
         quality: 'medium',

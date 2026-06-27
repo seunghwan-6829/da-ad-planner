@@ -5,17 +5,15 @@ export const maxDuration = 120 // 이미지 편집도 느림(Vercel Pro 권장, 
 
 const OPENAI_EDIT_URL = 'https://api.openai.com/v1/images/edits'
 
-// 모델별 출력 사이즈. gpt-image-2는 네이티브 9:16(1152x2048, 16배수·비율 정확)을 지원,
-// gpt-image-1은 세로 최대가 1024x1536(2:3)뿐이라 폴백 시 그걸로(클라이언트가 9:16 크롭).
-function sizeFor(model: string, ratio: string): string {
-  const g2 = model === 'gpt-image-2'
+// gpt-image-2 출력 사이즈(네이티브 9:16 = 1152x2048, 16배수·비율 정확).
+function sizeFor(ratio: string): string {
   if (ratio === '1:1') return '1024x1024'
-  if (ratio === '16:9') return g2 ? '2048x1152' : '1536x1024'
-  return g2 ? '1152x2048' : '1024x1536' // 9:16 기본
+  if (ratio === '16:9') return '2048x1152'
+  return '1152x2048' // 9:16 기본
 }
 
-// POST { image_url, prompt, ratio?, sanitize? } → 기존 이미지를 "수정 프롬프트"대로 편집(image-to-image).
-// gpt-image-2(미권한 계정은 gpt-image-1) 의 images/edits 엔드포인트 사용. 생성(content-image)과는 다른 API.
+// POST { image_url, prompt, ratio?, sanitize?, ref_urls?, recreate? } → 기존 이미지를 "수정 프롬프트"대로 편집(image-to-image).
+// gpt-image-2 전용(폴백 없음) images/edits 엔드포인트 사용. 생성(content-image)과는 다른 API.
 // 사용자 본인 OpenAI 키(x-user-openai-key). NSFW 차단 시 { nsfw:true } 반환.
 export async function POST(req: Request) {
   const apiKey = req.headers.get('x-user-openai-key') || process.env.OPENAI_API_KEY
@@ -98,19 +96,15 @@ export async function POST(req: Request) {
   }
 
   try {
-    let { res, data } = await editOnce('gpt-image-2')
-    if (!res.ok) {
-      const code: string = data.error?.code ?? ''
-      const msg: string = data.error?.message ?? ''
-      const modelIssue = res.status === 404 || /model/i.test(code) || /model[^.]*(not found|does not exist|unsupported|do not have access|not available)/i.test(msg)
-      if (modelIssue) ({ res, data } = await editOnce('gpt-image-1'))
-    }
+    // gpt-image-2 전용(폴백 없음). 권한 문제면 명확히 안내.
+    const { res, data } = await editOnce('gpt-image-2')
     if (!res.ok) {
       const msg: string = data.error?.message ?? 'OpenAI 이미지 편집 오류'
       const code: string = data.error?.code ?? ''
       const isSafety = code === 'moderation_blocked' || /safety system|safety_violations|content policy|moderation/i.test(msg)
       if (isSafety) return NextResponse.json({ nsfw: true }, { status: 200 })
-      return NextResponse.json({ error: msg }, { status: res.status })
+      const modelIssue = res.status === 404 || /model/i.test(code) || /model[^.]*(not found|does not exist|unsupported|do not have access|not available)/i.test(msg)
+      return NextResponse.json({ error: modelIssue ? 'OpenAI 계정에 gpt-image-2 사용 권한이 필요해요(이미지 모델 접근 권한 확인).' : msg }, { status: res.status })
     }
     const b64 = data.data?.[0]?.b64_json
     if (!b64) return NextResponse.json({ error: '편집 이미지를 받지 못했어요.' }, { status: 500 })
