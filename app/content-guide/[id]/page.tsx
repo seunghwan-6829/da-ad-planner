@@ -2,8 +2,31 @@
 
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Loader2, Copy, Check, Download, Camera, Sparkles } from 'lucide-react'
-import { getContentGuide, ContentGuide, CGScene } from '@/lib/api/content-guides'
+import { ArrowLeft, Loader2, Copy, Check, Download, Camera, Sparkles, Wand2, AlertTriangle } from 'lucide-react'
+import { getContentGuide, updateContentGuide, ContentGuide, CGScene } from '@/lib/api/content-guides'
+import { aiFetch } from '@/lib/ai-fetch'
+import { supabase } from '@/lib/supabase'
+
+const uid = () => Math.random().toString(36).slice(2, 9)
+
+function b64ToBlob(b64: string, type = 'image/png'): Blob {
+  const bin = atob(b64)
+  const arr = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i)
+  return new Blob([arr], { type })
+}
+
+async function saveUrl(url: string, name: string) {
+  try {
+    const res = await fetch(url)
+    const blob = await res.blob()
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = name
+    a.click()
+    URL.revokeObjectURL(a.href)
+  } catch { window.open(url, '_blank') }
+}
 
 export default function ContentGuideDetailPage() {
   const params = useParams<{ id: string }>()
@@ -20,16 +43,15 @@ export default function ContentGuideDetailPage() {
     return () => { alive = false }
   }, [params?.id])
 
-  async function saveImage(url: string, idx: number) {
-    try {
-      const res = await fetch(url)
-      const blob = await res.blob()
-      const a = document.createElement('a')
-      a.href = URL.createObjectURL(blob)
-      a.download = `scene-${idx + 1}.jpg`
-      a.click()
-      URL.revokeObjectURL(a.href)
-    } catch { window.open(url, '_blank') }
+  // 씬별 생성 이미지 갱신 + 저장
+  function updateScene(idx: number, generated: string[]) {
+    setCg((prev) => {
+      if (!prev) return prev
+      const scenes = prev.data.scenes.map((s, i) => (i === idx ? { ...s, generated } : s))
+      const data = { ...prev.data, scenes }
+      updateContentGuide(prev.id, { data }).catch(() => {})
+      return { ...prev, data }
+    })
   }
 
   function sendToModelGuide(s: CGScene, idx: number) {
@@ -65,46 +87,114 @@ export default function ContentGuideDetailPage() {
 
       <div className="space-y-4">
         {scenes.map((s, i) => (
-          <SceneRow key={i} idx={i} scene={s} onSave={() => saveImage(s.image, i)} onSend={() => sendToModelGuide(s, i)} />
+          <SceneRow key={i} idx={i} scene={s} onSave={() => saveUrl(s.image, `scene-${i + 1}.jpg`)} onSend={() => sendToModelGuide(s, i)} onGenerated={(urls) => updateScene(i, urls)} />
         ))}
       </div>
     </div>
   )
 }
 
-function SceneRow({ idx, scene, onSave, onSend }: { idx: number; scene: CGScene; onSave: () => void; onSend: () => void }) {
+function SceneRow({ idx, scene, onSave, onSend, onGenerated }: { idx: number; scene: CGScene; onSave: () => void; onSend: () => void; onGenerated: (urls: string[]) => void }) {
   const [copied, setCopied] = useState(false)
+  const [count, setCount] = useState(1)
+  const [generating, setGenerating] = useState(false)
+  const [nsfw, setNsfw] = useState(false)
+  const [gen, setGen] = useState<string[]>(scene.generated || [])
+
+  async function uploadGen(b64: string): Promise<string> {
+    const path = `content-img/${uid()}.png`
+    const { error } = await supabase.storage.from('shooting-guides').upload(path, b64ToBlob(b64), { contentType: 'image/png', upsert: true })
+    if (error) throw error
+    return supabase.storage.from('shooting-guides').getPublicUrl(path).data.publicUrl
+  }
+
+  async function generate(sanitize = false) {
+    setGenerating(true)
+    setNsfw(false)
+    try {
+      const calls = Array.from({ length: count }, () =>
+        aiFetch('/api/ai/content-image', { method: 'POST', body: JSON.stringify({ prompt: scene.prompt, ratio: '9:16', sanitize }) })
+      )
+      const ress = await Promise.all(calls)
+      const newUrls: string[] = []
+      let nsfwHit = false
+      let errMsg = ''
+      for (const res of ress) {
+        const j = await res.json().catch(() => ({}))
+        if (j.nsfw) { nsfwHit = true; continue }
+        if (!res.ok) { errMsg = j.error || '이미지 생성 실패'; continue }
+        if (j.b64) { try { newUrls.push(await uploadGen(j.b64)) } catch { errMsg = '저장 실패' } }
+      }
+      if (newUrls.length) {
+        const merged = [...gen, ...newUrls]
+        setGen(merged)
+        onGenerated(merged)
+      }
+      if (!newUrls.length && nsfwHit) setNsfw(true)
+      else if (!newUrls.length && errMsg) alert(errMsg)
+    } finally {
+      setGenerating(false)
+    }
+  }
+
   return (
-    <div className="grid grid-cols-1 gap-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900 md:grid-cols-[40px_180px_1fr]">
-      <div className="flex items-start justify-center">
-        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-sm font-bold text-primary">{idx + 1}</span>
-      </div>
-      <div className="space-y-2">
-        <div className="aspect-[9/16] w-full overflow-hidden rounded-lg bg-black">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={scene.image} alt="" className="h-full w-full object-contain" />
-        </div>
-        <button onClick={onSave} className="flex w-full items-center justify-center gap-1 rounded-lg border border-gray-200 px-2 py-1.5 text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"><Download className="h-3.5 w-3.5" /> 이미지 저장</button>
-      </div>
-      <div className="space-y-3">
-        <div>
-          <div className="mb-1 flex items-center justify-between">
-            <span className="flex items-center gap-1 text-xs font-bold text-gray-400"><Sparkles className="h-3.5 w-3.5" /> 이미지 생성 프롬프트</span>
-            <button onClick={() => { navigator.clipboard?.writeText(scene.prompt); setCopied(true); setTimeout(() => setCopied(false), 1500) }} className="flex items-center gap-1 text-xs text-primary hover:underline">{copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />} {copied ? '복사됨' : '복사'}</button>
+    <div className="grid grid-cols-1 gap-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900 lg:grid-cols-2">
+      {/* 좌: 스토리보드(프리뷰 축소) */}
+      <div className="flex gap-3">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-bold text-primary">{idx + 1}</span>
+        <div className="w-[96px] shrink-0 space-y-2">
+          <div className="aspect-[9/16] w-full overflow-hidden rounded-lg bg-black">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={scene.image} alt="" className="h-full w-full object-contain" />
           </div>
-          <p className="whitespace-pre-wrap rounded-lg bg-gray-50 p-3 text-sm leading-relaxed text-gray-700 dark:bg-gray-800/50 dark:text-gray-200">{scene.prompt || '—'}</p>
+          <button onClick={onSave} className="flex w-full items-center justify-center gap-1 rounded-lg border border-gray-200 px-1.5 py-1 text-[11px] text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"><Download className="h-3 w-3" /> 저장</button>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="min-w-0 flex-1 space-y-2">
           <div>
-            <div className="mb-1 text-xs font-bold text-gray-400">이미지 설명</div>
-            <p className="rounded-lg bg-gray-50 p-2.5 text-sm text-gray-700 dark:bg-gray-800/50 dark:text-gray-200">{scene.description || '—'}</p>
+            <div className="mb-1 flex items-center justify-between">
+              <span className="flex items-center gap-1 text-[11px] font-bold text-gray-400"><Sparkles className="h-3 w-3" /> 프롬프트</span>
+              <button onClick={() => { navigator.clipboard?.writeText(scene.prompt); setCopied(true); setTimeout(() => setCopied(false), 1500) }} className="flex items-center gap-1 text-[11px] text-primary hover:underline">{copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />} {copied ? '복사됨' : '복사'}</button>
+            </div>
+            <p className="max-h-32 overflow-y-auto whitespace-pre-wrap rounded-lg bg-gray-50 p-2.5 text-[12px] leading-relaxed text-gray-700 dark:bg-gray-800/50 dark:text-gray-200">{scene.prompt || '—'}</p>
           </div>
-          <div>
-            <div className="mb-1 text-xs font-bold text-gray-400">주의할 점</div>
-            <p className="rounded-lg bg-amber-50 p-2.5 text-sm text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">{scene.caution || '—'}</p>
+          <div className="text-[12px]">
+            <span className="font-bold text-gray-400">설명 </span><span className="text-gray-700 dark:text-gray-200">{scene.description || '—'}</span>
+          </div>
+          <div className="rounded-lg bg-amber-50 p-2 text-[12px] text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"><b>주의</b> {scene.caution || '—'}</div>
+          <button onClick={onSend} className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/5 px-2.5 py-1.5 text-xs font-medium text-primary hover:bg-primary/10"><Camera className="h-3.5 w-3.5" /> 모델 촬영 가이드로 보내기</button>
+        </div>
+      </div>
+
+      {/* 우: 이미지 생성 */}
+      <div className="space-y-2.5 lg:border-l lg:border-gray-100 lg:pl-4 dark:lg:border-gray-800">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="flex items-center gap-1 text-xs font-bold text-gray-500 dark:text-gray-300"><Wand2 className="h-3.5 w-3.5 text-violet-500" /> 이미지 생성 (gpt-image-1, 9:16)</span>
+          <div className="ml-auto flex items-center gap-1">
+            {[1, 2, 4].map((n) => (
+              <button key={n} onClick={() => setCount(n)} className={`rounded-md border px-2 py-0.5 text-[11px] ${count === n ? 'border-violet-400 bg-violet-50 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300' : 'border-gray-200 text-gray-500 dark:border-gray-700'}`}>{n}장</button>
+            ))}
           </div>
         </div>
-        <button onClick={onSend} className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/10"><Camera className="h-4 w-4" /> 모델 촬영 가이드로 보내기</button>
+        <button onClick={() => generate(false)} disabled={generating} className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-violet-600 px-3 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50">
+          {generating ? <><Loader2 className="h-4 w-4 animate-spin" /> 만드는 중…</> : <><Wand2 className="h-4 w-4" /> 이 프롬프트로 이미지 생성</>}
+        </button>
+        {nsfw && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
+            <div className="mb-1.5 flex items-center gap-1 font-bold"><AlertTriangle className="h-3.5 w-3.5" /> 선정적 이슈로 생성되지 않았어요.</div>
+            <button onClick={() => generate(true)} disabled={generating} className="rounded-md bg-amber-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-amber-700 disabled:opacity-50">순화해서 제작</button>
+          </div>
+        )}
+        {gen.length > 0 && (
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {gen.map((url, i) => (
+              <div key={i} className="group relative overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={url} alt="" className="aspect-[9/16] w-full object-cover" />
+                <button onClick={() => saveUrl(url, `gen-${idx + 1}-${i + 1}.png`)} className="absolute right-1 top-1 rounded bg-black/50 p-1 text-white opacity-0 hover:bg-black/70 group-hover:opacity-100" title="저장"><Download className="h-3 w-3" /></button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
