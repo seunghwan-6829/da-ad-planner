@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ChangeEvent } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Loader2, Copy, Check, Download, Camera, Sparkles, Wand2, AlertTriangle, Link2, X, Pencil, RefreshCw, Layers } from 'lucide-react'
+import { ArrowLeft, Loader2, Copy, Check, Download, Camera, Sparkles, Wand2, AlertTriangle, Link2, X, Pencil, RefreshCw, Layers, ImagePlus } from 'lucide-react'
 import { getContentGuide, updateContentGuide, ContentGuide, CGScene, CGGenItem, toStacks } from '@/lib/api/content-guides'
 import { aiFetch } from '@/lib/ai-fetch'
 import { supabase } from '@/lib/supabase'
@@ -123,6 +123,8 @@ function SceneRow({ idx, scene, onSave, onSend, onGenerated }: { idx: number; sc
   const [editing, setEditing] = useState(false)
   const [regening, setRegening] = useState(false)
   const [nsfwMode, setNsfwMode] = useState<null | 'edit' | 'regen'>(null)
+  const [refs, setRefs] = useState<string[]>([]) // 참고 이미지(배경/스타일 레퍼런스) URL
+  const [refBusy, setRefBusy] = useState(false)
 
   async function uploadGen(b64: string): Promise<string> {
     const path = `content-img/${uid()}.png`
@@ -174,8 +176,26 @@ function SceneRow({ idx, scene, onSave, onSend, onGenerated }: { idx: number; sc
     setViewLayer(stacks[i].length - 1)
     setEditText('')
     setNsfwMode(null)
+    setRefs([])
   }
   function closeLightbox() { setLightbox(null) }
+
+  // 참고 이미지 업로드(스토리지) → URL 보관
+  async function onPickRef(e: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files || [])
+    e.target.value = ''
+    if (!files.length) return
+    setRefBusy(true)
+    try {
+      const urls: string[] = []
+      for (const f of files.slice(0, 4)) {
+        const path = `content-ref/${uid()}.${(f.type.split('/')[1] || 'png').replace(/[^a-z0-9]/gi, '')}`
+        const { error } = await supabase.storage.from('shooting-guides').upload(path, f, { contentType: f.type || 'image/png', upsert: true })
+        if (!error) urls.push(supabase.storage.from('shooting-guides').getPublicUrl(path).data.publicUrl)
+      }
+      if (urls.length) setRefs((prev) => [...prev, ...urls].slice(0, 4))
+    } catch { alert('참고 이미지 업로드에 실패했어요.') } finally { setRefBusy(false) }
+  }
 
   // 편집: 현재 보는 레이어를 수정 프롬프트대로 고쳐 새 레이어로 위에 쌓음(image-to-image)
   async function editImage(sanitize = false) {
@@ -184,7 +204,7 @@ function SceneRow({ idx, scene, onSave, onSend, onGenerated }: { idx: number; sc
     const base = stacks[lightbox][viewLayer]
     setEditing(true); setNsfwMode(null)
     try {
-      const res = await aiFetch('/api/ai/content-image-edit', { method: 'POST', body: JSON.stringify({ image_url: base, prompt: editText, ratio: '9:16', sanitize }) })
+      const res = await aiFetch('/api/ai/content-image-edit', { method: 'POST', body: JSON.stringify({ image_url: base, prompt: editText, ratio: '9:16', sanitize, ref_urls: refs }) })
       const j = await res.json().catch(() => ({}))
       if (j.nsfw) { setNsfwMode('edit'); return }
       if (!res.ok) { alert(j.error || '편집에 실패했어요.'); return }
@@ -317,7 +337,30 @@ function SceneRow({ idx, scene, onSave, onSend, onGenerated }: { idx: number; sc
             {/* 우: 편집 패널 */}
             <div className="flex w-full shrink-0 flex-col gap-2 sm:w-64">
               <div className="text-xs font-bold text-gray-500 dark:text-gray-300">이미지 수정</div>
-              <textarea value={editText} onChange={(e) => setEditText(e.target.value)} rows={5} placeholder="수정할 내용을 적어주세요. 예) 배경을 밝은 카페로 / 옷을 흰색으로 / 더 환하게" className="w-full resize-none rounded-lg border border-gray-200 bg-gray-50 p-2.5 text-[12px] leading-relaxed text-gray-700 outline-none focus:border-violet-400 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200" />
+              {/* 참고 이미지 첨부(배경/스타일 레퍼런스) */}
+              <div className="rounded-lg border border-dashed border-gray-200 p-2 dark:border-gray-700">
+                <div className="mb-1.5 flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-gray-400">참고 이미지 (배경·스타일)</span>
+                  <label className={`flex cursor-pointer items-center gap-1 rounded-md border border-gray-200 px-1.5 py-0.5 text-[10px] text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800 ${refBusy ? 'pointer-events-none opacity-50' : ''}`}>
+                    {refBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <ImagePlus className="h-3 w-3" />} 첨부
+                    <input type="file" accept="image/*" multiple className="hidden" onChange={onPickRef} />
+                  </label>
+                </div>
+                {refs.length === 0 ? (
+                  <p className="text-[10px] leading-relaxed text-gray-400">배경을 첨부 이미지처럼 바꾸고 싶을 때 올려주세요 — <b className="text-violet-500">편집</b>에 함께 반영돼요.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {refs.map((u, ri) => (
+                      <div key={ri} className="group relative h-12 w-12 overflow-hidden rounded-md border border-gray-200 dark:border-gray-700">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={u} alt="" className="h-full w-full object-cover" />
+                        <button onClick={() => setRefs((prev) => prev.filter((_, k) => k !== ri))} className="absolute right-0 top-0 rounded-bl bg-black/60 p-0.5 text-white opacity-0 group-hover:opacity-100" title="제거"><X className="h-2.5 w-2.5" /></button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <textarea value={editText} onChange={(e) => setEditText(e.target.value)} rows={5} placeholder="수정할 내용을 적어주세요. 예) 배경을 첨부한 참고 이미지처럼 바꿔줘 / 옷을 흰색으로" className="w-full resize-none rounded-lg border border-gray-200 bg-gray-50 p-2.5 text-[12px] leading-relaxed text-gray-700 outline-none focus:border-violet-400 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200" />
               <div className="flex gap-2">
                 <button onClick={() => editImage(false)} disabled={editing || regening} className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-violet-600 px-2 py-2 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-50">
                   {editing ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> 편집 중</> : <><Pencil className="h-3.5 w-3.5" /> 편집</>}
