@@ -1,0 +1,27 @@
+name: Instagram Sync
+
+on:
+  schedule:
+    # 8시간마다 전체 동기화(스냅샷 누적). sync 잡이 만료 임박 토큰 갱신도 함께 수행.
+    - cron: "0 */8 * * *"
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "job (sync | refresh)"
+        required: false
+        default: "sync"
+
+# 필요한 GitHub Secrets: APP_URL(예: https://da-ad-planner.vercel.app), CRON_SECRET(앱 env 와 동일)
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Trigger Instagram sync
+        run: |
+          JOB="${{ github.event.inputs.job }}"
+          JOB="${JOB:-sync}"
+          curl -fsS --max-time 600 -X POST \
+            "${{ secrets.APP_URL }}/api/instagram/cron?job=${JOB}" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" || (echo "sync 호출 실패" && exit 1)

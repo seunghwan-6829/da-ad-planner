@@ -25,7 +25,10 @@ yarn-error.log*
 .npm-cache/
 
 # local env files
-.env*.local
+.env
+.env.*
+!.env.example
+!.env.local.example
 
 # api keys / secrets (never commit)
 api key.txt
