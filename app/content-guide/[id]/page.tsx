@@ -16,6 +16,36 @@ function b64ToBlob(b64: string, type = 'image/png'): Blob {
   return new Blob([arr], { type })
 }
 
+// gpt-image 는 9:16 출력을 못 함(최대 세로 1024x1536=2:3). 받은 이미지를 9:16(1080x1920)으로 센터 크롭.
+function cropTo916Blob(b64: string): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => {
+      const targetAspect = 9 / 16
+      const iw = img.naturalWidth, ih = img.naturalHeight
+      let sx = 0, sy = 0, sw = iw, sh = ih
+      if (iw / ih > targetAspect) {
+        // 가로가 9:16보다 넓음(보통 2:3) → 좌우를 잘라 세로 구도 유지
+        sw = Math.round(ih * targetAspect)
+        sx = Math.round((iw - sw) / 2)
+      } else {
+        // 세로가 더 길면 위아래를 잘라 맞춤
+        sh = Math.round(iw / targetAspect)
+        sy = Math.round((ih - sh) / 2)
+      }
+      const OW = 1080, OH = 1920
+      const canvas = document.createElement('canvas')
+      canvas.width = OW; canvas.height = OH
+      const ctx = canvas.getContext('2d')
+      if (!ctx) { reject(new Error('no ctx')); return }
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, OW, OH)
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('crop fail'))), 'image/png')
+    }
+    img.onerror = () => reject(new Error('img load fail'))
+    img.src = `data:image/png;base64,${b64}`
+  })
+}
+
 async function saveUrl(url: string, name: string) {
   try {
     const res = await fetch(url)
@@ -127,8 +157,10 @@ function SceneRow({ idx, scene, onSave, onSend, onGenerated }: { idx: number; sc
   const [refBusy, setRefBusy] = useState(false)
 
   async function uploadGen(b64: string): Promise<string> {
+    // 9:16(1080x1920)로 크롭 후 저장. 크롭 실패 시 원본 그대로.
+    const blob = await cropTo916Blob(b64).catch(() => b64ToBlob(b64))
     const path = `content-img/${uid()}.png`
-    const { error } = await supabase.storage.from('shooting-guides').upload(path, b64ToBlob(b64), { contentType: 'image/png', upsert: true })
+    const { error } = await supabase.storage.from('shooting-guides').upload(path, blob, { contentType: 'image/png', upsert: true })
     if (error) throw error
     return supabase.storage.from('shooting-guides').getPublicUrl(path).data.publicUrl
   }
