@@ -26,7 +26,11 @@ export async function POST(req: Request) {
   let finalPrompt = sanitize
     ? `아래 장면을 "건전하고 비선정적으로 순화"하여 묘사해줘. 노출/속옷/수영복/선정적 포즈/과도한 피부 노출은 제거하고, 제품·상황·분위기·표정 중심으로 표현.\n[장면] ${prompt}`
     : prompt
-  finalPrompt += ' — 화면 안에 어떤 글자/자막/워터마크도 넣지 말 것. 사실적인 광고 레퍼런스 이미지 스타일.'
+  // 글자/텍스트는 절대 렌더링하지 않도록 앞·뒤로 이중 강조(가장 중요한 제약)
+  finalPrompt =
+    `[필수·최우선] 이미지 안에 어떤 글자·문자·숫자·자막·캡션·타이포그래피·로고·워터마크·UI 요소도 절대 렌더링하지 말 것. 텍스트가 단 하나도 없는 순수 비주얼만 생성.\n` +
+    finalPrompt +
+    `\n— 다시 강조: 화면에 글자/텍스트 일절 금지(빈 간판·빈 라벨·빈 패키지로 표현). 사실적인 광고 레퍼런스 이미지 스타일.`
 
   const genOnce = async (model: string) => {
     const res = await fetch(OPENAI_IMAGE_URL, {
