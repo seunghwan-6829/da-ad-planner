@@ -146,8 +146,11 @@ function SceneRow({ idx, scene, onSave, onSend, onGenerated }: { idx: number; sc
     setNsfw(false)
     try {
       const usePrompt = promptText.trim() || scene.prompt
+      // 원본 프레임이 있으면 그걸 레퍼런스로 "재현"(구도·각도·포즈 유지) → 원본과 최대한 비슷하게.
       const calls = Array.from({ length: count }, () =>
-        aiFetch('/api/ai/content-image', { method: 'POST', body: JSON.stringify({ prompt: usePrompt, ratio: '9:16', sanitize }) })
+        scene.image
+          ? aiFetch('/api/ai/content-image-edit', { method: 'POST', body: JSON.stringify({ image_url: scene.image, prompt: usePrompt, ratio: '9:16', sanitize, recreate: true }) })
+          : aiFetch('/api/ai/content-image', { method: 'POST', body: JSON.stringify({ prompt: usePrompt, ratio: '9:16', sanitize }) })
       )
       const ress = await Promise.all(calls)
       const newUrls: string[] = []
@@ -223,7 +226,10 @@ function SceneRow({ idx, scene, onSave, onSend, onGenerated }: { idx: number; sc
     setRegening(true); setNsfwMode(null)
     try {
       const usePrompt = editText.trim() || scene.prompt
-      const res = await aiFetch('/api/ai/content-image', { method: 'POST', body: JSON.stringify({ prompt: usePrompt, ratio: '9:16', sanitize }) })
+      // 재생성도 원본 프레임을 레퍼런스로 "재현"(구도 유지) — 원본과 비슷하게 다시.
+      const res = scene.image
+        ? await aiFetch('/api/ai/content-image-edit', { method: 'POST', body: JSON.stringify({ image_url: scene.image, prompt: usePrompt, ratio: '9:16', sanitize, recreate: true }) })
+        : await aiFetch('/api/ai/content-image', { method: 'POST', body: JSON.stringify({ prompt: usePrompt, ratio: '9:16', sanitize }) })
       const j = await res.json().catch(() => ({}))
       if (j.nsfw) { setNsfwMode('regen'); return }
       if (!res.ok) { alert(j.error || '재생성에 실패했어요.'); return }
@@ -370,7 +376,7 @@ function SceneRow({ idx, scene, onSave, onSend, onGenerated }: { idx: number; sc
                 </button>
               </div>
               <p className="text-[10px] leading-relaxed text-gray-400">
-                <b className="text-gray-500 dark:text-gray-300">편집</b> = 현재 이미지를 그대로 두고 수정 프롬프트만 반영해 고침. <b className="text-gray-500 dark:text-gray-300">재생성</b> = 프롬프트로 완전히 새 이미지. 둘 다 <b>기존은 아래 레이어로 보존</b>되고 새 결과가 위로 쌓여요.
+                <b className="text-gray-500 dark:text-gray-300">편집</b> = 현재 이미지에 수정 프롬프트(+참고 이미지)를 반영해 고침. <b className="text-gray-500 dark:text-gray-300">재생성</b> = 원본 장면을 토대로 다시 생성(구도·각도 유지). 둘 다 <b>기존은 아래 레이어로 보존</b>돼요.
               </p>
               {nsfwMode && (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
