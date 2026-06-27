@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Loader2, Copy, Check, Download, Camera, Sparkles, Wand2, AlertTriangle } from 'lucide-react'
+import { ArrowLeft, Loader2, Copy, Check, Download, Camera, Sparkles, Wand2, AlertTriangle, Link2 } from 'lucide-react'
 import { getContentGuide, updateContentGuide, ContentGuide, CGScene } from '@/lib/api/content-guides'
 import { aiFetch } from '@/lib/ai-fetch'
 import { supabase } from '@/lib/supabase'
@@ -33,6 +33,7 @@ export default function ContentGuideDetailPage() {
   const router = useRouter()
   const [cg, setCg] = useState<ContentGuide | null>(null)
   const [state, setState] = useState<'loading' | 'ready' | 'notfound'>('loading')
+  const [linkCopied, setLinkCopied] = useState(false)
 
   useEffect(() => {
     if (!params?.id) return
@@ -77,12 +78,24 @@ export default function ContentGuideDetailPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center gap-3">
-        <button onClick={() => router.push('/content-guide')} className="flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"><ArrowLeft className="h-3.5 w-3.5" /> 목록</button>
-        <div>
-          <h1 className="text-xl font-bold dark:text-gray-100">{cg.title || '컨텐츠 가이드'}</h1>
-          {cg.source_brand && <p className="text-xs text-gray-400">출처: {cg.source_brand} · 씬 {scenes.length}개</p>}
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <button onClick={() => router.push('/content-guide')} className="flex shrink-0 items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"><ArrowLeft className="h-3.5 w-3.5" /> 목록</button>
+          <div className="min-w-0">
+            <h1 className="truncate text-xl font-bold dark:text-gray-100">{cg.title || '컨텐츠 가이드'}</h1>
+            {cg.source_brand && <p className="truncate text-xs text-gray-400">출처: {cg.source_brand} · 씬 {scenes.length}개</p>}
+          </div>
         </div>
+        <button
+          onClick={() => {
+            const url = `${window.location.origin}/content-guide/share/${cg.id}`
+            navigator.clipboard?.writeText(url).then(() => { setLinkCopied(true); setTimeout(() => setLinkCopied(false), 1800) }).catch(() => window.prompt('공유 링크 (복사하세요)', url))
+          }}
+          title="외부 공개 링크 복사 (로그인 없이 볼 수 있는 읽기전용 페이지)"
+          className={`flex shrink-0 items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium ${linkCopied ? 'border-green-300 bg-green-50 text-green-700 dark:border-green-700 dark:bg-green-900/30 dark:text-green-300' : 'border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'}`}
+        >
+          {linkCopied ? <Check className="h-3.5 w-3.5" /> : <Link2 className="h-3.5 w-3.5" />} {linkCopied ? '복사됨' : '공유 URL'}
+        </button>
       </div>
 
       <div className="space-y-4">
