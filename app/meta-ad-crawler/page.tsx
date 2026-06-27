@@ -362,6 +362,17 @@ export default function MetaAdCrawlerPage() {
     } finally {
       setLoading(false);
     }
+    // has_analysis 배지: 분석된 id 목록을 첫 페인트와 분리해 백그라운드로 받아 병합(임계경로 단축).
+    fetch("/api/meta-ad/analyzed")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        const ids: string[] = j?.ids ?? [];
+        if (ids.length) {
+          const set = new Set(ids);
+          setAds((prev) => prev.map((a) => (set.has(a.library_id) ? { ...a, has_analysis: true } : a)));
+        }
+      })
+      .catch(() => {});
     // 첫 화면(최근 300)을 띄운 뒤, 나머지 광고를 백그라운드로 이어 받아 병합(화면 안 멈춤). 진입당 1회.
     // 속도: 페이지를 한 번에 1000개씩, 6개를 동시(병렬)로 받아 합친다 → 순차 대비 수 배 빠름.
     if (!bgLoadedRef.current) {

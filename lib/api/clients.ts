@@ -8,10 +8,11 @@ export interface Client {
   sort_order: number
   deleted_at: string | null
   created_at: string
-  // 브랜드 브리프(관리자만 편집) — plan-mindmap-schema.sql
+  // 브랜드 브리프(관리자만 편집). 소구점 + 세그먼트 2개로 운영(브랜드명은 클라이언트명 자동)
   brand_brief?: string | null
   strengths?: string | null
   selling_points?: string | null
+  segment?: string | null
 }
 
 export interface ClientPermission {

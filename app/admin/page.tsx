@@ -37,6 +37,7 @@ export default function AdminPage() {
 
   // 사용자 관리
   const [users, setUsers] = useState<UserProfile[]>([])
+  const [activity, setActivity] = useState<Record<string, { last_sign_in_at: string | null; created_at: string | null }>>({})
   const [loading, setLoading] = useState(true)
   const [updating, setUpdating] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
@@ -80,6 +81,13 @@ export default function AdminPage() {
 
       if (error) throw error
       setUsers(data || [])
+      // 마지막 로그인 등 활동(관리자 전용 API — auth.users 의 last_sign_in_at 조회)
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        const token = session?.access_token
+        const res = await fetch('/api/admin/users-activity', { headers: { Authorization: `Bearer ${token}` } })
+        if (res.ok) { const j = await res.json(); setActivity(j.activity || {}) }
+      } catch {}
     } catch (error) {
       console.error('사용자 로드 실패:', error)
     } finally {
@@ -370,6 +378,7 @@ export default function AdminPage() {
                         <p className="font-medium text-lg">{user.email}</p>
                         <p className="text-xs text-muted-foreground">
                           가입일: {new Date(user.created_at).toLocaleDateString('ko-KR')}
+                          {' · '}마지막 로그인: {activity[user.id]?.last_sign_in_at ? new Date(activity[user.id].last_sign_in_at!).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' }) : '없음'}
                         </p>
                       </div>
                       <div className="flex gap-2">
@@ -461,8 +470,9 @@ export default function AdminPage() {
                           </p>
                           {u.name && <p className="truncate text-xs text-gray-400">{u.email}</p>}
                         </div>
-                        <span className="hidden whitespace-nowrap text-xs text-gray-400 md:block">
-                          {new Date(u.created_at).toLocaleDateString('ko-KR')}
+                        <span className="hidden whitespace-nowrap text-right text-xs text-gray-400 md:block">
+                          <span className="block">가입 {new Date(u.created_at).toLocaleDateString('ko-KR')}</span>
+                          <span className="block">로그인 {activity[u.id]?.last_sign_in_at ? new Date(activity[u.id].last_sign_in_at!).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' }) : '없음'}</span>
                         </span>
                         <Badge
                           variant={u.role === 'admin' ? 'destructive' : u.role === 'approved' ? 'default' : 'secondary'}

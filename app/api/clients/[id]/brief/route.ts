@@ -33,6 +33,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if (typeof body.brand_brief === 'string') patch.brand_brief = body.brand_brief
   if (typeof body.strengths === 'string') patch.strengths = body.strengths
   if (typeof body.selling_points === 'string') patch.selling_points = body.selling_points
+  if (typeof body.segment === 'string') patch.segment = body.segment
   if (Object.keys(patch).length === 0) {
     return NextResponse.json({ error: '갱신할 필드가 없습니다.' }, { status: 400 })
   }
@@ -41,7 +42,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     .from('clients')
     .update(patch)
     .eq('id', id)
-    .select('id, brand_brief, strengths, selling_points')
+    .select('id, selling_points, segment')
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })

@@ -404,7 +404,7 @@ export default function MindmapCanvasPage() {
         method: 'POST',
         body: JSON.stringify({
           mindmap: { summary: cur.summary, nodes: [...nodesForPlan, ...notes] },
-          brief: { brand_brief: client?.brand_brief || '', strengths: client?.strengths || '', selling_points: client?.selling_points || '' },
+          brief: { selling_points: client?.selling_points || '', segment: client?.segment || '' },
           brand_name: client?.name || mm?.source_brand || '우리 브랜드',
         }),
       })
@@ -551,11 +551,10 @@ export default function MindmapCanvasPage() {
           <div className="flex-1 space-y-3 overflow-y-auto p-4">
             <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 text-xs">
               <div className="mb-1 font-bold text-gray-500 dark:text-gray-400">브랜드 브리프 {client?.name ? `· ${client.name}` : ''}</div>
-              {client && (client.brand_brief || client.strengths || client.selling_points) ? (
+              {client && (client.selling_points || client.segment) ? (
                 <div className="space-y-1 text-gray-600 dark:text-gray-300">
-                  {client.brand_brief && <p><b>소개</b> {client.brand_brief}</p>}
-                  {client.strengths && <p><b>강점</b> {client.strengths}</p>}
                   {client.selling_points && <p><b>소구점</b> {client.selling_points}</p>}
+                  {client.segment && <p><b>세그먼트</b> {client.segment}</p>}
                 </div>
               ) : <p className="text-gray-400">브리프가 비어 있어요. <button onClick={() => router.push('/project-plans')} className="text-primary underline">기획안 제작</button>에서 먼저 입력하면 더 정확해져요.</p>}
             </div>

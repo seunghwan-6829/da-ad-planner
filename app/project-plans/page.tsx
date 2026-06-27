@@ -49,9 +49,9 @@ export default function ProjectPlansPage() {
   const [plans, setPlans] = useState<ProjectPlan[]>([])
   const [plansLoading, setPlansLoading] = useState(false)
 
-  // 브랜드 브리프(어떤 브랜드/강점/소구점) — 관리자만 편집
-  const [brief, setBrief] = useState({ brand_brief: '', strengths: '', selling_points: '' })
-  const [briefEdit, setBriefEdit] = useState(false)
+  // 브랜드 브리프(소구점/세그먼트) — 관리자만 편집. 플로팅 모달로 작성.
+  const [brief, setBrief] = useState({ selling_points: '', segment: '' })
+  const [briefModal, setBriefModal] = useState(false)
   const [briefSaving, setBriefSaving] = useState(false)
   
   // 휴지통 모드
@@ -119,12 +119,8 @@ export default function ProjectPlansPage() {
     setSelectedClient(client)
     setPlansLoading(true)
     setShowTrash(false)
-    setBriefEdit(false)
-    setBrief({
-      brand_brief: client.brand_brief || '',
-      strengths: client.strengths || '',
-      selling_points: client.selling_points || '',
-    })
+    setBriefModal(false)
+    setBrief({ selling_points: client.selling_points || '', segment: client.segment || '' })
     try {
       const plansData = await getProjectPlans(client.id)
       setPlans(plansData)
@@ -154,7 +150,7 @@ export default function ProjectPlansPage() {
       }
       setClients((prev) => prev.map((c) => (c.id === selectedClient.id ? { ...c, ...brief } : c)))
       setSelectedClient((sc) => (sc ? { ...sc, ...brief } : sc))
-      setBriefEdit(false)
+      setBriefModal(false)
     } catch {
       alert('브리프 저장 중 오류가 발생했습니다.')
     } finally {
@@ -655,8 +651,12 @@ export default function ProjectPlansPage() {
                   <span className="text-sm text-gray-500 dark:text-gray-400">기획안 {plans.length}개</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button 
-                    variant={showTrash ? "default" : "outline"} 
+                  <Button variant="outline" size="sm" onClick={() => { setBrief({ selling_points: selectedClient.selling_points || '', segment: selectedClient.segment || '' }); setBriefModal(true) }}>
+                    <FileText className="h-4 w-4 mr-1" />
+                    브랜드 브리프
+                  </Button>
+                  <Button
+                    variant={showTrash ? "default" : "outline"}
                     size="sm"
                     onClick={() => showTrash ? handleSelectClient(selectedClient) : loadDeletedPlans()}
                   >
@@ -671,57 +671,6 @@ export default function ProjectPlansPage() {
                   )}
                 </div>
               </div>
-            </div>
-
-            {/* 브랜드 브리프 (어떤 브랜드 / 강점 / 소구점) — 관리자만 편집 */}
-            <div className="border-b dark:border-gray-800 bg-white dark:bg-gray-950 px-6 py-4">
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-xs font-bold uppercase tracking-wide text-gray-400">브랜드 브리프</span>
-                {isAdmin && !briefEdit && (
-                  <Button size="sm" variant="outline" className="h-7" onClick={() => setBriefEdit(true)}>
-                    <Edit2 className="h-3 w-3 mr-1" /> 편집
-                  </Button>
-                )}
-                {isAdmin && briefEdit && (
-                  <div className="flex gap-1">
-                    <Button size="sm" className="h-7" onClick={saveBrief} disabled={briefSaving}>
-                      {briefSaving ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Check className="h-3 w-3 mr-1" />} 저장
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7"
-                      onClick={() => {
-                        setBriefEdit(false)
-                        setBrief({
-                          brand_brief: selectedClient.brand_brief || '',
-                          strengths: selectedClient.strengths || '',
-                          selling_points: selectedClient.selling_points || '',
-                        })
-                      }}
-                    >
-                      취소
-                    </Button>
-                  </div>
-                )}
-              </div>
-              {briefEdit ? (
-                <div className="grid gap-2 md:grid-cols-3">
-                  <BriefField label="어떤 브랜드" value={brief.brand_brief} onChange={(v) => setBrief((b) => ({ ...b, brand_brief: v }))} />
-                  <BriefField label="강점" value={brief.strengths} onChange={(v) => setBrief((b) => ({ ...b, strengths: v }))} />
-                  <BriefField label="소구점" value={brief.selling_points} onChange={(v) => setBrief((b) => ({ ...b, selling_points: v }))} />
-                </div>
-              ) : brief.brand_brief || brief.strengths || brief.selling_points ? (
-                <div className="grid gap-3 md:grid-cols-3 text-sm">
-                  <BriefRead label="어떤 브랜드" value={brief.brand_brief} />
-                  <BriefRead label="강점" value={brief.strengths} />
-                  <BriefRead label="소구점" value={brief.selling_points} />
-                </div>
-              ) : (
-                <p className="text-xs text-gray-400">
-                  {isAdmin ? '편집을 눌러 브랜드·강점·소구점을 기록하세요. (관리자만 수정 가능)' : '등록된 브리프가 없습니다.'}
-                </p>
-              )}
             </div>
 
             {/* 기획안 목록 */}
@@ -892,6 +841,37 @@ export default function ProjectPlansPage() {
                 취소
               </Button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 브랜드 브리프 모달 (소구점 + 세그먼트) — 관리자만 편집 */}
+      {briefModal && selectedClient && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setBriefModal(false)}>
+          <div className="w-full max-w-lg rounded-2xl bg-white dark:bg-gray-900 p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-1 flex items-center justify-between">
+              <h2 className="text-lg font-bold dark:text-gray-100">브랜드 브리프 · {selectedClient.name}</h2>
+              <button onClick={() => setBriefModal(false)} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"><X className="h-5 w-5" /></button>
+            </div>
+            <p className="mb-4 text-xs text-gray-400">마인드맵→기획안 생성 시 학습에 사용됩니다. 브랜드명은 클라이언트명(<b>{selectedClient.name}</b>)으로 자동 반영돼요.</p>
+            {isAdmin ? (
+              <div className="space-y-3">
+                <BriefField label="소구점" value={brief.selling_points} onChange={(v) => setBrief((b) => ({ ...b, selling_points: v }))} />
+                <BriefField label="세그먼트 (타겟)" value={brief.segment} onChange={(v) => setBrief((b) => ({ ...b, segment: v }))} />
+                <div className="flex justify-end gap-2 pt-1">
+                  <Button variant="outline" onClick={() => { setBriefModal(false); setBrief({ selling_points: selectedClient.selling_points || '', segment: selectedClient.segment || '' }) }}>취소</Button>
+                  <Button onClick={saveBrief} disabled={briefSaving}>
+                    {briefSaving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Check className="h-4 w-4 mr-1" />} 저장
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3 text-sm">
+                <BriefRead label="소구점" value={brief.selling_points} />
+                <BriefRead label="세그먼트 (타겟)" value={brief.segment} />
+                <p className="text-xs text-gray-400">관리자만 수정할 수 있어요.</p>
+              </div>
+            )}
           </div>
         </div>
       )}

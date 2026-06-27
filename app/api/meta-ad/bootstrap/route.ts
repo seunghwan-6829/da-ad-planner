@@ -47,15 +47,15 @@ async function fetchCounts(): Promise<Record<string, number>> {
 export async function GET() {
   const recentCols = `${LIGHT_COLS}, ad_text` // 최근 것은 본문도(미리보기용 200자로 잘라 전송)
 
-  const [tRes, aRes, anRes, counts] = await Promise.all([
+  // has_analysis(분석된 id 스캔)는 첫 페인트를 늦추므로 임계 경로에서 제외 → 클라이언트가
+  // /api/meta-ad/analyzed 로 첫 페인트 직후 백그라운드로 받아 병합한다.
+  const [tRes, aRes, counts] = await Promise.all([
     supabaseAdmin.from('am_targets').select('*').order('created_at', { ascending: false }),
     supabaseAdmin
       .from('am_ads')
       .select(`${recentCols}, saved`)
       .order('first_seen_at', { ascending: false })
       .limit(RECENT),
-    // 저장된 AI 분석이 있는 소재 id만(가벼움) → 목록에 has_analysis 플래그로 표시
-    supabaseAdmin.from('am_ads').select('library_id').not('ai_analysis', 'is', null),
     fetchCounts(),
   ])
 
@@ -73,12 +73,10 @@ export async function GET() {
     rows = retry.data
   }
 
-  const analyzed = new Set((anRes && !anRes.error ? anRes.data ?? [] : []).map((r: any) => r.library_id))
   // 본문(ad_text)은 카드엔 안 쓰이고 무거우니 미리보기 200자만. 전체 본문은 상세 클릭 시 openDetail 이 따로 받는다.
   const ads = (rows ?? []).map((a: any) => ({
     ...a,
     ad_text: a.ad_text ? String(a.ad_text).slice(0, 200) : a.ad_text,
-    has_analysis: analyzed.has(a.library_id),
   }))
 
   return NextResponse.json({ targets: tRes.data ?? [], ads, counts })

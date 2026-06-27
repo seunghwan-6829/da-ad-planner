@@ -31,9 +31,9 @@ export async function POST(req: Request) {
   }
 
   const briefBlock = [
-    brief.brand_brief ? `- 브랜드 소개: ${brief.brand_brief}` : '',
-    brief.strengths ? `- 강점: ${brief.strengths}` : '',
+    `- 브랜드명: ${brandName}`,
     brief.selling_points ? `- 소구점: ${brief.selling_points}` : '',
+    brief.segment ? `- 세그먼트(타겟): ${brief.segment}` : '',
   ]
     .filter(Boolean)
     .join('\n')
