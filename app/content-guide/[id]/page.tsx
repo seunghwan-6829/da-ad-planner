@@ -136,6 +136,9 @@ export default function ContentGuideDetailPage() {
 
   const scenes = cg.data?.scenes || []
 
+  // 스크린샷 무드: 같은 페이지 안에서 전체 화면으로 전환(데이터가 메모리에 있어 즉시·렉 없음). 뒤로가기로 스토리보드 복귀.
+  if (moodOpen) return <MoodScreen scenes={scenes} title={cg.title || '컨텐츠 가이드'} onBack={() => setMoodOpen(false)} />
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3">
@@ -172,14 +175,12 @@ export default function ContentGuideDetailPage() {
           <SceneRow key={i} idx={i} scene={s} onSave={() => saveUrl(s.image, `scene-${i + 1}.jpg`)} onSend={() => sendToModelGuide(s, i)} onGenerated={(g) => updateScene(i, g)} />
         ))}
       </div>
-
-      {moodOpen && <MoodBoard scenes={scenes} onClose={() => setMoodOpen(false)} />}
     </div>
   )
 }
 
-// 스크린샷 무드: 씬 썸네일을 한 줄에 5개씩 모아보기. 클릭하면 그 이미지를 클립보드에 복사.
-function MoodBoard({ scenes, onClose }: { scenes: CGScene[]; onClose: () => void }) {
+// 스크린샷 무드: 같은 페이지 안 전체 화면. 씬 썸네일을 한 줄 5개씩. 클릭하면 그 이미지를 클립보드에 복사.
+function MoodScreen({ scenes, title, onBack }: { scenes: CGScene[]; title: string; onBack: () => void }) {
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null)
   const [failIdx, setFailIdx] = useState<number | null>(null)
   const [busyIdx, setBusyIdx] = useState<number | null>(null)
@@ -194,23 +195,26 @@ function MoodBoard({ scenes, onClose }: { scenes: CGScene[]; onClose: () => void
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-black/70 p-4 sm:p-8" onClick={onClose}>
-      <div className="mx-auto flex max-h-full w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white p-4 shadow-2xl dark:bg-gray-900" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-3 flex items-center justify-between">
-          <div>
-            <h2 className="flex items-center gap-1.5 text-base font-bold dark:text-gray-100"><LayoutGrid className="h-4 w-4 text-primary" /> 스크린샷 무드</h2>
-            <p className="text-[11px] text-gray-400">썸네일을 클릭하면 이미지가 클립보드에 복사돼요 · 총 {shots.length}개</p>
-          </div>
-          <button onClick={onClose} className="rounded-md p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"><X className="h-5 w-5" /></button>
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <button onClick={onBack} className="flex shrink-0 items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+          <ArrowLeft className="h-3.5 w-3.5" /> 뒤로
+        </button>
+        <div className="min-w-0">
+          <h1 className="flex items-center gap-1.5 text-xl font-bold dark:text-gray-100"><LayoutGrid className="h-5 w-5 text-primary" /> 스크린샷 무드</h1>
+          <p className="truncate text-xs text-gray-400">{title} · 썸네일 클릭 시 클립보드 복사 · 총 {shots.length}개</p>
         </div>
-        {shots.length === 0 ? (
-          <div className="py-12 text-center text-sm text-gray-400">스크린샷이 없어요.</div>
-        ) : (
-          <div className="grid grid-cols-5 gap-2 overflow-y-auto">
-            {shots.map(({ i, url }) => (
-              <button key={i} onClick={() => copy(i, url)} className="group relative aspect-[9/16] overflow-hidden rounded-lg border border-gray-200 bg-black dark:border-gray-700">
+      </div>
+
+      {shots.length === 0 ? (
+        <div className="rounded-xl border border-gray-200 bg-white py-16 text-center text-sm text-gray-400 dark:border-gray-800 dark:bg-gray-900">스크린샷이 없어요.</div>
+      ) : (
+        <div className="grid grid-cols-5 gap-3">
+          {shots.map(({ i, url }) => (
+            <button key={i} onClick={() => copy(i, url)} className="group block w-full">
+              <div className="relative aspect-[9/16] w-full overflow-hidden rounded-lg border border-gray-200 bg-black dark:border-gray-700">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={url} alt="" className="h-full w-full object-cover" />
+                <img src={url} alt="" className="absolute inset-0 h-full w-full object-cover" />
                 <span className="absolute left-1 top-1 rounded bg-black/60 px-1 text-[10px] font-bold text-white">{i + 1}</span>
                 <span className="pointer-events-none absolute inset-0 flex items-center justify-center transition group-hover:bg-black/30">
                   {busyIdx === i ? (
@@ -223,11 +227,11 @@ function MoodBoard({ scenes, onClose }: { scenes: CGScene[]; onClose: () => void
                     <span className="flex items-center gap-1 rounded bg-white/90 px-2 py-1 text-[11px] font-bold text-gray-800 opacity-0 group-hover:opacity-100"><Copy className="h-3 w-3" /> 복사</span>
                   )}
                 </span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
