@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ChangeEvent } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Loader2, Copy, Check, Download, Camera, Sparkles, Wand2, AlertTriangle, Link2, X, Pencil, RefreshCw, Layers, ImagePlus } from 'lucide-react'
+import { ArrowLeft, Loader2, Copy, Check, Download, Camera, Sparkles, Wand2, AlertTriangle, Link2, X, Pencil, RefreshCw, Layers, ImagePlus, LayoutGrid } from 'lucide-react'
 import { getContentGuide, updateContentGuide, ContentGuide, CGScene, CGGenItem, toStacks } from '@/lib/api/content-guides'
 import { aiFetch } from '@/lib/ai-fetch'
 import { supabase } from '@/lib/supabase'
@@ -60,12 +60,40 @@ async function saveUrl(url: string, name: string) {
   } catch { window.open(url, '_blank') }
 }
 
+// 이미지(URL)를 클립보드에 복사. 클립보드는 image/png 만 안정적이라 canvas로 PNG 변환(blob:URL이라 taint 없음).
+async function copyImageToClipboard(url: string): Promise<boolean> {
+  try {
+    const res = await fetch(url)
+    const blob = await res.blob()
+    const pngBlob: Blob = await new Promise((resolve, reject) => {
+      const objUrl = URL.createObjectURL(blob)
+      const img = new Image()
+      img.onload = () => {
+        const c = document.createElement('canvas')
+        c.width = img.naturalWidth
+        c.height = img.naturalHeight
+        const ctx = c.getContext('2d')
+        if (!ctx) { URL.revokeObjectURL(objUrl); reject(new Error('no ctx')); return }
+        ctx.drawImage(img, 0, 0)
+        c.toBlob((b) => { URL.revokeObjectURL(objUrl); b ? resolve(b) : reject(new Error('toBlob fail')) }, 'image/png')
+      }
+      img.onerror = () => { URL.revokeObjectURL(objUrl); reject(new Error('img load')) }
+      img.src = objUrl
+    })
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })])
+    return true
+  } catch {
+    return false
+  }
+}
+
 export default function ContentGuideDetailPage() {
   const params = useParams<{ id: string }>()
   const router = useRouter()
   const [cg, setCg] = useState<ContentGuide | null>(null)
   const [state, setState] = useState<'loading' | 'ready' | 'notfound'>('loading')
   const [linkCopied, setLinkCopied] = useState(false)
+  const [moodOpen, setMoodOpen] = useState(false)
 
   useEffect(() => {
     if (!params?.id) return
@@ -118,22 +146,87 @@ export default function ContentGuideDetailPage() {
             {cg.source_brand && <p className="truncate text-xs text-gray-400">출처: {cg.source_brand} · 씬 {scenes.length}개</p>}
           </div>
         </div>
-        <button
-          onClick={() => {
-            const url = `${window.location.origin}/content-guide/share/${cg.id}`
-            navigator.clipboard?.writeText(url).then(() => { setLinkCopied(true); setTimeout(() => setLinkCopied(false), 1800) }).catch(() => window.prompt('공유 링크 (복사하세요)', url))
-          }}
-          title="외부 공개 링크 복사 (로그인 없이 볼 수 있는 읽기전용 페이지)"
-          className={`flex shrink-0 items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium ${linkCopied ? 'border-green-300 bg-green-50 text-green-700 dark:border-green-700 dark:bg-green-900/30 dark:text-green-300' : 'border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'}`}
-        >
-          {linkCopied ? <Check className="h-3.5 w-3.5" /> : <Link2 className="h-3.5 w-3.5" />} {linkCopied ? '복사됨' : '공유 URL'}
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            onClick={() => setMoodOpen(true)}
+            title="씬 썸네일(스크린샷)을 한 화면에 모아보기 — 클릭하면 클립보드 복사"
+            className="flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+          >
+            <LayoutGrid className="h-3.5 w-3.5" /> 스크린샷 무드
+          </button>
+          <button
+            onClick={() => {
+              const url = `${window.location.origin}/content-guide/share/${cg.id}`
+              navigator.clipboard?.writeText(url).then(() => { setLinkCopied(true); setTimeout(() => setLinkCopied(false), 1800) }).catch(() => window.prompt('공유 링크 (복사하세요)', url))
+            }}
+            title="외부 공개 링크 복사 (로그인 없이 볼 수 있는 읽기전용 페이지)"
+            className={`flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium ${linkCopied ? 'border-green-300 bg-green-50 text-green-700 dark:border-green-700 dark:bg-green-900/30 dark:text-green-300' : 'border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'}`}
+          >
+            {linkCopied ? <Check className="h-3.5 w-3.5" /> : <Link2 className="h-3.5 w-3.5" />} {linkCopied ? '복사됨' : '공유 URL'}
+          </button>
+        </div>
       </div>
 
       <div className="space-y-4">
         {scenes.map((s, i) => (
           <SceneRow key={i} idx={i} scene={s} onSave={() => saveUrl(s.image, `scene-${i + 1}.jpg`)} onSend={() => sendToModelGuide(s, i)} onGenerated={(g) => updateScene(i, g)} />
         ))}
+      </div>
+
+      {moodOpen && <MoodBoard scenes={scenes} onClose={() => setMoodOpen(false)} />}
+    </div>
+  )
+}
+
+// 스크린샷 무드: 씬 썸네일을 한 줄에 5개씩 모아보기. 클릭하면 그 이미지를 클립보드에 복사.
+function MoodBoard({ scenes, onClose }: { scenes: CGScene[]; onClose: () => void }) {
+  const [copiedIdx, setCopiedIdx] = useState<number | null>(null)
+  const [failIdx, setFailIdx] = useState<number | null>(null)
+  const [busyIdx, setBusyIdx] = useState<number | null>(null)
+  const shots = scenes.map((s, i) => ({ i, url: s.image })).filter((x) => x.url)
+
+  async function copy(i: number, url: string) {
+    setBusyIdx(i); setFailIdx(null)
+    const ok = await copyImageToClipboard(url)
+    setBusyIdx(null)
+    if (ok) { setCopiedIdx(i); setTimeout(() => setCopiedIdx((c) => (c === i ? null : c)), 1500) }
+    else { setFailIdx(i); setTimeout(() => setFailIdx((f) => (f === i ? null : f)), 2200) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-black/70 p-4 sm:p-8" onClick={onClose}>
+      <div className="mx-auto flex max-h-full w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white p-4 shadow-2xl dark:bg-gray-900" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <h2 className="flex items-center gap-1.5 text-base font-bold dark:text-gray-100"><LayoutGrid className="h-4 w-4 text-primary" /> 스크린샷 무드</h2>
+            <p className="text-[11px] text-gray-400">썸네일을 클릭하면 이미지가 클립보드에 복사돼요 · 총 {shots.length}개</p>
+          </div>
+          <button onClick={onClose} className="rounded-md p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"><X className="h-5 w-5" /></button>
+        </div>
+        {shots.length === 0 ? (
+          <div className="py-12 text-center text-sm text-gray-400">스크린샷이 없어요.</div>
+        ) : (
+          <div className="grid grid-cols-5 gap-2 overflow-y-auto">
+            {shots.map(({ i, url }) => (
+              <button key={i} onClick={() => copy(i, url)} className="group relative aspect-[9/16] overflow-hidden rounded-lg border border-gray-200 bg-black dark:border-gray-700">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={url} alt="" className="h-full w-full object-cover" />
+                <span className="absolute left-1 top-1 rounded bg-black/60 px-1 text-[10px] font-bold text-white">{i + 1}</span>
+                <span className="pointer-events-none absolute inset-0 flex items-center justify-center transition group-hover:bg-black/30">
+                  {busyIdx === i ? (
+                    <span className="rounded bg-white/90 px-2 py-1 text-[11px] font-bold text-gray-800"><Loader2 className="inline h-3 w-3 animate-spin" /></span>
+                  ) : copiedIdx === i ? (
+                    <span className="flex items-center gap-1 rounded bg-green-600 px-2 py-1 text-[11px] font-bold text-white"><Check className="h-3 w-3" /> 복사됨</span>
+                  ) : failIdx === i ? (
+                    <span className="rounded bg-red-600 px-2 py-1 text-[10px] font-bold text-white">복사 실패</span>
+                  ) : (
+                    <span className="flex items-center gap-1 rounded bg-white/90 px-2 py-1 text-[11px] font-bold text-gray-800 opacity-0 group-hover:opacity-100"><Copy className="h-3 w-3" /> 복사</span>
+                  )}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
