@@ -55,3 +55,17 @@ body {
   font-weight: 700;
   color: #111827;
 }
+
+/* 상단 빈 헤더 정리: 중복 라벨('프로젝트 대시보드') 제거 + 상단 여백 축소 + 배경 da-ad-planner 그레이 */
+.pb-app .workspace-shell {
+  background: #f9fafb;
+}
+.pb-app .workspace-content {
+  padding-top: 14px;
+}
+.pb-app .workspace-topbar .workspace-eyebrow {
+  display: none;
+}
+.pb-app .workspace-sidebar {
+  background: #ffffff;
+}
