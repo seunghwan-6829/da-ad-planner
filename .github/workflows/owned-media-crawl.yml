@@ -2,8 +2,8 @@ name: Crawl Owned Media (YouTube/Instagram)
 
 on:
   schedule:
-    # 5일마다 KST 오전 10시 (UTC 01:00). day-of-month 1·6·11·16·21·26·31 ≈ 5일 간격.
-    - cron: "0 1 */5 * *"
+    # 주 1회 · 매주 월요일 KST 오전 10시 (UTC 월요일 01:00). 비용(Apify) 고려한 주간 주기.
+    - cron: "0 1 * * 1"
   workflow_dispatch:
     inputs:
       creator_id:
@@ -37,6 +37,8 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           CRAWL_CREATOR_ID: ${{ github.event.inputs.creator_id }}
-          # 인스타 수집 성공률을 높이려면(선택) 로그인 세션 쿠키. 없으면 익명 best-effort.
-          IG_SESSIONID: ${{ secrets.IG_SESSIONID }}
+          # 인스타 수집은 Apify instagram-scraper 사용(없으면 인스타는 건너뜀). 유튜브는 Playwright(Apify 불필요).
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
+          # 프로필당 최신 개수(비용 조절). 60명·주1회·5개면 무료 한도 안.
+          IG_RESULTS_LIMIT: "5"
         run: node crawl.mjs

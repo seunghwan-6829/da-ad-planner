@@ -1,22 +1,24 @@
-// 온드미디어(UGC) 크롤러 — Playwright 직접 스크래핑(유튜브/인스타).
-//   유튜브: 채널 /videos·/shorts 페이지의 ytInitialData 파싱(조회수·제목·썸네일), 최신 N개는 watch 페이지에서 좋아요·댓글 best-effort 보강.
-//   인스타: 프로필 페이지 best-effort(공개 프로필/메타·임베드 JSON). 비공개·로그인월이면 가능한 만큼만(없으면 - 처리).
-// ⚠️ 모든 단계는 best-effort + try/catch. 한 크리에이터 실패가 전체를 죽이지 않는다.
-//   결과는 om_posts 에 upsert(post_id 충돌 시 갱신). 이번 실행에서 안 보인 기존 active 콘텐츠는 status='ended' 표기.
+// 온드미디어(UGC) 크롤러 — 유튜브=Playwright / 인스타=Apify.
+//   목표는 단순: "조회수 + 영상"만 확실히 가져온다. (좋아요/댓글/공유/저장은 best-effort, 없으면 null→'—')
+//   - 유튜브: 채널 /videos·/shorts 의 ytInitialData 에서 조회수·제목·썸네일. 영상은 임베드(watch URL)로 재생.
+//   - 인스타: Apify instagram-scraper 로 릴스 수집 → CDN URL 은 만료되므로 영상·썸네일을 Supabase 스토리지에 받아 영구화.
+//   결과는 om_posts 에 적재. 이번 실행에서 안 보인 기존 active 콘텐츠는 status='ended' 표기.
+// ⚠️ 메타 광고 크롤러(meta-ad-monitor)와 완전 분리. 이 파일은 온드미디어 전용.
 //
 // 필수 env: SUPABASE_URL, SUPABASE_SERVICE_KEY
-// 선택 env: CRAWL_CREATOR_ID(단일 크리에이터 즉시 크롤), IG_SESSIONID(인스타 로그인 쿠키 — 있으면 인스타 성공률↑),
-//          MAX_POSTS(크리에이터당 최대 수집, 기본 40), MAX_ENRICH(유튜브 watch 보강 개수, 기본 12)
+// 선택 env: APIFY_TOKEN(인스타 수집에 필요 — 없으면 인스타는 건너뜀), CRAWL_CREATOR_ID(단일 즉시 크롤),
+//          IG_RESULTS_LIMIT(인스타 프로필당 최신 개수, 기본 5), YT_MAX_POSTS(유튜브 채널당 최대, 기본 40)
 
 import { chromium } from 'playwright'
 import { createClient } from '@supabase/supabase-js'
 
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
+const APIFY_TOKEN = (process.env.APIFY_TOKEN || '').trim()
 const CRAWL_CREATOR_ID = (process.env.CRAWL_CREATOR_ID || '').trim()
-const IG_SESSIONID = (process.env.IG_SESSIONID || '').trim()
-const MAX_POSTS = Number(process.env.MAX_POSTS) || 40
-const MAX_ENRICH = Number(process.env.MAX_ENRICH) || 12
+const IG_RESULTS_LIMIT = Number(process.env.IG_RESULTS_LIMIT) || 5
+const YT_MAX_POSTS = Number(process.env.YT_MAX_POSTS) || 40
+const STORAGE_BUCKET = 'owned-media'
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
   console.error('SUPABASE_URL / SUPABASE_SERVICE_KEY 가 필요합니다.')
@@ -25,10 +27,12 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
 const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, { auth: { persistSession: false } })
 
 const log = (...a) => console.log('[om-crawl]', ...a)
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-// "조회수 1.2만회" / "1.2M views" / "1,234" 등 → 정수(추정). 실패 시 null.
+// "조회수 1.2만회" / "1.2M views" / "1,234" → 정수(추정). 실패 시 null.
 function parseCount(s) {
   if (s == null) return null
+  if (typeof s === 'number') return Number.isFinite(s) ? s : null
   const str = String(s).replace(/조회수|views?|view|회|,|\s/gi, '').trim()
   if (!str) return null
   const m = str.match(/([\d.]+)\s*([만천억KMB]?)/i)
@@ -44,7 +48,36 @@ function parseCount(s) {
   return Number.isFinite(v) ? v : null
 }
 
-// ── 유튜브 ──
+// 만료되는 CDN URL(인스타) → Supabase 스토리지에 받아 영구 공개 URL 반환. 실패 시 null.
+async function downloadToStorage(url, path, contentType) {
+  if (!url) return null
+  try {
+    const r = await fetch(url)
+    if (!r.ok) return null
+    const buf = Buffer.from(await r.arrayBuffer())
+    if (!buf.length || buf.length > 80 * 1024 * 1024) return null
+    const { error } = await sb.storage.from(STORAGE_BUCKET).upload(path, buf, { contentType, upsert: true })
+    if (error) { log('storage 업로드 실패', error.message); return null }
+    return sb.storage.from(STORAGE_BUCKET).getPublicUrl(path).data.publicUrl
+  } catch (e) {
+    log('다운로드 실패', e.message)
+    return null
+  }
+}
+
+// 이번 실행에서 안 보인 기존 active 콘텐츠 → ended 표기(best-effort).
+async function markEnded(creatorId, seenIds, now) {
+  try {
+    const { data: existing } = await sb.from('om_posts').select('post_id').eq('creator_id', creatorId).eq('status', 'active')
+    const gone = (existing || []).map((x) => x.post_id).filter((id) => !seenIds.has(id))
+    if (gone.length) {
+      await sb.from('om_posts').update({ status: 'ended', ended_at: now }).in('post_id', gone)
+      log(`${gone.length}개 종료 표기`)
+    }
+  } catch {}
+}
+
+// ─────────────────────────── 유튜브 (Playwright) ───────────────────────────
 async function crawlYouTube(page, creator) {
   const base = (creator.url || '').replace(/\/+$/, '')
   const results = []
@@ -72,18 +105,16 @@ async function crawlYouTube(page, creator) {
       }
     } catch {}
 
-    // 영상 그리드 추출
+    // 영상 그리드 → 조회수·제목·썸네일
     try {
       const tabs = data.contents?.twoColumnBrowseResultsRenderer?.tabs || []
       for (const tab of tabs) {
         const items = tab.tabRenderer?.content?.richGridRenderer?.contents || []
         for (const it of items) {
           const vr = it.richItemRenderer?.content?.videoRenderer || it.richItemRenderer?.content?.reelItemRenderer
-          if (!vr) continue
+          if (!vr?.videoId) continue
           const videoId = vr.videoId
-          if (!videoId) continue
-          const title =
-            vr.title?.runs?.[0]?.text || vr.title?.simpleText || vr.headline?.simpleText || ''
+          const title = vr.title?.runs?.[0]?.text || vr.title?.simpleText || vr.headline?.simpleText || ''
           const thumbs = vr.thumbnail?.thumbnails || []
           const poster = thumbs.length ? thumbs[thumbs.length - 1].url : `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
           const viewText = vr.viewCountText?.simpleText || vr.viewCountText?.runs?.map((r) => r.text).join('') || null
@@ -94,229 +125,194 @@ async function crawlYouTube(page, creator) {
             post_url: `https://www.youtube.com/watch?v=${videoId}`,
             caption: title,
             media_type: 'video',
-            media_url: `https://www.youtube.com/watch?v=${videoId}`,
+            media_url: `https://www.youtube.com/watch?v=${videoId}`, // 임베드 재생(영구)
             poster_url: poster,
             posted_at: published,
             views: parseCount(viewText),
             likes: null,
             comments: null,
           })
-          if (results.length >= MAX_POSTS) break
+          if (results.length >= YT_MAX_POSTS) break
         }
-        if (results.length >= MAX_POSTS) break
+        if (results.length >= YT_MAX_POSTS) break
       }
     } catch (e) {
       log('youtube 파싱 실패', e.message)
     }
-    if (results.length >= MAX_POSTS) break
-  }
-
-  // 최신 N개: watch 페이지에서 좋아요·댓글·정확 조회수 best-effort 보강
-  const enrich = results.slice(0, MAX_ENRICH)
-  for (const r of enrich) {
-    try {
-      await page.goto(r.post_url, { waitUntil: 'domcontentloaded', timeout: 40000 })
-      await page.waitForTimeout(1200)
-      const d = await page.evaluate(() => window.ytInitialData || null)
-      if (!d) continue
-      const contents =
-        d.contents?.twoColumnWatchNextResults?.results?.results?.contents || []
-      // 조회수
-      for (const c of contents) {
-        const vp = c.videoPrimaryInfoRenderer
-        if (vp) {
-          const vc = vp.viewCount?.videoViewCountRenderer?.viewCount
-          const vt = vc?.simpleText || vc?.runs?.map((x) => x.text).join('') || null
-          const ev = parseCount(vt)
-          if (ev != null) r.views = ev
-          // 좋아요(토글 버튼 라벨)
-          try {
-            const topBtns =
-              vp.videoActions?.menuRenderer?.topLevelButtons || []
-            for (const b of topBtns) {
-              const tv = b.segmentedLikeDislikeButtonViewModel?.likeButtonViewModel?.likeButtonViewModel?.toggleButtonViewModel?.toggleButtonViewModel
-              const label =
-                tv?.defaultButtonViewModel?.buttonViewModel?.title ||
-                b.toggleButtonRenderer?.defaultText?.simpleText ||
-                null
-              const lv = parseCount(label)
-              if (lv != null) r.likes = lv
-            }
-          } catch {}
-        }
-        // 댓글 수
-        const ce = c.itemSectionRenderer?.contents?.find?.((x) => x.commentsEntryPointHeaderRenderer)
-        if (ce) {
-          const ct = ce.commentsEntryPointHeaderRenderer?.commentCount?.simpleText
-          const cv = parseCount(ct)
-          if (cv != null) r.comments = cv
-        }
-      }
-    } catch (e) {
-      log('youtube enrich 실패', r.post_id, e.message)
-    }
+    if (results.length >= YT_MAX_POSTS) break
   }
 
   return { results, profile }
 }
 
-// ── 인스타그램 (best-effort) ──
-async function crawlInstagram(context, page, creator) {
-  const results = []
-  let profile = { name: null, image: null }
-  const handle = (creator.handle || (creator.url || '').match(/instagram\.com\/([^/?#]+)/i)?.[1] || '').replace(/^@/, '')
-  if (!handle) return { results, profile }
-
-  // 로그인 쿠키가 있으면 주입(공개 데이터 접근성↑). 없으면 익명 best-effort.
-  if (IG_SESSIONID) {
-    try {
-      await context.addCookies([{ name: 'sessionid', value: IG_SESSIONID, domain: '.instagram.com', path: '/', httpOnly: true, secure: true }])
-    } catch {}
-  }
-
-  // 공개 web_profile_info JSON(가능하면). 차단되면 프로필 페이지 메타로 폴백.
-  try {
-    const url = `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(handle)}`
-    await page.goto(`https://www.instagram.com/${handle}/`, { waitUntil: 'domcontentloaded', timeout: 45000 })
-    await page.waitForTimeout(1000)
-    const json = await page.evaluate(async (u) => {
-      try {
-        const r = await fetch(u, { headers: { 'x-ig-app-id': '936619743392459' } })
-        if (!r.ok) return null
-        return await r.json()
-      } catch {
-        return null
-      }
-    }, url)
-
-    const user = json?.data?.user
-    if (user) {
-      profile.name = user.full_name || handle
-      profile.image = user.profile_pic_url_hd || user.profile_pic_url || null
-      const edges = user.edge_owner_to_timeline_media?.edges || []
-      for (const e of edges) {
-        const n = e.node
-        if (!n?.shortcode) continue
-        const isVideo = !!n.is_video
-        const isSidecar = n.__typename === 'GraphSidecar' || n.product_type === 'carousel_container'
-        const children = n.edge_sidecar_to_children?.edges || []
-        const media_urls = isSidecar ? children.map((c) => c.node.display_url).filter(Boolean) : null
-        const caption = n.edge_media_to_caption?.edges?.[0]?.node?.text || ''
-        results.push({
-          post_id: `ig_${n.shortcode}`,
-          platform: 'instagram',
-          post_url: `https://www.instagram.com/p/${n.shortcode}/`,
-          caption,
-          media_type: isVideo ? 'video' : isSidecar ? 'slide' : 'image',
-          media_url: isVideo ? n.video_url || null : n.display_url || null,
-          media_urls,
-          poster_url: n.display_url || n.thumbnail_src || null,
-          posted_at: n.taken_at_timestamp ? new Date(n.taken_at_timestamp * 1000).toISOString().slice(0, 10) : null,
-          views: n.video_view_count ?? n.video_play_count ?? null,
-          likes: n.edge_liked_by?.count ?? n.edge_media_preview_like?.count ?? null,
-          comments: n.edge_media_to_comment?.count ?? null,
-        })
-        if (results.length >= MAX_POSTS) break
-      }
-    }
-  } catch (e) {
-    log('instagram 수집 실패(로그인월일 수 있음)', handle, e.message)
-  }
-
-  // 프로필 메타 폴백(이름/사진만이라도)
-  if (!profile.image) {
-    try {
-      const og = await page.evaluate(() => {
-        const img = document.querySelector('meta[property="og:image"]')?.content || null
-        const title = document.querySelector('meta[property="og:title"]')?.content || null
-        return { img, title }
-      })
-      profile.image = profile.image || og?.img || null
-      profile.name = profile.name || (og?.title ? og.title.split('(')[0].trim() : null)
-    } catch {}
-  }
-
-  return { results, profile }
-}
-
-// 크리에이터 1명 처리 + DB 반영
-async function processCreator(context, creator) {
-  const page = await context.newPage()
-  page.setDefaultTimeout(45000)
-  let out = { results: [], profile: { name: null, image: null } }
-  try {
-    if (creator.platform === 'instagram') out = await crawlInstagram(context, page, creator)
-    else out = await crawlYouTube(page, creator)
-  } catch (e) {
-    log('processCreator 실패', creator.id, e.message)
-  } finally {
-    await page.close().catch(() => {})
-  }
-
-  const { results, profile } = out
-  log(`크리에이터 ${creator.label}(${creator.platform}) → ${results.length}개 수집`)
-
-  // 크리에이터 프로필 갱신(이름/사진 비어있으면 채움)
+// 유튜브 저장: watch URL 은 안정적이라 upsert 안전.
+async function saveYouTube(creator, results, profile) {
+  // 프로필 보강
   const cPatch = {}
   if (profile.name && !creator.profile_name) cPatch.profile_name = profile.name
   if (profile.image && !creator.profile_image) cPatch.profile_image = profile.image
-  if (Object.keys(cPatch).length) {
-    try { await sb.from('om_creators').update(cPatch).eq('id', creator.id) } catch {}
-  }
+  if (Object.keys(cPatch).length) { try { await sb.from('om_creators').update(cPatch).eq('id', creator.id) } catch {} }
 
   if (!results.length) return
-
   const now = new Date().toISOString()
-  const rows = results.map((r) => ({
-    ...r,
-    creator_id: creator.id,
-    creator_name: profile.name || creator.label,
-    last_seen_at: now,
-    status: 'active',
-  }))
-
-  // upsert: 신규는 삽입(first_seen_at 기본값), 기존은 지표/last_seen 갱신.
+  const rows = results.map((r) => ({ ...r, creator_id: creator.id, creator_name: profile.name || creator.label, last_seen_at: now, status: 'active' }))
   try {
     const { error } = await sb.from('om_posts').upsert(rows, { onConflict: 'post_id' })
-    if (error) log('upsert 오류', error.message)
-  } catch (e) {
-    log('upsert 예외', e.message)
-  }
-
-  // 이번에 안 보인 기존 active 콘텐츠 → ended 표기(best-effort)
-  try {
-    const seen = new Set(rows.map((r) => r.post_id))
-    const { data: existing } = await sb.from('om_posts').select('post_id').eq('creator_id', creator.id).eq('status', 'active')
-    const gone = (existing || []).map((x) => x.post_id).filter((id) => !seen.has(id))
-    if (gone.length) {
-      await sb.from('om_posts').update({ status: 'ended', ended_at: now }).in('post_id', gone)
-      log(`${gone.length}개 종료 표기`)
-    }
-  } catch {}
+    if (error) log('youtube upsert 오류', error.message)
+  } catch (e) { log('youtube upsert 예외', e.message) }
+  await markEnded(creator.id, new Set(rows.map((r) => r.post_id)), now)
 }
 
+// ─────────────────────────── 인스타 (Apify) ───────────────────────────
+// Apify instagram-scraper 를 비동기로 실행 → 완료까지 폴링 → 데이터셋 아이템 반환.
+async function runApifyInstagram(directUrls, limit) {
+  const input = { directUrls, resultsType: 'posts', resultsLimit: limit, addParentData: false }
+  const startRes = await fetch(`https://api.apify.com/v2/acts/apify~instagram-scraper/runs?token=${APIFY_TOKEN}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  if (!startRes.ok) throw new Error(`Apify 시작 실패 ${startRes.status}: ${(await startRes.text()).slice(0, 200)}`)
+  const run = (await startRes.json()).data
+  const runId = run.id
+  const datasetId = run.defaultDatasetId
+  let status = run.status
+  const deadline = Date.now() + 12 * 60 * 1000 // 최대 12분
+  while (Date.now() < deadline && !['SUCCEEDED', 'FAILED', 'ABORTED', 'TIMED-OUT'].includes(status)) {
+    await sleep(5000)
+    try {
+      const st = await fetch(`https://api.apify.com/v2/actor-runs/${runId}?token=${APIFY_TOKEN}`)
+      if (st.ok) status = (await st.json()).data.status
+    } catch {}
+  }
+  if (status !== 'SUCCEEDED') throw new Error(`Apify run 상태 ${status}`)
+  const itemsRes = await fetch(`https://api.apify.com/v2/datasets/${datasetId}/items?token=${APIFY_TOKEN}&clean=true`)
+  if (!itemsRes.ok) throw new Error(`Apify items ${itemsRes.status}`)
+  return await itemsRes.json()
+}
+
+const normHandle = (creator) =>
+  (creator.handle || (creator.url || '').match(/instagram\.com\/([^/?#]+)/i)?.[1] || '').toLowerCase().replace(/^@/, '')
+
+// 인스타 저장: 신규 릴스만 영상·썸네일을 스토리지에 받아 저장(영구). 기존 것은 조회수만 갱신(저장된 미디어 보존).
+async function saveInstagram(creator, items) {
+  const now = new Date().toISOString()
+  // 영상(릴스)만 — 조회수+영상이 목적. 이미지/사이드카는 조회수가 없어 제외.
+  const videos = (items || []).filter((it) => (it.type === 'Video' || it.productType === 'clips' || it.videoUrl) && it.shortCode)
+
+  // 기존 보유분(미디어 보존용)
+  const { data: existingRows } = await sb.from('om_posts').select('post_id').eq('creator_id', creator.id)
+  const existing = new Set((existingRows || []).map((x) => x.post_id))
+
+  const seen = new Set()
+  const newRows = []
+  for (const it of videos) {
+    const postId = `ig_${it.shortCode}`
+    seen.add(postId)
+    const views = it.videoViewCount ?? it.videoPlayCount ?? null
+
+    if (existing.has(postId)) {
+      // 조회수만 갱신(미디어 URL 은 이미 스토리지에 영구 저장돼 있으니 건드리지 않음)
+      try { await sb.from('om_posts').update({ views, last_seen_at: now, status: 'active' }).eq('post_id', postId) } catch {}
+      continue
+    }
+
+    // 신규: 영상·썸네일을 스토리지에 받아 영구화(실패 시 CDN URL 폴백)
+    const storedVideo = await downloadToStorage(it.videoUrl, `reels/${it.shortCode}.mp4`, 'video/mp4')
+    const storedPoster = await downloadToStorage(it.displayUrl, `posters/${it.shortCode}.jpg`, 'image/jpeg')
+    newRows.push({
+      post_id: postId,
+      creator_id: creator.id,
+      creator_name: creator.label,
+      platform: 'instagram',
+      post_url: it.url || `https://www.instagram.com/p/${it.shortCode}/`,
+      caption: it.caption || '',
+      media_type: 'video',
+      media_url: storedVideo || it.videoUrl || null,
+      poster_url: storedPoster || it.displayUrl || null,
+      posted_at: it.timestamp ? String(it.timestamp).slice(0, 10) : null,
+      views,
+      likes: it.likesCount ?? null,
+      comments: it.commentsCount ?? null,
+      last_seen_at: now,
+      status: 'active',
+    })
+  }
+
+  if (newRows.length) {
+    try {
+      const { error } = await sb.from('om_posts').upsert(newRows, { onConflict: 'post_id' })
+      if (error) log('instagram upsert 오류', error.message)
+    } catch (e) { log('instagram upsert 예외', e.message) }
+  }
+  log(`인스타 ${creator.label} → 신규 ${newRows.length} / 영상 ${videos.length}`)
+  await markEnded(creator.id, seen, now)
+}
+
+// ─────────────────────────── 메인 ───────────────────────────
 async function main() {
-  // 대상 크리에이터 로드
   let q = sb.from('om_creators').select('*').eq('enabled', true)
   if (CRAWL_CREATOR_ID) q = q.eq('id', CRAWL_CREATOR_ID)
   const { data: creators, error } = await q
   if (error) { console.error('크리에이터 로드 실패:', error.message); process.exit(1) }
   if (!creators?.length) { log('크롤할 크리에이터가 없습니다.'); return }
-  log(`${creators.length}명 크롤 시작`)
 
-  const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] })
-  const context = await browser.newContext({
-    userAgent:
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-    locale: 'ko-KR',
-    viewport: { width: 1280, height: 900 },
-  })
+  const youtube = creators.filter((c) => c.platform === 'youtube')
+  const instagram = creators.filter((c) => c.platform === 'instagram')
+  log(`유튜브 ${youtube.length}명 / 인스타 ${instagram.length}명 크롤 시작`)
 
-  for (const c of creators) {
-    try { await processCreator(context, c) } catch (e) { log('크리에이터 처리 예외', c.id, e.message) }
+  // ── 유튜브: Playwright ──
+  if (youtube.length) {
+    const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] })
+    const context = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+      locale: 'ko-KR',
+      viewport: { width: 1280, height: 900 },
+    })
+    for (const c of youtube) {
+      const page = await context.newPage()
+      page.setDefaultTimeout(45000)
+      try {
+        const { results, profile } = await crawlYouTube(page, c)
+        log(`유튜브 ${c.label} → ${results.length}개`)
+        await saveYouTube(c, results, profile)
+      } catch (e) {
+        log('유튜브 처리 실패', c.id, e.message)
+      } finally {
+        await page.close().catch(() => {})
+      }
+    }
+    await browser.close().catch(() => {})
   }
 
-  await browser.close().catch(() => {})
+  // ── 인스타: Apify 배치(한 번에 전체) ──
+  if (instagram.length) {
+    if (!APIFY_TOKEN) {
+      log('⚠️ APIFY_TOKEN 미설정 → 인스타 수집 건너뜀. (GitHub 시크릿 APIFY_TOKEN 등록 필요)')
+    } else {
+      const urls = instagram.map((c) => `https://www.instagram.com/${normHandle(c)}/`).filter((u) => !u.endsWith('//'))
+      try {
+        const items = await runApifyInstagram(urls, IG_RESULTS_LIMIT)
+        log(`Apify 인스타 결과 ${items.length}건`)
+        // ownerUsername 으로 크리에이터에 매핑
+        const byHandle = new Map(instagram.map((c) => [normHandle(c), c]))
+        const grouped = new Map()
+        for (const it of items) {
+          const h = (it.ownerUsername || '').toLowerCase()
+          if (!byHandle.has(h)) continue
+          if (!grouped.has(h)) grouped.set(h, [])
+          grouped.get(h).push(it)
+        }
+        for (const c of instagram) {
+          const its = grouped.get(normHandle(c)) || []
+          await saveInstagram(c, its)
+        }
+      } catch (e) {
+        log('Apify 인스타 실패', e.message)
+      }
+    }
+  }
+
   log('완료')
 }
 
