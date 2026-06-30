@@ -11,6 +11,10 @@
 
 import { chromium } from 'playwright'
 import { createClient } from '@supabase/supabase-js'
+import { execFile } from 'child_process'
+import { promisify } from 'util'
+import { readFile, unlink } from 'fs/promises'
+const execFileP = promisify(execFile)
 
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
@@ -18,6 +22,9 @@ const APIFY_TOKEN = (process.env.APIFY_TOKEN || '').trim()
 const CRAWL_CREATOR_ID = (process.env.CRAWL_CREATOR_ID || '').trim()
 const IG_RESULTS_LIMIT = Number(process.env.IG_RESULTS_LIMIT) || 5
 const YT_MAX_POSTS = Number(process.env.YT_MAX_POSTS) || 40
+// 유튜브 영상 다운로드(yt-dlp). 0이면 임베드만(다운로드 끔). 대용량 방지 상한(롱폼 자동 폴백).
+const YT_DOWNLOAD = (process.env.YT_DOWNLOAD || '1') !== '0'
+const YT_MAX_FILESIZE = process.env.YT_MAX_FILESIZE || '150M'
 const STORAGE_BUCKET = 'owned-media'
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
@@ -61,6 +68,40 @@ async function downloadToStorage(url, path, contentType) {
     return sb.storage.from(STORAGE_BUCKET).getPublicUrl(path).data.publicUrl
   } catch (e) {
     log('다운로드 실패', e.message)
+    return null
+  }
+}
+
+// 유튜브 영상을 yt-dlp 로 mp4 추출 → 스토리지 영구 저장. 실패/대용량(상한 초과)이면 null(임베드 폴백).
+async function downloadYouTubeVideo(videoUrl, videoId) {
+  if (!YT_DOWNLOAD) return null
+  const tmp = `/tmp/om_${videoId}.mp4`
+  try {
+    await execFileP(
+      'yt-dlp',
+      [
+        '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        '--merge-output-format', 'mp4',
+        '--max-filesize', YT_MAX_FILESIZE,
+        '--no-playlist', '--no-warnings', '--quiet',
+        '-o', tmp,
+        videoUrl,
+      ],
+      { timeout: 150000, maxBuffer: 1024 * 1024 * 64 }
+    )
+  } catch (e) {
+    log('yt-dlp 실패/스킵', videoId, String(e.message || e).slice(0, 120))
+    return null
+  }
+  try {
+    const buf = await readFile(tmp).catch(() => null)
+    await unlink(tmp).catch(() => {})
+    if (!buf || !buf.length) return null // 상한 초과 시 파일 미생성 → null
+    const { error } = await sb.storage.from(STORAGE_BUCKET).upload(`youtube/${videoId}.mp4`, buf, { contentType: 'video/mp4', upsert: true })
+    if (error) { log('yt 업로드 실패', error.message); return null }
+    return sb.storage.from(STORAGE_BUCKET).getPublicUrl(`youtube/${videoId}.mp4`).data.publicUrl
+  } catch (e) {
+    log('yt 저장 실패', String(e.message || e).slice(0, 120))
     return null
   }
 }
@@ -145,7 +186,8 @@ async function crawlYouTube(page, creator) {
   return { results, profile }
 }
 
-// 유튜브 저장: watch URL 은 안정적이라 upsert 안전.
+// 유튜브 저장: 신규 영상만 yt-dlp 로 받아 스토리지에 영구 저장(실패 시 임베드용 watch URL 유지).
+// 기존 항목은 조회수만 갱신(저장된 mp4 보존).
 async function saveYouTube(creator, results, profile) {
   // 프로필 보강
   const cPatch = {}
@@ -155,12 +197,38 @@ async function saveYouTube(creator, results, profile) {
 
   if (!results.length) return
   const now = new Date().toISOString()
-  const rows = results.map((r) => ({ ...r, creator_id: creator.id, creator_name: profile.name || creator.label, last_seen_at: now, status: 'active' }))
-  try {
-    const { error } = await sb.from('om_posts').upsert(rows, { onConflict: 'post_id' })
-    if (error) log('youtube upsert 오류', error.message)
-  } catch (e) { log('youtube upsert 예외', e.message) }
-  await markEnded(creator.id, new Set(rows.map((r) => r.post_id)), now)
+
+  const { data: existingRows } = await sb.from('om_posts').select('post_id').eq('creator_id', creator.id)
+  const existing = new Set((existingRows || []).map((x) => x.post_id))
+
+  const seen = new Set()
+  const newRows = []
+  for (const r of results) {
+    seen.add(r.post_id)
+    if (existing.has(r.post_id)) {
+      try { await sb.from('om_posts').update({ views: r.views, last_seen_at: now, status: 'active' }).eq('post_id', r.post_id) } catch {}
+      continue
+    }
+    // 신규: 영상 다운로드 시도(실패/대용량이면 watch URL 유지 → 페이지가 임베드 폴백)
+    const videoId = r.post_id.replace(/^yt_/, '')
+    const stored = await downloadYouTubeVideo(r.post_url, videoId)
+    newRows.push({
+      ...r,
+      media_url: stored || r.media_url,
+      creator_id: creator.id,
+      creator_name: profile.name || creator.label,
+      last_seen_at: now,
+      status: 'active',
+    })
+  }
+  if (newRows.length) {
+    try {
+      const { error } = await sb.from('om_posts').upsert(newRows, { onConflict: 'post_id' })
+      if (error) log('youtube upsert 오류', error.message)
+    } catch (e) { log('youtube upsert 예외', e.message) }
+  }
+  log(`유튜브 ${creator.label} → 신규 ${newRows.length} / 총 ${results.length}`)
+  await markEnded(creator.id, seen, now)
 }
 
 // ─────────────────────────── 인스타 (Apify) ───────────────────────────

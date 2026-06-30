@@ -166,7 +166,9 @@ function MediaView({ post, card, rounded }: { post: Post; card?: boolean; rounde
   const r = rounded ?? "";
 
   if (post.media_type === "video") {
-    const embed = post.platform === "youtube" ? youtubeEmbed(post) : null;
+    // media_url 이 우리 스토리지에 받아둔 mp4(유튜브 다운로드/인스타 릴스)면 직접 재생. 유튜브 watch URL 이면 임베드.
+    const stored = !!post.media_url && !/youtube\.com|youtu\.be/i.test(post.media_url);
+    const embed = !stored && post.platform === "youtube" ? youtubeEmbed(post) : null;
     // 카드: 항상 포스터 + ▶ (iframe/video 로딩으로 클릭 가로채기·성능저하 방지)
     if (card) {
       return (
@@ -185,7 +187,10 @@ function MediaView({ post, card, rounded }: { post: Post; card?: boolean; rounde
         </div>
       );
     }
-    // 상세: 유튜브=임베드, 그 외=직접 영상
+    // 상세: 저장된 mp4=직접 재생 / (다운로드 실패한)유튜브=임베드 폴백
+    if (stored) {
+      return <video src={post.media_url!} poster={post.poster_url || undefined} controls playsInline preload="metadata" onClick={(e) => e.stopPropagation()} className={`h-full w-full bg-black object-contain ${r}`} />;
+    }
     if (embed) {
       return <iframe src={embed} title="" allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen className={`h-full w-full bg-black ${r}`} />;
     }
