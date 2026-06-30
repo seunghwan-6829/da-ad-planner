@@ -36,6 +36,7 @@
   ],
   "exclude": [
     "node_modules",
-    "meta-ad-monitor"
+    "meta-ad-monitor",
+    "owned-media-monitor"
   ]
 }

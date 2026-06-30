@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase-admin'
+import { loadCreative } from '@/lib/creative-source'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -22,17 +22,9 @@ export async function POST(req: Request) {
   const libraryId: string | null = body.library_id ?? null
   if (!libraryId) return NextResponse.json({ error: 'library_id 필요' }, { status: 400 })
 
-  // transcript 컬럼이 없는 환경에서도 깨지지 않게 폴백.
-  const cols = 'library_id, page_name, started_on, ad_text, media_type, media_url, media_urls, poster_url, frames, ai_analysis'
-  let { data: ad, error } = await supabaseAdmin
-    .from('am_ads')
-    .select(cols + ', transcript')
-    .eq('library_id', libraryId)
-    .single()
-  if (error) {
-    ;({ data: ad, error } = await supabaseAdmin.from('am_ads').select(cols).eq('library_id', libraryId).single())
-  }
-  if (error || !ad) return NextResponse.json({ error: '광고를 찾을 수 없습니다.' }, { status: 404 })
+  // source: 'om'(온드미디어) 이면 om_posts, 아니면 am_ads(메타광고, 기본). 둘 다 같은 형태로 로드.
+  const ad = await loadCreative(libraryId, body.source)
+  if (!ad) return NextResponse.json({ error: '소재를 찾을 수 없습니다.' }, { status: 404 })
 
   const isVideo = ad.media_type === 'video'
   const frames: string[] = Array.isArray(ad.frames) ? (ad.frames as string[]).filter(Boolean) : []

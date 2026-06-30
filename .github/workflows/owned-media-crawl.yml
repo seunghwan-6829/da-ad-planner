@@ -1,0 +1,42 @@
+name: Crawl Owned Media (YouTube/Instagram)
+
+on:
+  schedule:
+    # 5일마다 KST 오전 10시 (UTC 01:00). day-of-month 1·6·11·16·21·26·31 ≈ 5일 간격.
+    - cron: "0 1 */5 * *"
+  workflow_dispatch:
+    inputs:
+      creator_id:
+        description: "특정 크리에이터 id만 즉시 크롤(비우면 enabled 전체)"
+        required: false
+        default: ""
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Node Playwright 크롤러는 owned-media-monitor/ 에 격리.
+    defaults:
+      run:
+        working-directory: owned-media-monitor
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install deps
+        run: npm install
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run crawler
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          CRAWL_CREATOR_ID: ${{ github.event.inputs.creator_id }}
+          # 인스타 수집 성공률을 높이려면(선택) 로그인 세션 쿠키. 없으면 익명 best-effort.
+          IG_SESSIONID: ${{ secrets.IG_SESSIONID }}
+        run: node crawl.mjs

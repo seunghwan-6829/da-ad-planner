@@ -1,0 +1,14 @@
+{
+  "name": "owned-media-monitor",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "온드미디어(UGC) 크롤러 — 유튜브/인스타 크리에이터 콘텐츠를 Playwright 로 best-effort 수집해 Supabase(om_posts)에 적재.",
+  "scripts": {
+    "crawl": "node crawl.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.47.10",
+    "playwright": "^1.48.0"
+  }
+}

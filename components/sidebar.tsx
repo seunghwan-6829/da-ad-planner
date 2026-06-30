@@ -18,6 +18,7 @@ import {
   LogOut,
   Megaphone,
   Network,
+  Radio,
   Settings,
   Shield,
   User,
@@ -35,6 +36,7 @@ const navigationTop = [
   { name: '이미지 보드', href: '/image-board', icon: Images },
   { name: '인스타 성과', href: '/instagram', icon: BarChart3 },
   { name: '데이터 추적', href: '/data-tracking', icon: Activity },
+  { name: '온드미디어 크롤러', href: '/owned-media', icon: Radio },
   { name: '메타 광고 크롤러', href: '/meta-ad-crawler', icon: Megaphone },
 ]
 
@@ -68,8 +70,9 @@ export function Sidebar() {
     setActivePath(window.location.pathname)
   }, [pathname])
 
-  // '메타 광고 크롤러'는 권한(can_meta_ad) 또는 관리자만 노출
-  const topItems = navigationTop.filter((item) => item.href !== '/meta-ad-crawler' || canMetaAd)
+  // '메타 광고 크롤러' · '온드미디어 크롤러'는 권한(can_meta_ad) 또는 관리자만 노출
+  const restrictedHrefs = ['/meta-ad-crawler', '/owned-media']
+  const topItems = navigationTop.filter((item) => !restrictedHrefs.includes(item.href) || canMetaAd)
 
   // #6 메타 광고 5일 알림: 신규/종료 변화가 있으면 하단 배지. 닫으면 그 시그니처는 다시 안 뜸(새 변화 시 재등장).
   const [change, setChange] = useState<MetaChange | null>(null)

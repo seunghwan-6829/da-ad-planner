@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase-admin'
+import { loadCreative } from '@/lib/creative-source'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -18,10 +18,9 @@ export async function POST(req: Request) {
   const libraryId: string | null = body.library_id ?? null
   if (!libraryId) return NextResponse.json({ error: 'library_id 필요' }, { status: 400 })
 
-  const cols = 'library_id, page_name, ad_text, media_type, media_url, media_urls, poster_url, frames'
-  let { data: ad, error } = await supabaseAdmin.from('am_ads').select(cols + ', transcript').eq('library_id', libraryId).single()
-  if (error) ({ data: ad, error } = await supabaseAdmin.from('am_ads').select(cols).eq('library_id', libraryId).single())
-  if (error || !ad) return NextResponse.json({ error: '광고를 찾을 수 없습니다.' }, { status: 404 })
+  // source: 'om'(온드미디어) 이면 om_posts, 아니면 am_ads(메타광고, 기본).
+  const ad = await loadCreative(libraryId, body.source)
+  if (!ad) return NextResponse.json({ error: '소재를 찾을 수 없습니다.' }, { status: 404 })
 
   // ── 단일 장면 모드: { image } 한 장만 처리(클라이언트가 장면마다 병렬 호출) ──
   //    1이미지 + 작은 출력이라 함수 타임아웃/맥스토큰 제약을 받지 않는다.
