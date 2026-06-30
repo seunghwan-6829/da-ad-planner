@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { parseCreatorUrl } from '@/lib/owned-media-url'
 
 export const dynamic = 'force-dynamic'
 
@@ -12,8 +13,16 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if (typeof body.enabled === 'boolean') patch.enabled = body.enabled
   if (typeof body.label === 'string') patch.label = body.label.trim()
   if (typeof body.category === 'string') patch.category = body.category.trim() || '미분류'
-  if (typeof body.url === 'string') patch.url = body.url.trim()
-  if (body.platform === 'youtube' || body.platform === 'instagram') patch.platform = body.platform
+  // URL 수정 시 같은 파서로 재검증·정규화 → platform/handle/url 일관 갱신.
+  if (typeof body.url === 'string' && body.url.trim()) {
+    const parsed = parseCreatorUrl(body.url)
+    if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 })
+    patch.url = parsed.url
+    patch.platform = parsed.platform
+    patch.handle = parsed.handle
+  } else if (body.platform === 'youtube' || body.platform === 'instagram') {
+    patch.platform = body.platform
+  }
   // 클라이언트 매핑(여러 클라이언트 가능). uuid 문자열 배열만 허용.
   if (Array.isArray(body.client_ids)) {
     patch.client_ids = body.client_ids.filter((x: unknown) => typeof x === 'string' && x)

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { parseCreatorUrl } from '@/lib/owned-media-url'
 
 export const dynamic = 'force-dynamic'
 
@@ -27,23 +28,6 @@ async function triggerCrawl(creatorId: string): Promise<boolean> {
   }
 }
 
-// URL 로 플랫폼/핸들 추정.
-function detectPlatform(url: string): { platform: string; handle: string | null } {
-  const u = (url || '').trim()
-  if (/instagram\.com/i.test(u)) {
-    const m = u.match(/instagram\.com\/([^/?#]+)/i)
-    return { platform: 'instagram', handle: m ? m[1].replace(/^@/, '') : null }
-  }
-  // 유튜브: @handle, /channel/UC..., /c/name, /user/name
-  if (/youtube\.com|youtu\.be/i.test(u)) {
-    const at = u.match(/youtube\.com\/@([^/?#]+)/i)
-    if (at) return { platform: 'youtube', handle: at[1] }
-    const ch = u.match(/youtube\.com\/(?:channel|c|user)\/([^/?#]+)/i)
-    return { platform: 'youtube', handle: ch ? ch[1] : null }
-  }
-  return { platform: 'youtube', handle: null }
-}
-
 // 크리에이터 목록
 export async function GET() {
   const { data, error } = await supabaseAdmin
@@ -57,18 +41,16 @@ export async function GET() {
 // 크리에이터 추가
 export async function POST(req: Request) {
   const body = await req.json()
-  const url = (body.url || '').trim()
-  if (!url) return NextResponse.json({ error: '크리에이터 URL 이 필요합니다.' }, { status: 400 })
 
-  const det = detectPlatform(url)
-  // 사용자가 명시한 플랫폼이 있으면 우선, 아니면 URL 추정.
-  const platform = body.platform === 'youtube' || body.platform === 'instagram' ? body.platform : det.platform
+  // 입력(URL/핸들) 검증·정규화. 게시물/영상 링크나 못 알아보는 주소는 친절한 에러로 막는다.
+  const parsed = parseCreatorUrl(body.url || '')
+  if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 })
 
   const row = {
-    label: (body.label || '').trim() || det.handle || '(이름없음)',
-    platform,
-    url,
-    handle: det.handle,
+    label: (body.label || '').trim() || parsed.handle || '(이름없음)',
+    platform: parsed.platform,
+    url: parsed.url, // 정규화된 채널/프로필 URL(크롤러가 그대로 사용 → 안정적)
+    handle: parsed.handle,
     category: (body.category || '').trim() || '미분류',
     enabled: true,
   }
