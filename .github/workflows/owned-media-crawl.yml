@@ -10,6 +10,10 @@ on:
         description: "특정 크리에이터 id만 즉시 크롤(비우면 enabled 전체)"
         required: false
         default: ""
+      since_hours:
+        description: "최근 N시간 내 추가된 크리에이터만 크롤(0=전체). bat 즉시 크롤은 24."
+        required: false
+        default: "0"
 
 jobs:
   crawl:
@@ -46,6 +50,8 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           CRAWL_CREATOR_ID: ${{ github.event.inputs.creator_id }}
+          # 최근 N시간 내 추가된 크리에이터만(bat 즉시 크롤=24). 스케줄 실행 시엔 비어서 전체.
+          CRAWL_SINCE_HOURS: ${{ github.event.inputs.since_hours }}
           # 인스타 수집은 Apify instagram-scraper 사용(없으면 인스타는 건너뜀). 유튜브는 Playwright(Apify 불필요).
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
           # 프로필당 최신 개수(비용 조절). 60명·주1회·5개면 무료 한도 안.

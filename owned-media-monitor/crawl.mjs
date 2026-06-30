@@ -325,8 +325,21 @@ async function main() {
   if (error) { console.error('크리에이터 로드 실패:', error.message); process.exit(1) }
   if (!creators?.length) { log('크롤할 크리에이터가 없습니다.'); return }
 
-  const youtube = creators.filter((c) => c.platform === 'youtube')
-  const instagram = creators.filter((c) => c.platform === 'instagram')
+  // CRAWL_SINCE_HOURS: 최근 N시간 내 추가된 크리에이터만 크롤(0=전체). bat 즉시 크롤(24h)용.
+  // → 이미 크롤된(이전에 추가된) 크리에이터는 제외 = 크리에이터 단위 중복 방지.
+  //   (콘텐츠 단위 중복은 saveYouTube/saveInstagram 이 기존 post_id 는 조회수만 갱신·재다운로드 X 로 이미 방지)
+  const sinceHours = Number(process.env.CRAWL_SINCE_HOURS) || 0
+  let list = creators
+  if (sinceHours > 0) {
+    const cutoff = Date.now() - sinceHours * 3600 * 1000
+    const before = list.length
+    list = list.filter((c) => c.created_at && new Date(c.created_at).getTime() >= cutoff)
+    log(`최근 ${sinceHours}시간 내 추가된 크리에이터만: ${list.length}/${before}명`)
+    if (!list.length) { log('해당 기간 내 새 크리에이터가 없습니다.'); return }
+  }
+
+  const youtube = list.filter((c) => c.platform === 'youtube')
+  const instagram = list.filter((c) => c.platform === 'instagram')
   log(`유튜브 ${youtube.length}명 / 인스타 ${instagram.length}명 크롤 시작`)
 
   // ── 유튜브: Playwright ──
