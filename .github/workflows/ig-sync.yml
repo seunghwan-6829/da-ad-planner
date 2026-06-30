@@ -1,9 +1,10 @@
 name: Instagram Sync
 
 on:
-  schedule:
-    # 8시간마다 전체 동기화(스냅샷 누적). sync 잡이 만료 임박 토큰 갱신도 함께 수행.
-    - cron: "0 */8 * * *"
+  # ⚠️ 자동 스케줄은 인스타 연동 셋업(메타 앱 + Secrets: APP_URL, CRON_SECRET) 완료 전까지 비활성화.
+  #    셋업이 끝나면 아래 schedule 블록의 주석(#)을 풀어 8시간마다 자동 동기화하세요.
+  # schedule:
+  #   - cron: "0 */8 * * *"
   workflow_dispatch:
     inputs:
       job:
