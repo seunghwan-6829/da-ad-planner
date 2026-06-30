@@ -24,7 +24,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # Node 22+ : @supabase/supabase-js(realtime-js)가 요구하는 네이티브 WebSocket 내장(20은 없어서 실패).
+          node-version: "22"
 
       - name: Install deps
         run: npm install
