@@ -2,7 +2,6 @@ import '../pb-styles.css'
 import '../pb-theme.css'
 import { HeatmapClient } from '@/components/pb/HeatmapClient'
 import { getHeatmapData } from '@/lib/pb/heatmap-data'
-import { PbBackBar } from '../back-bar'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,7 +20,6 @@ export default async function PbHeatmapPage({ searchParams }: Props) {
 
   return (
     <div className="pb-app">
-      <PbBackBar />
       <HeatmapClient data={data} initialSecretMode={secret} />
     </div>
   )

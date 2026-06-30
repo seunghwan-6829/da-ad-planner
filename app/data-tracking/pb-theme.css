@@ -21,38 +21,25 @@ body {
   font-family: "Pretendard", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
 }
 
-/* 좌상단 돌아가기 바 */
-.pb-backbar {
-  position: sticky;
-  top: 0;
-  z-index: 60;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  background: #ffffff;
-  border-bottom: 1px solid #e5e7eb;
-}
-.pb-back-btn {
+/* 왼쪽 패널 상단 '컨텐츠 디벨로퍼로 돌아가기' (상단 바 제거 → 좌측 패널로 이동) */
+.pb-app .pb-home-back {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
+  gap: 4px;
+  width: fit-content;
+  margin-bottom: 12px;
+  padding: 6px 10px;
+  font-size: 12px;
   font-weight: 600;
-  color: #374151;
+  color: #6b7280;
+  text-decoration: none;
   background: #f9fafb;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
-  padding: 6px 12px;
-  cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.15s, color 0.15s;
 }
-.pb-back-btn:hover {
+.pb-app .pb-home-back:hover {
   background: #f3f4f6;
-}
-.pb-backbar-title {
-  font-size: 13px;
-  font-weight: 700;
   color: #111827;
 }
 

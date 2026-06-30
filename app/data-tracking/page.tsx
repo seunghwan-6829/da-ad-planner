@@ -2,7 +2,6 @@ import './pb-styles.css'
 import './pb-theme.css'
 import { ProjectWorkspaceClient } from '@/components/pb/ProjectWorkspaceClient'
 import { getWorkspaceData } from '@/lib/pb/home-data'
-import { PbBackBar } from './back-bar'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,7 +17,6 @@ export default async function DataTrackingPage({ searchParams }: Props) {
 
   return (
     <div className="pb-app">
-      <PbBackBar />
       <ProjectWorkspaceClient initialData={data} initialSelectedProjectId={projectId} />
     </div>
   )
