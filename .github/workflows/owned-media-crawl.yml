@@ -34,10 +34,7 @@ jobs:
       - name: Install deps
         run: npm install
 
-      - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
-
-      - name: Install yt-dlp + ffmpeg (유튜브 영상 다운로드용)
+      - name: Install yt-dlp + ffmpeg (유튜브 쇼츠 나열·다운로드용)
         # 설치 실패해도 크롤은 계속(다운로드 못 하면 임베드로 폴백)되도록 best-effort.
         continue-on-error: true
         run: |
