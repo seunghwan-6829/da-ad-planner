@@ -1,0 +1,57 @@
+/* 데이터 추적 — Pulseboard UI를 컨텐츠 디벨로퍼(da-ad-planner) 톤으로 리스킨.
+   이 파일은 /data-tracking 라우트에서만 로드(코드분할) → 다른 페이지엔 영향 없음.
+   pulseboard CSS가 var(--*) 토큰을 광범위하게 쓰므로, 토큰만 갈아끼우면 전체가 리스킨됨. */
+:root {
+  --bg: #f9fafb;            /* gray-50 */
+  --panel: #ffffff;
+  --panel-soft: #f9fafb;
+  --line: #e5e7eb;          /* gray-200 (warm→cool) */
+  --line-strong: #d1d5db;   /* gray-300 */
+  --text: #111827;          /* gray-900 */
+  --muted: #6b7280;         /* gray-500 */
+  --accent: #2563eb;        /* blue-600 (pink→blue) */
+  --accent-soft: #eff6ff;   /* blue-50 */
+  --danger: #ef4444;        /* red-500 */
+  --ok: #16a34a;            /* green-600 */
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.05);
+}
+
+html,
+body {
+  font-family: "Pretendard", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+}
+
+/* 좌상단 돌아가기 바 */
+.pb-backbar {
+  position: sticky;
+  top: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: #ffffff;
+  border-bottom: 1px solid #e5e7eb;
+}
+.pb-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.pb-back-btn:hover {
+  background: #f3f4f6;
+}
+.pb-backbar-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #111827;
+}

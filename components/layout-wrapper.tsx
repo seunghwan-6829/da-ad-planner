@@ -12,11 +12,15 @@ export function LayoutWrapper({ children }: { children: React.ReactNode }) {
   const isPublicGuidePage = pathname.startsWith('/guide/')
   const isPublicAdSharePage = pathname.startsWith('/meta-ad/share/')
   const isPublicContentGuidePage = pathname.startsWith('/content-guide/share/')
+  // 데이터 추적: 로그인은 필요하지만 da-ad-planner 사이드바 없이 전체화면(레이아웃이 옆으로 길어 잘림 방지)
+  const isDataTracking = pathname.startsWith('/data-tracking')
 
   return (
     <AuthProvider>
       {isLoginPage || isPublicVideoSharePage || isPublicGuidePage || isPublicAdSharePage || isPublicContentGuidePage ? (
         <>{children}</>
+      ) : isDataTracking ? (
+        <AuthGuard>{children}</AuthGuard>
       ) : (
         <AuthGuard>
           <div className="flex h-screen">

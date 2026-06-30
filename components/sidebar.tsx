@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import {
+  Activity,
   BarChart3,
   Bell,
   Camera,
@@ -33,6 +34,7 @@ const navigationTop = [
   { name: '영상 보드', href: '/video-board', icon: Video },
   { name: '이미지 보드', href: '/image-board', icon: Images },
   { name: '인스타 성과', href: '/instagram', icon: BarChart3 },
+  { name: '데이터 추적', href: '/data-tracking', icon: Activity },
   { name: '메타 광고 크롤러', href: '/meta-ad-crawler', icon: Megaphone },
 ]
 
@@ -99,19 +101,28 @@ export function Sidebar() {
       <nav className="flex-1 space-y-1 overflow-y-auto p-4">
         {topItems.map((item) => {
           const isActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href))
-
-          return (
-            <Link
-              key={item.name}
-              href={item.href}
-              className={cn(
-                'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                isActive ? 'bg-primary text-white' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'
-              )}
-            >
+          const className = cn(
+            'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+            isActive ? 'bg-primary text-white' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'
+          )
+          const inner = (
+            <>
               <item.icon className="h-5 w-5" />
               {item.name}
               {isActive && <ChevronRight className="ml-auto h-4 w-4" />}
+            </>
+          )
+          // 데이터 추적은 pulseboard 전역 CSS 격리를 위해 전체 페이지 로드(<a>)로 진입
+          if (item.href === '/data-tracking') {
+            return (
+              <a key={item.name} href={item.href} className={className}>
+                {inner}
+              </a>
+            )
+          }
+          return (
+            <Link key={item.name} href={item.href} className={className}>
+              {inner}
             </Link>
           )
         })}

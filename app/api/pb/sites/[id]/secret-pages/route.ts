@@ -1,0 +1,112 @@
+import { NextResponse } from "next/server";
+import { supabaseAdmin } from "@/lib/supabase-admin";
+
+type SecretPagePayload = {
+  name?: string;
+  url?: string;
+};
+
+function isValidUrl(value: string) {
+  try {
+    new URL(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function normalizeProjectUrl(value: string) {
+  const url = new URL(value.trim());
+  url.hash = "";
+  url.hostname = url.hostname.replace(/^www\./, "").toLowerCase();
+  if (url.pathname !== "/" && url.pathname.endsWith("/")) {
+    url.pathname = url.pathname.replace(/\/+$/, "");
+  }
+  return url.toString();
+}
+
+function normalizePageKeyFromUrl(value: string) {
+  try {
+    const url = new URL(value);
+    const path = url.pathname !== "/" ? url.pathname.replace(/\/+$/, "") : "/";
+    const preserved = new URLSearchParams();
+    for (const [key, rawValue] of url.searchParams.entries()) {
+      const normalizedKey = key.toLowerCase();
+      if (
+        normalizedKey === "idx" ||
+        normalizedKey === "id" ||
+        normalizedKey === "page" ||
+        normalizedKey === "tab" ||
+        normalizedKey === "category" ||
+        normalizedKey === "sort" ||
+        normalizedKey === "type" ||
+        normalizedKey === "q"
+      ) {
+        preserved.set(key, rawValue);
+      }
+    }
+    const search = preserved.toString();
+    return `${path}${search ? `?${search}` : ""}` || "/";
+  } catch {
+    return "/";
+  }
+}
+
+export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
+  const { id } = await context.params;
+  const supabase = supabaseAdmin;
+
+  if (!supabase) {
+    return NextResponse.json({ ok: false, error: "Supabase가 연결되지 않았습니다." }, { status: 500 });
+  }
+
+  const { data, error } = await supabase
+    .from("pb_secret_pages")
+    .select("id,site_id,name,url,page_key,created_at,updated_at")
+    .eq("site_id", id)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ ok: true, items: data ?? [] });
+}
+
+export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
+  const { id } = await context.params;
+  const payload = (await request.json().catch(() => null)) as SecretPagePayload | null;
+  const supabase = supabaseAdmin;
+
+  if (!supabase) {
+    return NextResponse.json({ ok: false, error: "Supabase가 연결되지 않았습니다." }, { status: 500 });
+  }
+
+  if (!payload?.name?.trim() || !payload?.url?.trim()) {
+    return NextResponse.json({ ok: false, error: "페이지 이름과 URL을 입력해주세요." }, { status: 400 });
+  }
+
+  if (!isValidUrl(payload.url)) {
+    return NextResponse.json({ ok: false, error: "올바른 URL 형식으로 입력해주세요." }, { status: 400 });
+  }
+
+  const normalizedUrl = normalizeProjectUrl(payload.url);
+  const pageKey = normalizePageKeyFromUrl(normalizedUrl);
+
+  const { data, error } = await supabase
+    .from("pb_secret_pages")
+    .insert({
+      site_id: id,
+      name: payload.name.trim(),
+      url: normalizedUrl,
+      page_key: pageKey
+    })
+    .select("id,site_id,name,url,page_key,created_at,updated_at")
+    .single();
+
+  if (error) {
+    return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ ok: true, item: data });
+}
