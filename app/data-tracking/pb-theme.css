@@ -19,6 +19,18 @@
 /* 배경/상단 정리 */
 .pb-app .workspace-shell { background: #f9fafb; }
 .pb-app .workspace-sidebar { background: #ffffff; }
+
+/* 좌측 패널 고정: 그리드 stretch 방지(align-self:start)로 sticky 확실히 동작 + 위 정렬.
+   내용이 길면 패널 내부만 스크롤. → 본문 스크롤해도 패널은 안 움직임 */
+.pb-app .workspace-sidebar {
+  align-self: start;
+  justify-content: flex-start;
+  overflow-y: auto;
+}
+/* 관리자 설정 버튼을 '프로젝트 등록' 바로 아래로(JSX) + 같은 가로폭(꽉 차게) */
+.pb-app .workspace-sidebar-top .workspace-admin-button {
+  width: 100%;
+}
 .pb-app .workspace-content { padding-top: 14px; }
 .pb-app .workspace-topbar .workspace-eyebrow { display: none; }
 

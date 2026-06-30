@@ -848,6 +848,7 @@ export function ProjectWorkspaceClient({ initialData, initialSelectedProjectId }
             </div>
           </div>
           <button className="workspace-primary-button" onClick={() => setCreateOpen(true)}>+ 프로젝트 등록</button>
+          <button className="workspace-secondary-button workspace-admin-button" onClick={() => setAdminOpen(true)}>관리자 설정</button>
           <div className="workspace-sidebar-group">
             <p className="workspace-sidebar-label">프로젝트</p>
             <div className="workspace-project-list">
@@ -859,9 +860,6 @@ export function ProjectWorkspaceClient({ initialData, initialSelectedProjectId }
               )) : <div className="workspace-empty-sidebar">등록된 프로젝트가 없습니다.</div>}
             </div>
           </div>
-        </div>
-        <div className="workspace-sidebar-bottom">
-          <button className="workspace-secondary-button" onClick={() => setAdminOpen(true)}>관리자 설정</button>
         </div>
       </aside>
 
