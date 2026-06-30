@@ -888,23 +888,19 @@ export function ProjectWorkspaceClient({ initialData, initialSelectedProjectId }
                   >
                     비밀페이지 등록
                   </a>
+                  <button className="workspace-chip-button" onClick={handleVerifyHead} disabled={verifyLoading}>
+                    {verifyLoading ? <span className="workspace-spinner" /> : null}
+                    {verifySuccess ? <span className="workspace-checkmark"><SuccessIcon /></span> : "설치 확인"}
+                  </button>
+                  <button className="workspace-chip-button" onClick={handleTestView} disabled={testLoading}>
+                    {testLoading ? <span className="workspace-spinner" /> : null}
+                    {testSuccess ? <span className="workspace-checkmark"><SuccessIcon /></span> : "테스트"}
+                  </button>
                 </>
               ) : null}
             </div>
             <p className="workspace-subtle">{selectedProject?.url || "왼쪽에서 프로젝트를 등록하면 이 영역에 데이터가 들어옵니다."}</p>
           </div>
-          {selectedProject ? (
-            <div className="workspace-topbar-actions">
-              <button className="workspace-chip-button" onClick={handleVerifyHead} disabled={verifyLoading}>
-                {verifyLoading ? <span className="workspace-spinner" /> : null}
-                {verifySuccess ? <span className="workspace-checkmark"><SuccessIcon /></span> : "설치 확인"}
-              </button>
-              <button className="workspace-chip-button" onClick={handleTestView} disabled={testLoading}>
-                {testLoading ? <span className="workspace-spinner" /> : null}
-                {testSuccess ? <span className="workspace-checkmark"><SuccessIcon /></span> : "테스트"}
-              </button>
-            </div>
-          ) : null}
         </header>
 
         {notice ? <div className="workspace-notice">{notice}</div> : null}

@@ -22,9 +22,15 @@
 .pb-app .workspace-content { padding-top: 14px; }
 .pb-app .workspace-topbar .workspace-eyebrow { display: none; }
 
+/* 프로젝트 제목(예: medicalbible.co.kr) 볼드 처리 */
+.pb-app .workspace-title-row h1 { font-weight: 800; }
+/* 제목+버튼 한 줄에 6개 → 좁으면 자연스럽게 줄바꿈 */
+.pb-app .workspace-title-row { flex-wrap: wrap; }
+
 /* 날짜 범위 카드: 폰트·버튼 축소(가로 좁아도 줄바꿈 없이 깔끔하게) */
 .pb-app .workspace-range-copy h2 { font-size: 0.95rem; line-height: 1.35; }
 .pb-app .workspace-range-chip { font-size: 12px; padding: 6px 12px; }
 .pb-app .workspace-range-card .workspace-primary-button { font-size: 12px; padding: 6px 14px; }
-.pb-app .workspace-date-field span { font-size: 11px; }
 .pb-app .workspace-date-field input { font-size: 12px; padding: 6px 8px; }
+/* 시작일/종료일 라벨 제거 — 날짜만으로 충분(사회적 약속) */
+.pb-app .workspace-date-field span { display: none; }
