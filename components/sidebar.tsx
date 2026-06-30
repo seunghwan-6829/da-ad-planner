@@ -48,6 +48,14 @@ const navigationBottom = [
 
 type MetaChange = { newCount: number; endedCount: number; latest: string | null }
 
+// 활성 메뉴 판정: '/'(대시보드)는 정확히 '/'일 때만. 그 외는 정확히 일치하거나 서브경로(href + '/')일 때만.
+// → /data-tracking 에서는 '데이터 추적'만 active, '대시보드'는 절대 active 안 됨.
+function isNavActive(pathname: string | null, href: string): boolean {
+  const p = pathname || '/'
+  if (href === '/') return p === '/'
+  return p === href || p.startsWith(href + '/')
+}
+
 export function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
@@ -100,7 +108,7 @@ export function Sidebar() {
 
       <nav className="flex-1 space-y-1 overflow-y-auto p-4">
         {topItems.map((item) => {
-          const isActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href))
+          const isActive = isNavActive(pathname, item.href)
           const className = cn(
             'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
             isActive ? 'bg-primary text-white' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'
@@ -123,7 +131,7 @@ export function Sidebar() {
         </div>
 
         {navigationBottom.map((item) => {
-          const isActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href))
+          const isActive = isNavActive(pathname, item.href)
 
           return (
             <Link
