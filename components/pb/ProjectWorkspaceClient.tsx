@@ -621,7 +621,7 @@ export function ProjectWorkspaceClient({ initialData, initialSelectedProjectId }
     params.set("end", dateRange.endDate);
     params.set("preset", rangePreset);
     if (selectedProjectId) params.set("project", selectedProjectId);
-    window.history.replaceState(null, "", `/?${params.toString()}`);
+    window.history.replaceState(null, "", `/data-tracking?${params.toString()}`);
   }, [dateRange.endDate, dateRange.startDate, rangePreset, selectedProjectId]);
 
   async function refreshWorkspace(nextSelectedId?: string, range = dateRange, preset: RangePreset = rangePreset) {
