@@ -61,6 +61,13 @@ export function Sidebar() {
   const router = useRouter()
   const { user, profile, isAdmin, canMetaAd, signOut } = useAuth()
 
+  // ⚠️ 하드 리로드(F5) 시 usePathname()이 일시적으로 '/'로 잡혀 '대시보드'가 잘못 활성화되는
+  //    하이드레이션 타이밍 버그 방지 → 마운트/경로변경 후 실제 URL(window.location)로 활성 경로 동기화.
+  const [activePath, setActivePath] = useState(pathname)
+  useEffect(() => {
+    setActivePath(window.location.pathname)
+  }, [pathname])
+
   // '메타 광고 크롤러'는 권한(can_meta_ad) 또는 관리자만 노출
   const topItems = navigationTop.filter((item) => item.href !== '/meta-ad-crawler' || canMetaAd)
 
@@ -84,7 +91,7 @@ export function Sidebar() {
     change.newCount + change.endedCount > 0 &&
     change.latest != null &&
     dismissed !== change.latest &&
-    !pathname.startsWith('/meta-ad-crawler')
+    !activePath.startsWith('/meta-ad-crawler')
 
   function dismissAlert() {
     if (change?.latest) {
@@ -108,7 +115,7 @@ export function Sidebar() {
 
       <nav className="flex-1 space-y-1 overflow-y-auto p-4">
         {topItems.map((item) => {
-          const isActive = isNavActive(pathname, item.href)
+          const isActive = isNavActive(activePath, item.href)
           const className = cn(
             'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
             isActive ? 'bg-primary text-white' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'
@@ -131,7 +138,7 @@ export function Sidebar() {
         </div>
 
         {navigationBottom.map((item) => {
-          const isActive = isNavActive(pathname, item.href)
+          const isActive = isNavActive(activePath, item.href)
 
           return (
             <Link
@@ -154,12 +161,12 @@ export function Sidebar() {
             href="/admin"
             className={cn(
               'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-              pathname === '/admin' ? 'bg-red-600 text-white' : 'text-red-600 hover:bg-red-50 dark:hover:bg-red-950'
+              activePath === '/admin' ? 'bg-red-600 text-white' : 'text-red-600 hover:bg-red-50 dark:hover:bg-red-950'
             )}
           >
             <Shield className="h-5 w-5" />
             관리자
-            {pathname === '/admin' && <ChevronRight className="ml-auto h-4 w-4" />}
+            {activePath === '/admin' && <ChevronRight className="ml-auto h-4 w-4" />}
           </Link>
         )}
       </nav>

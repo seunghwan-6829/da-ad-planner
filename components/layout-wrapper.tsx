@@ -1,12 +1,18 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import { AuthProvider } from '@/lib/auth-context'
 import { AuthGuard } from '@/components/auth-guard'
 import { Sidebar } from '@/components/sidebar'
 
 export function LayoutWrapper({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname()
+  const routePathname = usePathname()
+  // 하드 리로드(F5) 시 usePathname 이 일시적으로 '/'로 잡히는 타이밍 버그 방지 → 실제 URL로 동기화
+  const [pathname, setPathname] = useState(routePathname)
+  useEffect(() => {
+    setPathname(window.location.pathname)
+  }, [routePathname])
   const isLoginPage = pathname === '/login'
   const isPublicVideoSharePage = pathname.startsWith('/video-board/share/')
   const isPublicGuidePage = pathname.startsWith('/guide/')
