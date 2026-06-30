@@ -1,4 +1,6 @@
-:root {
+/* ⚠️ 전역 리셋을 .pb-app 으로 스코프 → da-ad-planner(사이드바 등)에 절대 안 샘.
+   덕분에 da-ad-planner 사이드바를 유지한 채 매끄러운 클라이언트 전환 가능. */
+.pb-app {
   --bg: #f7f4ef;
   --panel: #ffffff;
   --panel-soft: #faf8f4;
@@ -11,29 +13,24 @@
   --danger: #f95e5e;
   --ok: #6fb37d;
   --shadow: 0 16px 36px rgba(44, 35, 24, 0.08);
-}
-
-* {
-  box-sizing: border-box;
-}
-
-html,
-body {
-  margin: 0;
   min-height: 100%;
   background: var(--bg);
   color: var(--text);
   font-family: "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
 }
 
-button,
-input,
-select,
-textarea {
+.pb-app * {
+  box-sizing: border-box;
+}
+
+.pb-app button,
+.pb-app input,
+.pb-app select,
+.pb-app textarea {
   font: inherit;
 }
 
-button {
+.pb-app button {
   cursor: pointer;
 }
 

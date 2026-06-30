@@ -840,7 +840,6 @@ export function ProjectWorkspaceClient({ initialData, initialSelectedProjectId }
     <main className="workspace-shell">
       <aside className="workspace-sidebar">
         <div className="workspace-sidebar-top">
-          <a href="/" className="pb-home-back">← 컨텐츠 디벨로퍼로 돌아가기</a>
           <div className="workspace-brand">
             {selectedProject?.logoUrl ? <img className="workspace-brand-logo" src={selectedProject.logoUrl} alt={selectedProject.domain} /> : <div className="workspace-brand-fallback">P</div>}
             <div>

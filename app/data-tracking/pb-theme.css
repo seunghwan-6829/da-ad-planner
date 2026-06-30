@@ -1,58 +1,30 @@
 /* 데이터 추적 — Pulseboard UI를 컨텐츠 디벨로퍼(da-ad-planner) 톤으로 리스킨.
-   이 파일은 /data-tracking 라우트에서만 로드(코드분할) → 다른 페이지엔 영향 없음.
-   pulseboard CSS가 var(--*) 토큰을 광범위하게 쓰므로, 토큰만 갈아끼우면 전체가 리스킨됨. */
-:root {
+   /data-tracking 라우트에서만 로드(코드분할). 토큰도 .pb-app 으로 스코프 → 전역 누수 0. */
+.pb-app {
   --bg: #f9fafb;            /* gray-50 */
   --panel: #ffffff;
   --panel-soft: #f9fafb;
-  --line: #e5e7eb;          /* gray-200 (warm→cool) */
+  --line: #e5e7eb;          /* gray-200 */
   --line-strong: #d1d5db;   /* gray-300 */
   --text: #111827;          /* gray-900 */
   --muted: #6b7280;         /* gray-500 */
-  --accent: #2563eb;        /* blue-600 (pink→blue) */
+  --accent: #2563eb;        /* blue-600 */
   --accent-soft: #eff6ff;   /* blue-50 */
-  --danger: #ef4444;        /* red-500 */
-  --ok: #16a34a;            /* green-600 */
+  --danger: #ef4444;
+  --ok: #16a34a;
   --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.05);
-}
-
-html,
-body {
   font-family: "Pretendard", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
 }
 
-/* 왼쪽 패널 상단 '컨텐츠 디벨로퍼로 돌아가기' (상단 바 제거 → 좌측 패널로 이동) */
-.pb-app .pb-home-back {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  width: fit-content;
-  margin-bottom: 12px;
-  padding: 6px 10px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #6b7280;
-  text-decoration: none;
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  transition: background 0.15s, color 0.15s;
-}
-.pb-app .pb-home-back:hover {
-  background: #f3f4f6;
-  color: #111827;
-}
+/* 배경/상단 정리 */
+.pb-app .workspace-shell { background: #f9fafb; }
+.pb-app .workspace-sidebar { background: #ffffff; }
+.pb-app .workspace-content { padding-top: 14px; }
+.pb-app .workspace-topbar .workspace-eyebrow { display: none; }
 
-/* 상단 빈 헤더 정리: 중복 라벨('프로젝트 대시보드') 제거 + 상단 여백 축소 + 배경 da-ad-planner 그레이 */
-.pb-app .workspace-shell {
-  background: #f9fafb;
-}
-.pb-app .workspace-content {
-  padding-top: 14px;
-}
-.pb-app .workspace-topbar .workspace-eyebrow {
-  display: none;
-}
-.pb-app .workspace-sidebar {
-  background: #ffffff;
-}
+/* 날짜 범위 카드: 폰트·버튼 축소(가로 좁아도 줄바꿈 없이 깔끔하게) */
+.pb-app .workspace-range-copy h2 { font-size: 0.95rem; line-height: 1.35; }
+.pb-app .workspace-range-chip { font-size: 12px; padding: 6px 12px; }
+.pb-app .workspace-range-card .workspace-primary-button { font-size: 12px; padding: 6px 14px; }
+.pb-app .workspace-date-field span { font-size: 11px; }
+.pb-app .workspace-date-field input { font-size: 12px; padding: 6px 8px; }
