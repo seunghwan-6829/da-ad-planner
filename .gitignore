@@ -33,6 +33,9 @@ yarn-error.log*
 # api keys / secrets (never commit)
 api key.txt
 *api*key*.txt
+*api*.txt
+pulseboard api.txt
+.env.pulseboard
 
 # local editor/agent config & standalone prototype (not part of deploy)
 /.claude/
