@@ -12,8 +12,20 @@ const RECENT = 300
 const LIGHT_COLS =
   'library_id, target_id, page_name, started_on, last_shown, media_type, media_url, media_urls, poster_url, landing_url, source_url, format, memo, status, ended_at, first_seen_at, last_seen_at'
 
-// 광고주별 광고 수(페이지네이션 집계).
+// 광고주별 광고 수.
 async function fetchCounts(): Promise<Record<string, number>> {
+  // 1) 빠른 경로: DB 집계 RPC(crawler-perf-rpc.sql 실행 후). 1쿼리·행 전송 없음 → 데이터 양과 무관하게 빠름.
+  try {
+    const { data, error } = await supabaseAdmin.rpc('ga_ad_counts')
+    if (!error && Array.isArray(data)) {
+      const counts: Record<string, number> = {}
+      for (const row of data as { target_id: string; n: number }[]) if (row.target_id) counts[row.target_id] = Number(row.n) || 0
+      return counts
+    }
+  } catch {
+    // RPC 미설치 → 폴백
+  }
+  // 2) 폴백(RPC 없을 때): 전체 target_id 페이지네이션 집계.
   const { count } = await supabaseAdmin.from('ga_ads').select('*', { count: 'exact', head: true })
   const total = count || 0
   const PAGE = 1000

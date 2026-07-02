@@ -12,8 +12,20 @@ const RECENT = 300
 const LIGHT_COLS =
   'post_id, creator_id, creator_name, platform, post_url, media_type, media_url, media_urls, poster_url, posted_at, views, likes, comments, shares, saves, memo, saved, status, ended_at, first_seen_at, last_seen_at'
 
-// 크리에이터별 콘텐츠 수(데이터가 적은 초기엔 단순 페이지네이션 집계).
+// 크리에이터별 콘텐츠 수.
 async function fetchCounts(): Promise<Record<string, number>> {
+  // 1) 빠른 경로: DB 집계 RPC(crawler-perf-rpc.sql 실행 후). 1쿼리·행 전송 없음.
+  try {
+    const { data, error } = await supabaseAdmin.rpc('om_post_counts')
+    if (!error && Array.isArray(data)) {
+      const counts: Record<string, number> = {}
+      for (const row of data as { creator_id: string; n: number }[]) if (row.creator_id) counts[row.creator_id] = Number(row.n) || 0
+      return counts
+    }
+  } catch {
+    // RPC 미설치 → 폴백
+  }
+  // 2) 폴백(RPC 없을 때): 전체 creator_id 페이지네이션 집계.
   const { count } = await supabaseAdmin.from('om_posts').select('*', { count: 'exact', head: true })
   const total = count || 0
   const PAGE = 1000
