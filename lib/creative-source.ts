@@ -18,8 +18,33 @@ export type CreativeRecord = {
   transcript: string | null
 }
 
-// source: 'om' → om_posts(온드미디어), 그 외 → am_ads(메타광고, 기본).
+// source: 'om' → om_posts(온드미디어), 'ga' → ga_ads(구글광고), 그 외 → am_ads(메타광고, 기본).
 export async function loadCreative(id: string, source?: string): Promise<CreativeRecord | null> {
+  if (source === 'ga') {
+    // ga_ads 는 am_ads 와 컬럼명이 동일하게 설계돼 매핑이 그대로다.
+    const { data, error } = await supabaseAdmin
+      .from('ga_ads')
+      .select(
+        'library_id, page_name, started_on, ad_text, media_type, media_url, media_urls, poster_url, frames, ai_analysis, transcript'
+      )
+      .eq('library_id', id)
+      .single()
+    if (error || !data) return null
+    const d = data as Record<string, unknown>
+    return {
+      library_id: String(d.library_id),
+      page_name: (d.page_name as string) ?? null,
+      started_on: (d.started_on as string) ?? null,
+      ad_text: (d.ad_text as string) ?? null,
+      media_type: (d.media_type as string) ?? null,
+      media_url: (d.media_url as string) ?? null,
+      media_urls: Array.isArray(d.media_urls) ? (d.media_urls as string[]) : null,
+      poster_url: (d.poster_url as string) ?? null,
+      frames: Array.isArray(d.frames) ? (d.frames as string[]) : null,
+      ai_analysis: (d.ai_analysis as string) ?? null,
+      transcript: typeof d.transcript === 'string' ? (d.transcript as string) : null,
+    }
+  }
   if (source === 'om') {
     const { data, error } = await supabaseAdmin
       .from('om_posts')

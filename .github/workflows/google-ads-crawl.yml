@@ -1,0 +1,50 @@
+name: Crawl Google Ads (Transparency Center)
+
+on:
+  schedule:
+    # 주 1회 · 매주 화요일 KST 오전 10시 (UTC 화 01:00). Apify 비용 고려한 주간 주기.
+    - cron: "0 1 * * 2"
+  workflow_dispatch:
+    inputs:
+      target_id:
+        description: "특정 광고주 id만 즉시 크롤(비우면 enabled 전체)"
+        required: false
+        default: ""
+      since_hours:
+        description: "최근 N시간 내 추가된 광고주만 크롤(0=전체). bat 즉시 크롤은 24."
+        required: false
+        default: "0"
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: google-ads-monitor
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Node 22+ : @supabase/supabase-js(realtime-js)가 요구하는 네이티브 WebSocket 내장.
+          node-version: "22"
+
+      - name: Install deps
+        run: npm install
+
+      - name: Install yt-dlp + ffmpeg (영상 광고 다운로드용)
+        continue-on-error: true
+        run: |
+          sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
+          sudo chmod a+rx /usr/local/bin/yt-dlp
+          sudo apt-get install -y ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+
+      - name: Run crawler
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
+          CRAWL_TARGET_ID: ${{ github.event.inputs.target_id }}
+          CRAWL_SINCE_HOURS: ${{ github.event.inputs.since_hours }}
+        run: node crawl.mjs

@@ -9,6 +9,7 @@ import {
   Bell,
   Camera,
   ChevronRight,
+  Chrome,
   Clapperboard,
   FileCode,
   Film,
@@ -38,6 +39,7 @@ const navigationTop = [
   { name: '데이터 추적', href: '/data-tracking', icon: Activity },
   { name: '온드미디어 크롤러', href: '/owned-media', icon: Radio },
   { name: '메타 광고 크롤러', href: '/meta-ad-crawler', icon: Megaphone },
+  { name: '구글 광고 크롤러', href: '/google-ads', icon: Chrome },
 ]
 
 const navigationBottom = [
@@ -71,7 +73,7 @@ export function Sidebar() {
   }, [pathname])
 
   // '메타 광고 크롤러' · '온드미디어 크롤러'는 권한(can_meta_ad) 또는 관리자만 노출
-  const restrictedHrefs = ['/meta-ad-crawler', '/owned-media']
+  const restrictedHrefs = ['/meta-ad-crawler', '/owned-media', '/google-ads']
   const topItems = navigationTop.filter((item) => !restrictedHrefs.includes(item.href) || canMetaAd)
 
   // #6 메타 광고 5일 알림: 신규/종료 변화가 있으면 하단 배지. 닫으면 그 시그니처는 다시 안 뜸(새 변화 시 재등장).

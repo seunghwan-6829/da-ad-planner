@@ -1,0 +1,13 @@
+{
+  "name": "google-ads-monitor",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "구글 광고 크롤러 — 구글 광고 투명성 센터를 Apify(silva95gustavo/google-ads-scraper)로 수집, 영상은 yt-dlp로 다운로드해 Supabase(ga_ads)에 적재.",
+  "scripts": {
+    "crawl": "node crawl.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.47.10"
+  }
+}
