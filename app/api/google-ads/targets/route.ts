@@ -27,13 +27,20 @@ async function triggerCrawl(targetId: string): Promise<boolean> {
   }
 }
 
-// 투명성 센터 URL 에서 광고주 ID(AR...)와 지역을 추출.
-//   허용: https://adstransparency.google.com/advertiser/AR.../?region=KR (광고 상세 URL 이어도 AR 만 뽑음)
+// 투명성 센터 URL 파싱. 두 종류 지원:
+//   - 광고주 URL(…/advertiser/AR…) → advertiserId = 'AR…'
+//   - 도메인 검색 URL(…?domain=example.com) → advertiserId = 'domain:example.com'
+//   크롤러는 이 값으로 Apify 에 넘길 URL 을 재구성한다.
 function parseTransparencyUrl(raw: string): { advertiserId: string | null; region: string } {
   const s = (raw || '').trim()
-  const ar = s.match(/\/advertiser\/(AR[0-9A-Za-z_-]+)/)
   const region = s.match(/[?&]region=([A-Za-z]{2,20})/)
-  return { advertiserId: ar ? ar[1] : /^AR[0-9A-Za-z_-]+$/.test(s) ? s : null, region: region ? region[1].toUpperCase() : 'KR' }
+  const reg = region ? region[1].toUpperCase() : 'KR'
+  const ar = s.match(/\/advertiser\/(AR[0-9A-Za-z_-]+)/)
+  if (ar) return { advertiserId: ar[1], region: reg }
+  if (/^AR[0-9A-Za-z_-]+$/.test(s)) return { advertiserId: s, region: reg }
+  const dom = s.match(/[?&]domain=([^&#\s]+)/)
+  if (dom) return { advertiserId: 'domain:' + decodeURIComponent(dom[1]), region: reg }
+  return { advertiserId: null, region: reg }
 }
 
 // 광고주 목록

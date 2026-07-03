@@ -13,12 +13,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if (typeof body.label === 'string') patch.label = body.label.trim()
   if (typeof body.category === 'string') patch.category = body.category.trim() || '미분류'
   if (typeof body.country === 'string') patch.country = body.country.trim() || 'KR'
-  // 투명성 센터 URL/AR ID 수정
+  // 투명성 센터 URL/AR ID 수정 (광고주 URL 또는 도메인 검색 URL)
   if (typeof body.url === 'string' && body.url.trim()) {
-    const ar = body.url.match(/\/advertiser\/(AR[0-9A-Za-z_-]+)/) || body.url.trim().match(/^(AR[0-9A-Za-z_-]+)$/)
-    if (!ar) return NextResponse.json({ error: '광고주 URL(…/advertiser/AR…)을 인식하지 못했어요.' }, { status: 400 })
-    patch.advertiser_id = ar[1]
-    const region = body.url.match(/[?&]region=([A-Za-z]{2,20})/)
+    const s = body.url.trim()
+    const ar = s.match(/\/advertiser\/(AR[0-9A-Za-z_-]+)/) || s.match(/^(AR[0-9A-Za-z_-]+)$/)
+    const dom = s.match(/[?&]domain=([^&#\s]+)/)
+    if (ar) patch.advertiser_id = ar[1]
+    else if (dom) patch.advertiser_id = 'domain:' + decodeURIComponent(dom[1])
+    else return NextResponse.json({ error: '광고주 URL(…/advertiser/AR…) 또는 도메인 URL(…?domain=…)을 인식하지 못했어요.' }, { status: 400 })
+    const region = s.match(/[?&]region=([A-Za-z]{2,20})/)
     if (region) patch.country = region[1].toUpperCase()
   }
   // 클라이언트 매핑(여러 클라이언트 가능)

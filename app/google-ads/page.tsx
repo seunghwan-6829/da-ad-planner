@@ -198,16 +198,18 @@ const CATEGORIES = [
   "기타",
 ];
 
-// 구글 광고 투명성 센터 URL 에서 광고주 ID(AR...) 추출. 광고주 URL 이 아니면 null.
+// 투명성 센터 URL 유효성: 광고주 URL(/advertiser/AR…) 또는 도메인 검색 URL(?domain=…) 이면 통과.
 function parseAdvertiserId(input: string): string | null {
   const s = (input || "").trim();
   const m = s.match(/\/advertiser\/(AR[0-9A-Za-z_-]+)/);
   if (m) return m[1];
   if (/^AR[0-9A-Za-z_-]+$/.test(s)) return s;
+  const dom = s.match(/[?&]domain=([^&#\s]+)/);
+  if (dom) return "domain:" + dom[1];
   return null;
 }
 const ADVERTISER_URL_WARN =
-  "구글 광고 투명성 센터의 '광고주' URL이 필요해요.\n\nadstransparency.google.com 에서 브랜드를 검색해 광고주를 클릭한 뒤, 주소창 URL(…/advertiser/AR… 이 들어간 주소)을 복사해 붙여넣어 주세요.";
+  "구글 광고 투명성 센터 URL이 필요해요.\n\nadstransparency.google.com 에서 브랜드를 검색한 뒤,\n① 광고주를 클릭해 주소창의 …/advertiser/AR… URL, 또는\n② 도메인 검색 결과의 …?domain=… URL\n을 복사해 붙여넣어 주세요.";
 
 function isNew(iso: string): boolean {
   return Date.now() - new Date(iso).getTime() < 7 * 24 * 3600 * 1000;
@@ -736,7 +738,11 @@ export default function GoogleAdsCrawlerPage() {
     setEdit({
       label: t.label,
       category: t.category ?? "",
-      url: t.advertiser_id ? `https://adstransparency.google.com/advertiser/${t.advertiser_id}?region=${t.country || "KR"}` : "",
+      url: t.advertiser_id
+        ? (t.advertiser_id.startsWith("domain:")
+            ? `https://adstransparency.google.com/?region=${t.country || "KR"}&domain=${t.advertiser_id.slice(7)}`
+            : `https://adstransparency.google.com/advertiser/${t.advertiser_id}?region=${t.country || "KR"}`)
+        : "",
       country: t.country,
     });
   }

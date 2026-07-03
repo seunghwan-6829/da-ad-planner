@@ -167,9 +167,18 @@ function normalizeAd(it, target) {
   }
 }
 
+// advertiser_id 가 'AR...' 이면 광고주 URL, 'domain:xxx' 이면 도메인 검색 URL 로 Apify 에 넘긴다.
+function buildTransparencyUrl(advertiserId, region) {
+  const aid = String(advertiserId || '')
+  if (aid.startsWith('domain:')) {
+    return `https://adstransparency.google.com/?region=${region}&domain=${encodeURIComponent(aid.slice(7))}`
+  }
+  return `https://adstransparency.google.com/advertiser/${aid}?region=${region}`
+}
+
 async function processTarget(target) {
   const region = target.country || 'KR'
-  const url = `https://adstransparency.google.com/advertiser/${target.advertiser_id}?region=${region}`
+  const url = buildTransparencyUrl(target.advertiser_id, region)
   let items = []
   try {
     items = await runApify(url, GA_RESULTS_LIMIT)
