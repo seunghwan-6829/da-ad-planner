@@ -9,18 +9,12 @@
 //          GA_RESULTS_LIMIT(광고주당 최대 광고, 기본 120), YT_DOWNLOAD(0=영상 다운로드 끔), YT_MAX_FILESIZE(기본 200M)
 
 import { createClient } from '@supabase/supabase-js'
-import { execFile } from 'child_process'
-import { promisify } from 'util'
-import { readFile, unlink } from 'fs/promises'
-const execFileP = promisify(execFile)
 
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
 const APIFY_TOKEN = (process.env.APIFY_TOKEN || '').trim()
 const CRAWL_TARGET_ID = (process.env.CRAWL_TARGET_ID || '').trim()
 const GA_RESULTS_LIMIT = Number(process.env.GA_RESULTS_LIMIT) || 120
-const YT_DOWNLOAD = (process.env.YT_DOWNLOAD || '1') !== '0'
-const YT_MAX_FILESIZE = process.env.YT_MAX_FILESIZE || '200M'
 const STORAGE_BUCKET = 'google-ad-media'
 const ACTOR = 'silva95gustavo~google-ads-scraper'
 
@@ -46,33 +40,6 @@ async function downloadToStorage(url, path, contentType) {
     return sb.storage.from(STORAGE_BUCKET).getPublicUrl(path).data.publicUrl
   } catch (e) {
     log('다운로드 실패', String(e.message || e).slice(0, 120))
-    return null
-  }
-}
-
-// 유튜브 영상 광고 → yt-dlp 로 mp4 추출 후 스토리지 저장. 실패/대용량이면 null(임베드 폴백).
-async function downloadYouTube(url, key) {
-  if (!YT_DOWNLOAD) return null
-  const tmp = `/tmp/ga_${key}.mp4`
-  try {
-    await execFileP('yt-dlp', [
-      '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-      '--merge-output-format', 'mp4', '--max-filesize', YT_MAX_FILESIZE,
-      '--no-playlist', '--no-warnings', '-o', tmp, url,
-    ], { timeout: 180000, maxBuffer: 1024 * 1024 * 64 })
-  } catch (e) {
-    log('yt-dlp 실패/스킵', key, String(e.message || e).slice(0, 120))
-    return null
-  }
-  try {
-    const buf = await readFile(tmp).catch(() => null)
-    await unlink(tmp).catch(() => {})
-    if (!buf || !buf.length) return null
-    const { error } = await sb.storage.from(STORAGE_BUCKET).upload(`youtube/${key}.mp4`, buf, { contentType: 'video/mp4', upsert: true })
-    if (error) { log('yt 업로드 실패', error.message); return null }
-    return sb.storage.from(STORAGE_BUCKET).getPublicUrl(`youtube/${key}.mp4`).data.publicUrl
-  } catch (e) {
-    log('yt 저장 실패', String(e.message || e).slice(0, 120))
     return null
   }
 }
@@ -210,18 +177,22 @@ async function processTarget(target) {
       continue
     }
 
-    // 신규: 미디어 영구 저장
+    // 신규: 미디어 처리
+    //   - 유튜브 영상 광고(대부분) → 다운로드 X, 임베드(유튜브 URL 그대로). 빠르고 영구.
+    //   - 비유튜브 영상(구글 CDN 등, 만료 가능) → 스토리지 저장.
+    //   - 이미지 → 대표 1장 스토리지 저장(썸네일용).
     let mediaUrl = null
     let downloaded = false
+    const key = row.library_id.replace(/[^\w-]/g, '').slice(0, 40)
     if (row.media_type === 'video' && row.video_src_url) {
-      const key = row.library_id.replace(/[^\w-]/g, '').slice(0, 40)
-      mediaUrl = isYouTube(row.video_src_url)
-        ? await downloadYouTube(row.video_src_url, key)
-        : await downloadToStorage(row.video_src_url, `video/${key}.mp4`, 'video/mp4')
-      downloaded = !!mediaUrl
+      if (/youtube\.com|youtu\.be/i.test(row.video_src_url)) {
+        mediaUrl = row.video_src_url
+        downloaded = false
+      } else {
+        mediaUrl = await downloadToStorage(row.video_src_url, `video/${key}.mp4`, 'video/mp4')
+        downloaded = !!mediaUrl
+      }
     } else if (row._images && row._images.length) {
-      // 대표 이미지 1장 저장(썸네일용). 나머지는 원본 URL 유지.
-      const key = row.library_id.replace(/[^\w-]/g, '').slice(0, 40)
       mediaUrl = await downloadToStorage(row._images[0], `image/${key}.jpg`, 'image/jpeg')
       downloaded = !!mediaUrl
     }

@@ -244,6 +244,14 @@ function sourceLink(ad: Ad): string {
   return ad.source_url || `https://adstransparency.google.com/?searchTerm=${encodeURIComponent(ad.page_name || "")}&region=KR`;
 }
 
+// 유튜브 watch/youtu.be/embed/shorts URL → 임베드 URL. 유튜브가 아니면(우리 스토리지 mp4 등) null.
+function youtubeEmbed(url: string | null | undefined): string | null {
+  const s = url || "";
+  if (!/youtube\.com|youtu\.be/i.test(s)) return null;
+  const m = s.match(/(?:v=|youtu\.be\/|embed\/|shorts\/)([\w-]{6,})/);
+  return m ? `https://www.youtube.com/embed/${m[1]}` : null;
+}
+
 // 스크랩된 ad_text 에서 보일러플레이트(활성/라이브러리ID/게재시작/플랫폼/광고 라벨/CTA 등)를 제거하고
 // 실제 제목·캡션만 남긴다. (우측 메타데이터와 중복되는 정보 제거)
 const CAPTION_DROP = [
@@ -304,18 +312,19 @@ function MediaView({
   const r = rounded ?? "";
 
   if (ad.media_type === "video" && ad.media_url) {
+    // 구글 영상 광고는 대부분 유튜브 → 임베드. 우리 스토리지에 받은 mp4면 <video> 로 직접 재생.
+    const ytEmbed = youtubeEmbed(ad.media_url);
     if (card) {
-      // 카드: 클릭을 가로채지 않도록 컨트롤 없는 프리뷰(포스터/첫 프레임) + 가운데 ▶
+      // 카드: 클릭을 가로채지 않도록 포스터/썸네일 + 가운데 ▶ (iframe/video 로딩으로 클릭 가로채기 방지)
+      const thumb = ad.poster_url || (!ytEmbed ? ad.media_url : null);
       return (
         <div className="pointer-events-none relative h-full w-full bg-black">
-          <video
-            src={ad.media_url}
-            poster={ad.poster_url || undefined}
-            muted
-            playsInline
-            preload="metadata"
-            className={`h-full w-full object-cover ${r}`}
-          />
+          {ytEmbed || !ad.media_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={ad.poster_url || ""} alt="" loading="lazy" decoding="async" className={`h-full w-full object-cover ${r}`} />
+          ) : (
+            <video src={thumb || undefined} poster={ad.poster_url || undefined} muted playsInline preload="metadata" className={`h-full w-full object-cover ${r}`} />
+          )}
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="flex h-9 w-9 items-center justify-center rounded-full bg-black/45">
               <Play className="h-4 w-4 fill-white text-white" />
@@ -323,6 +332,9 @@ function MediaView({
           </div>
         </div>
       );
+    }
+    if (ytEmbed) {
+      return <iframe src={ytEmbed} title="" allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen className={`h-full w-full bg-black ${r}`} />;
     }
     return (
       <video
