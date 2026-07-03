@@ -1,0 +1,43 @@
+name: Fetch Google Ad Videos (yt-dlp)
+
+on:
+  schedule:
+    # 매주 화요일 KST 오전 11시 (UTC 화 02:00) — 광고 크롤(10시) 1시간 뒤 신규 영상 다운로드.
+    - cron: "0 2 * * 2"
+  workflow_dispatch:
+    inputs:
+      max_videos:
+        description: "이번 실행 최대 영상 수(0=전체, 이어받기 됨)"
+        required: false
+        default: "0"
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: google-ads-monitor
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install deps
+        run: npm install
+
+      - name: Install yt-dlp + ffmpeg
+        run: |
+          sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
+          sudo chmod a+rx /usr/local/bin/yt-dlp
+          sudo apt-get install -y ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+
+      - name: Download embed-blocked ad videos
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          MAX_VIDEOS: ${{ github.event.inputs.max_videos }}
+          CONCURRENCY: "4"
+        run: node backfill-videos.mjs
