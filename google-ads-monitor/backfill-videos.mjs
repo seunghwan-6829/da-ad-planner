@@ -48,16 +48,26 @@ async function loadPending() {
   return out
 }
 
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
 async function downloadOne(id) {
   const tmp = `/tmp/gv_${id}.mp4`
   try {
-    await execFileP('yt-dlp', [
-      '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+    const args = [
+      '-f', 'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b',
       '--merge-output-format', 'mp4', '--max-filesize', YT_MAX_FILESIZE,
-      '--no-playlist', '--no-warnings', '-o', tmp, `https://www.youtube.com/watch?v=${id}`,
-    ], { timeout: 150000, maxBuffer: 1024 * 1024 * 64 })
+      '--no-playlist', '--no-warnings',
+      // 데이터센터 IP의 "봇 확인" 차단 우회 시도: 여러 player_client 폴백(쿠키 불필요).
+      '--extractor-args', 'youtube:player_client=tv,mweb,ios,android,web',
+      '--user-agent', UA,
+      '-o', tmp, `https://www.youtube.com/watch?v=${id}`,
+    ]
+    // 쿠키 시크릿(YT_COOKIES)이 있으면 파일로 저장해 사용(가장 확실한 우회).
+    if (process.env.YT_COOKIES_FILE) { args.push('--cookies', process.env.YT_COOKIES_FILE) }
+    await execFileP('yt-dlp', args, { timeout: 150000, maxBuffer: 1024 * 1024 * 64 })
   } catch (e) {
-    log('yt-dlp 실패', id, String(e.message || e).slice(0, 100))
+    // 실제 원인 파악을 위해 stderr 끝부분(진짜 에러 메시지)을 로그.
+    const err = String((e && (e.stderr || e.message)) || e).replace(/\s+/g, ' ').slice(-260)
+    log('yt-dlp 실패', id, err)
     return null
   }
   try {
