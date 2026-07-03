@@ -2210,6 +2210,7 @@ function ClientMapModal({
 }) {
   const [editClient, setEditClient] = useState<string>(clients[0]?.id ?? "");
   const [q, setQ] = useState("");
+  const [mappedOnly, setMappedOnly] = useState(false); // 선택 클라이언트에 매핑된 것만 보기
 
   const clientName = (id: string) => clients.find((c) => c.id === id)?.name || "(삭제된 클라이언트)";
 
@@ -2217,9 +2218,14 @@ function ClientMapModal({
     const kw = q.trim().toLowerCase();
     return targets
       .map((t) => ({ t, n: counts[t.id] || 0 }))
-      .filter(({ t }) => !kw || (t.profile_name || t.label || "").toLowerCase().includes(kw))
+      .filter(({ t }) => {
+        // '매핑된 것만' 토글: 반드시 선택된 클라이언트 기준(광고주가 여러 클라에 중복 매핑 가능하므로).
+        if (mappedOnly && editClient && !(Array.isArray(t.client_ids) && t.client_ids.includes(editClient))) return false;
+        if (kw && !((t.profile_name || t.label || "").toLowerCase().includes(kw))) return false;
+        return true;
+      })
       .sort((a, b) => b.n - a.n);
-  }, [targets, counts, q]);
+  }, [targets, counts, q, mappedOnly, editClient]);
 
   const mappedCount = editClient
     ? targets.filter((t) => Array.isArray(t.client_ids) && t.client_ids.includes(editClient)).length
@@ -2275,13 +2281,29 @@ function ClientMapModal({
                   className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 py-2 pl-9 pr-3 text-sm dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary/40"
                 />
               </div>
+              <button
+                onClick={() => setMappedOnly((v) => !v)}
+                disabled={!editClient}
+                title={editClient ? "선택한 클라이언트에 매핑된 광고주만 정렬해서 보기" : "먼저 클라이언트를 선택하세요"}
+                className={`flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium disabled:opacity-40 ${
+                  mappedOnly
+                    ? "border-primary/40 bg-primary/5 text-primary dark:bg-primary/10"
+                    : "border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
+                }`}
+              >
+                <Filter className="h-3.5 w-3.5" />
+                {mappedOnly ? "매핑된 것만" : "전체 보기"}
+              </button>
               <span className="whitespace-nowrap text-xs text-gray-400">
-                <b className="text-primary">{clientName(editClient)}</b> · {mappedCount}개 매핑됨
+                <b className="text-primary">{clientName(editClient)}</b> · {mappedCount}개
               </span>
             </div>
 
             {/* 브랜드 목록(체크 = 이 클라이언트에 속함) */}
             <div className="flex-1 overflow-y-auto px-3 py-2">
+              {mappedOnly && rows.length === 0 ? (
+                <p className="py-10 text-center text-sm text-gray-400">이 클라이언트에 매핑된 광고주가 없어요.</p>
+              ) : (
               <ul className="space-y-0.5">
                 {rows.map(({ t, n }) => {
                   const cids = Array.isArray(t.client_ids) ? t.client_ids : [];
@@ -2316,6 +2338,7 @@ function ClientMapModal({
                   );
                 })}
               </ul>
+              )}
             </div>
 
             {/* 푸터 */}

@@ -30,6 +30,7 @@ import {
   Play,
   ClipboardList,
   Filter,
+  Users,
   ChevronDown,
   FileText,
   Network,
@@ -248,6 +249,7 @@ export default function OwnedMediaPage() {
   const [mediaFilter, setMediaFilter] = useState<"all" | "image" | "slide" | "video">("all");
   const [selectedCreators, setSelectedCreators] = useState<string[]>([]);
   const [showCreatorPicker, setShowCreatorPicker] = useState(false);
+  const [showClientMap, setShowClientMap] = useState(false); // 클라이언트↔크리에이터 매핑 편집
   const [savedOnly, setSavedOnly] = useState(false);
   const [workedOnly, setWorkedOnly] = useState(false);
   const [page, setPage] = useState(1);
@@ -478,6 +480,21 @@ export default function OwnedMediaPage() {
     }
   }
 
+  // 크리에이터 ↔ 클라이언트 매핑 토글(여러 클라이언트 허용). 낙관적 갱신 후 PATCH.
+  async function setCreatorClient(creatorId: string, clientId: string, on: boolean) {
+    const c = creatorMap[creatorId];
+    if (!c) return;
+    const cur = Array.isArray(c.client_ids) ? c.client_ids : [];
+    const next = on ? Array.from(new Set([...cur, clientId])) : cur.filter((x) => x !== clientId);
+    setCreators((prev) => prev.map((x) => (x.id === creatorId ? { ...x, client_ids: next } : x)));
+    try {
+      const r = await fetch(`/api/owned-media/creators/${creatorId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_ids: next }) });
+      if (!r.ok) throw new Error();
+    } catch {
+      setCreators((prev) => prev.map((x) => (x.id === creatorId ? { ...x, client_ids: cur } : x))); // 롤백
+    }
+  }
+
   function onMemoSaved(postId: string, memo: string) {
     setPosts((prev) => prev.map((a) => (a.post_id === postId ? { ...a, memo } : a)));
     setDetail((d) => (d && d.post_id === postId ? { ...d, memo } : d));
@@ -553,10 +570,16 @@ export default function OwnedMediaPage() {
             5일마다 자동 수집된 크리에이터(유튜브·인스타) UGC 콘텐츠를 한눈에. 대분류로 묶어 분석합니다.
           </p>
         </div>
-        <button onClick={() => setShowSettings(true)} className="flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800">
-          <Settings className="h-4 w-4" />
-          크리에이터 관리
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setShowClientMap(true)} className="flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800">
+            <Users className="h-4 w-4" />
+            클라이언트 매핑
+          </button>
+          <button onClick={() => setShowSettings(true)} className="flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800">
+            <Settings className="h-4 w-4" />
+            크리에이터 관리
+          </button>
+        </div>
       </div>
 
       {/* 검색 */}
@@ -724,6 +747,17 @@ export default function OwnedMediaPage() {
           onTranscribed={onTranscribed}
           onToggleSaved={toggleSaved}
           clients={clients}
+        />
+      )}
+
+      {/* 클라이언트↔크리에이터 매핑 플로팅(+ 매핑된 것만 토글) */}
+      {showClientMap && (
+        <CreatorClientMapModal
+          clients={clients}
+          creators={creators}
+          counts={counts}
+          onToggle={setCreatorClient}
+          onClose={() => setShowClientMap(false)}
         />
       )}
 
@@ -1387,6 +1421,124 @@ function ClientPick({ title, generating, clients, onPick, onClose, loadingText }
                   </button>
                 ))
               )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── 클라이언트 ↔ 크리에이터 매핑 플로팅 (+ 선택 클라이언트에 매핑된 것만 보기 토글) ── */
+function CreatorClientMapModal({
+  clients, creators, counts, onToggle, onClose,
+}: {
+  clients: Client[];
+  creators: Creator[];
+  counts: Record<string, number>;
+  onToggle: (creatorId: string, clientId: string, on: boolean) => void;
+  onClose: () => void;
+}) {
+  const [editClient, setEditClient] = useState<string>(clients[0]?.id ?? "");
+  const [q, setQ] = useState("");
+  const [mappedOnly, setMappedOnly] = useState(false); // 선택 클라이언트에 매핑된 것만 보기
+
+  const clientName = (id: string) => clients.find((c) => c.id === id)?.name || "(삭제된 클라이언트)";
+
+  const rows = useMemo(() => {
+    const kw = q.trim().toLowerCase();
+    return creators
+      .map((c) => ({ c, n: counts[c.id] || 0 }))
+      .filter(({ c }) => {
+        // '매핑된 것만' 토글: 반드시 선택된 클라이언트 기준(크리에이터가 여러 클라에 중복 매핑 가능하므로).
+        if (mappedOnly && editClient && !(Array.isArray(c.client_ids) && c.client_ids.includes(editClient))) return false;
+        if (kw && !((c.profile_name || c.label || "").toLowerCase().includes(kw))) return false;
+        return true;
+      })
+      .sort((a, b) => b.n - a.n);
+  }, [creators, counts, q, mappedOnly, editClient]);
+
+  const mappedCount = editClient
+    ? creators.filter((c) => Array.isArray(c.client_ids) && c.client_ids.includes(editClient)).length
+    : 0;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4" onClick={onClose}>
+      <div className="mt-[6vh] flex max-h-[82vh] w-full max-w-3xl flex-col rounded-2xl bg-white dark:bg-gray-900 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800 px-5 py-4">
+          <div className="flex items-center gap-2">
+            <Users className="h-5 w-5 text-primary" />
+            <h3 className="text-base font-bold dark:text-gray-100">클라이언트별 크리에이터 매핑</h3>
+          </div>
+          <button onClick={onClose} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"><X className="h-5 w-5" /></button>
+        </div>
+
+        {clients.length === 0 ? (
+          <div className="px-5 py-12 text-center text-sm text-gray-500 dark:text-gray-400">
+            클라이언트가 없습니다.<br />
+            <span className="text-xs">먼저 &apos;기획안 제작&apos;에서 클라이언트를 추가해 주세요.</span>
+          </div>
+        ) : (
+          <>
+            <div className="border-b border-gray-100 dark:border-gray-800 px-5 py-3">
+              <div className="mb-2 text-xs font-semibold text-gray-400">편집할 클라이언트 선택</div>
+              <div className="flex flex-wrap gap-1.5">
+                {clients.map((c) => (
+                  <button key={c.id} onClick={() => setEditClient(c.id)} className={`rounded-full px-3 py-1 text-xs font-medium ${editClient === c.id ? "bg-primary text-white" : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"}`}>{c.name}</button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 border-b border-gray-100 dark:border-gray-800 px-5 py-3">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="크리에이터명 검색" className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 py-2 pl-9 pr-3 text-sm dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary/40" />
+              </div>
+              <button
+                onClick={() => setMappedOnly((v) => !v)}
+                disabled={!editClient}
+                title={editClient ? "선택한 클라이언트에 매핑된 크리에이터만 정렬해서 보기" : "먼저 클라이언트를 선택하세요"}
+                className={`flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium disabled:opacity-40 ${mappedOnly ? "border-primary/40 bg-primary/5 text-primary dark:bg-primary/10" : "border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"}`}
+              >
+                <Filter className="h-3.5 w-3.5" />
+                {mappedOnly ? "매핑된 것만" : "전체 보기"}
+              </button>
+              <span className="whitespace-nowrap text-xs text-gray-400"><b className="text-primary">{clientName(editClient)}</b> · {mappedCount}개</span>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-3 py-2">
+              {mappedOnly && rows.length === 0 ? (
+                <p className="py-10 text-center text-sm text-gray-400">이 클라이언트에 매핑된 크리에이터가 없어요.</p>
+              ) : (
+                <ul className="space-y-0.5">
+                  {rows.map(({ c, n }) => {
+                    const cids = Array.isArray(c.client_ids) ? c.client_ids : [];
+                    const on = cids.includes(editClient);
+                    const others = cids.filter((id) => id !== editClient);
+                    return (
+                      <li key={c.id}>
+                        <button onClick={() => onToggle(c.id, editClient, !on)} className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left ${on ? "bg-primary/5 dark:bg-primary/10" : "hover:bg-gray-50 dark:hover:bg-gray-800"}`}>
+                          <span className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded border ${on ? "border-primary bg-primary text-white" : "border-gray-300 dark:border-gray-600"}`}>{on && <Check className="h-3.5 w-3.5" />}</span>
+                          <PlatformBadge platform={c.platform} />
+                          <div className="min-w-0 flex-1">
+                            <span className="truncate text-sm font-medium dark:text-gray-200">{c.profile_name || c.label}</span>
+                            {others.length > 0 && (
+                              <div className="mt-0.5 flex flex-wrap gap-1">
+                                {others.map((id) => (<span key={id} className="rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-500 dark:text-gray-400">{clientName(id)}</span>))}
+                              </div>
+                            )}
+                          </div>
+                          <span className="flex-shrink-0 text-xs font-semibold text-gray-400">{n}개</span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+
+            <div className="border-t border-gray-100 dark:border-gray-800 px-5 py-3">
+              <button onClick={onClose} className="w-full rounded-lg bg-primary py-2.5 text-sm font-semibold text-white hover:bg-primary/90">완료</button>
             </div>
           </>
         )}
