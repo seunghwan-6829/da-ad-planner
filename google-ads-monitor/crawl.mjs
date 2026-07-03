@@ -56,13 +56,14 @@ async function markEnded(targetId, seenIds, now) {
 }
 
 // Apify 액터 비동기 실행 → 완료까지 폴링 → 데이터셋 반환.
-async function runApify(url, limit) {
+// 여러 광고주(startUrls)를 한 번의 Apify 실행으로 묶어 처리(컨테이너 시작 오버헤드 제거 → 대폭 빠름).
+async function runApifyBatch(startUrls, limit) {
   const input = {
-    startUrls: [{ url }],
-    resultsLimit: limit,
+    startUrls, // [{ url }, ...]
+    resultsLimit: limit, // URL(광고주)당 최대
     skipDetails: false,
-    shouldDownloadAssets: true, // 영상 등 크리에이티브 asset URL 확보
-    ocr: true, // 이미지 광고의 텍스트도 추출(카피 보강)
+    shouldDownloadAssets: true, // 영상/이미지 크리에이티브 URL 확보
+    ocr: false, // OCR(이미지 텍스트 추출)은 AI라 느림 → 끔(카피는 변형 description/CTA로 충분)
   }
   const startRes = await fetch(`https://api.apify.com/v2/acts/${ACTOR}/runs?token=${APIFY_TOKEN}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
@@ -72,18 +73,36 @@ async function runApify(url, limit) {
   const runId = run.id
   const datasetId = run.defaultDatasetId
   let status = run.status
-  const deadline = Date.now() + 12 * 60 * 1000
+  const deadline = Date.now() + 25 * 60 * 1000 // 배치라 넉넉히
   while (Date.now() < deadline && !['SUCCEEDED', 'FAILED', 'ABORTED', 'TIMED-OUT'].includes(status)) {
-    await sleep(5000)
+    await sleep(6000)
     try {
       const st = await fetch(`https://api.apify.com/v2/actor-runs/${runId}?token=${APIFY_TOKEN}`)
       if (st.ok) status = (await st.json()).data.status
     } catch {}
   }
   if (status !== 'SUCCEEDED') throw new Error(`Apify run 상태 ${status}`)
-  const itemsRes = await fetch(`https://api.apify.com/v2/datasets/${datasetId}/items?token=${APIFY_TOKEN}&clean=true`)
-  if (!itemsRes.ok) throw new Error(`Apify items ${itemsRes.status}`)
-  return await itemsRes.json()
+  // 데이터셋이 클 수 있어 페이지네이션으로 전부 수집.
+  const all = []
+  for (let offset = 0; ; offset += 1000) {
+    const r = await fetch(`https://api.apify.com/v2/datasets/${datasetId}/items?token=${APIFY_TOKEN}&clean=true&limit=1000&offset=${offset}`)
+    if (!r.ok) break
+    const chunk = await r.json()
+    if (!Array.isArray(chunk) || !chunk.length) break
+    all.push(...chunk)
+    if (chunk.length < 1000) break
+  }
+  return all
+}
+
+// 결과 item 의 startUrl(입력 URL)에서 광고주 식별자(AR… 또는 domain:…) 추출 → 광고주에 매핑.
+function idFromUrl(u) {
+  const s = String(u || '')
+  const ar = s.match(/\/advertiser\/(AR[0-9A-Za-z_-]+)/)
+  if (ar) return ar[1]
+  const dom = s.match(/[?&]domain=([^&#\s]+)/)
+  if (dom) return 'domain:' + decodeURIComponent(dom[1])
+  return null
 }
 
 const isYouTube = (u) => /youtube\.com|youtu\.be|googlevideo\.com/i.test(u || '')
@@ -143,19 +162,8 @@ function buildTransparencyUrl(advertiserId, region) {
   return `https://adstransparency.google.com/advertiser/${aid}?region=${region}`
 }
 
-async function processTarget(target) {
-  const region = target.country || 'KR'
-  const url = buildTransparencyUrl(target.advertiser_id, region)
-  let items = []
-  try {
-    items = await runApify(url, GA_RESULTS_LIMIT)
-  } catch (e) {
-    log('Apify 실패', target.label, String(e.message || e).slice(0, 160))
-    return
-  }
-  log(`광고주 ${target.label} → Apify 결과 ${items.length}건`)
-  if (!items.length) return
-
+async function saveTargetAds(target, items) {
+  if (!items || !items.length) { log(`광고주 ${target.label} → 결과 0건`); return }
   const now = new Date().toISOString()
   const { data: existingRows } = await sb.from('ga_ads').select('library_id').eq('target_id', target.id)
   const existing = new Set((existingRows || []).map((x) => x.library_id))
@@ -238,10 +246,34 @@ async function main() {
   }
   // advertiser_id 없는 항목은 스킵
   list = list.filter((t) => t.advertiser_id)
-  log(`${list.length}개 광고주 크롤 시작`)
+  log(`${list.length}개 광고주 크롤 시작(배치 1회 실행)`)
 
+  // 1) 모든 광고주 URL 을 한 번의 Apify 실행으로 배치 처리.
+  const startUrls = list.map((t) => ({ url: buildTransparencyUrl(t.advertiser_id, t.country || 'KR') }))
+  let items = []
+  try {
+    items = await runApifyBatch(startUrls, GA_RESULTS_LIMIT)
+  } catch (e) {
+    log('Apify 배치 실패', String(e.message || e).slice(0, 200))
+    process.exit(1)
+  }
+  log(`Apify 배치 결과 총 ${items.length}건`)
+
+  // 2) 결과를 광고주(advertiser_id)별로 분류: startUrl 우선, 없으면 advertiserId(AR) 폴백.
+  const byId = new Map(list.map((t) => [t.advertiser_id, t]))
+  const groups = new Map()
+  for (const it of items) {
+    let id = idFromUrl(it.startUrl || it.inputUrl || it.url)
+    if ((!id || !byId.has(id)) && it.advertiserId && byId.has(it.advertiserId)) id = it.advertiserId
+    if (!id || !byId.has(id)) continue
+    if (!groups.has(id)) groups.set(id, [])
+    groups.get(id).push(it)
+  }
+
+  // 3) 광고주별 저장(신규 미디어 처리 + 종료 표기).
   for (const t of list) {
-    try { await processTarget(t) } catch (e) { log('광고주 처리 예외', t.id, String(e.message || e).slice(0, 120)) }
+    try { await saveTargetAds(t, groups.get(t.advertiser_id) || []) }
+    catch (e) { log('광고주 저장 예외', t.id, String(e.message || e).slice(0, 120)) }
   }
   log('완료')
 }
