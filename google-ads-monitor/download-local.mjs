@@ -107,13 +107,14 @@ const idFrom = (u) => {
     || s.match(/shorts\/([\w-]{6,})/)?.[1] || s.match(/embed\/([\w-]{6,})/)?.[1] || null
 }
 
-// 아직 안 받은 영상 광고 로드 → 유튜브ID별로 library_id 묶기.
+// 아직 안 받은 영상 광고 로드 → 유튜브ID별로 library_id 묶기. (삭제/지역차단 등 영구실패 'dead' 는 제외)
 async function loadPending() {
   const byId = new Map()
   for (let off = 0; ; off += 1000) {
     const { data, error } = await sb
       .from('ga_ads').select('library_id, media_url, poster_url, video_src_url')
       .eq('media_type', 'video').eq('downloaded', false)
+      .or('media_path.is.null,media_path.neq.dead')
       .range(off, off + 999)
     if (error) { log('로드 오류', error.message); break }
     if (!data || !data.length) break
@@ -139,7 +140,10 @@ function cookieArgsFor(id) {
   return { args: [], tmp: null }
 }
 
-// yt-dlp 로 영상 1개를 TMP 에 고유파일로 받아 경로 반환(없으면 null). 병렬 안전(공유 TMP 안 지움). ffmpeg 불필요.
+// 영구실패(다시 시도해도 소용없음): 삭제/비공개/지역차단 등. 레이트리밋/봇확인은 일시적이라 제외.
+const isPermanentFail = (err) => /removed for violating|not available on this country|Video unavailable\. This content is|Private video|no longer available|account (associated|has been) |members-only|Sign in to confirm your age/i.test(err || '')
+
+// yt-dlp 로 영상 1개를 TMP 에 고유파일로 받음. { file, err } 반환. 병렬 안전. ffmpeg 불필요.
 function ytdlp(id) {
   return new Promise((resolve) => {
     const out = join(TMP, `${id}.%(ext)s`)
@@ -153,23 +157,33 @@ function ytdlp(id) {
       try { if (cookieTmp) rmSync(cookieTmp, { force: true }) } catch {} // 쿠키 사본 먼저 정리(영상파일 검색 오탐 방지)
       try {
         const f = readdirSync(TMP).find((n) => n.startsWith(id + '.'))
-        if (f) { const full = join(TMP, f); if (statSync(full).size > 0) return resolve(full) }
+        if (f) { const full = join(TMP, f); if (statSync(full).size > 0) return resolve({ file: full, err: '' }) }
       } catch {}
-      if (err) log(`  yt-dlp 실패(${id}): ${err.split('\n').filter(Boolean).pop()?.slice(0, 140)}`)
-      resolve(null)
+      resolve({ file: null, err })
     })
-    p.on('error', (e) => { log('yt-dlp 실행 오류', e.message); resolve(null) })
+    p.on('error', (e) => resolve({ file: null, err: String(e.message || e) }))
   })
 }
 
-// 영상 1개: 다운로드 → 업로드 → DB 갱신 → 임시파일 삭제.
+// 영상 1개: 다운로드 → 업로드 → DB 갱신 → 임시파일 삭제. 영구실패는 'dead' 로 표시해 다음부터 스킵.
 async function handleOne(id, libraryIds, n, total) {
-  let file = null
-  for (let a = 0; a < 2 && !file; a++) {
-    if (a) await sleep(1500) // 403(throttle) 등 일시 실패 시 1회 재시도
-    file = await ytdlp(id)
+  let file = null, err = ''
+  for (let a = 0; a < 2; a++) {
+    const r = await ytdlp(id)
+    file = r.file; err = r.err
+    if (file) break
+    if (isPermanentFail(err)) break // 영구실패는 재시도 안 함
+    if (a === 0) await sleep(1500)  // 일시 실패 1회 재시도
   }
-  if (!file) { console.log(`[ga-local] (${n}/${total}) ${id} 실패`); return false }
+  if (!file) {
+    if (isPermanentFail(err)) {
+      try { await sb.from('ga_ads').update({ media_path: 'dead' }).in('library_id', libraryIds) } catch {}
+      console.log(`[ga-local] (${n}/${total}) ${id} 삭제/차단 → 스킵표시(dead)`)
+    } else {
+      console.log(`[ga-local] (${n}/${total}) ${id} 실패: ${err.split('\n').filter(Boolean).pop()?.slice(0, 90) || ''}`)
+    }
+    return false
+  }
   try {
     const buf = readFileSync(file)
     if (buf.length > 300 * 1024 * 1024) { console.log(`[ga-local] (${n}/${total}) ${id} 너무 큼(스킵)`); return false }
