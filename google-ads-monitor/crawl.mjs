@@ -14,7 +14,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
 const APIFY_TOKEN = (process.env.APIFY_TOKEN || '').trim()
 const CRAWL_TARGET_ID = (process.env.CRAWL_TARGET_ID || '').trim()
-const GA_RESULTS_LIMIT = Number(process.env.GA_RESULTS_LIMIT) || 120
+const GA_RESULTS_LIMIT = Number(process.env.GA_RESULTS_LIMIT) || 50
 const STORAGE_BUCKET = 'google-ad-media'
 const ACTOR = 'silva95gustavo~google-ads-scraper'
 
@@ -73,7 +73,7 @@ async function runApifyBatch(startUrls, limit) {
   const runId = run.id
   const datasetId = run.defaultDatasetId
   let status = run.status
-  const deadline = Date.now() + 25 * 60 * 1000 // 배치라 넉넉히
+  const deadline = Date.now() + 35 * 60 * 1000 // 배치라 넉넉히(잡 타임아웃 45분 내)
   while (Date.now() < deadline && !['SUCCEEDED', 'FAILED', 'ABORTED', 'TIMED-OUT'].includes(status)) {
     await sleep(6000)
     try {

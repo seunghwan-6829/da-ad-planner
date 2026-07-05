@@ -1,28 +1,26 @@
-// 구글 광고 영상 백필 — 임베드 차단 유튜브 광고 영상을 yt-dlp 로 받아 Supabase 스토리지에 올리고
-//   ga_ads.media_url 을 그 영구 URL 로 교체(→ 페이지에서 <video> 로 직접 재생).
-//   구글 광고 영상은 대부분 "임베드 금지"라 iframe 재생이 안 됨 → 다운로드가 유일한 방법.
-// 특징: 고유 영상 id 기준 중복 제거(같은 영상 쓰는 광고들 한 번에 갱신), 이어받기(이미 받은 건 스킵), 병렬.
-// ⚠️ 유튜브 영상 다운로드는 YouTube ToS 회색지대(경쟁광고 분석용). 데이터센터 IP 차단 시 일부 실패할 수 있음(best-effort).
+// 구글 광고 영상 백필 — 임베드 차단 유튜브 광고 영상을 Apify(streamers/youtube-video-downloader)로 받아
+//   Supabase 스토리지에 영구 저장하고 ga_ads.media_url 을 그 URL 로 교체(→ 페이지에서 <video> 직접 재생).
+//   ※ 구글 광고 영상은 대부분 "임베드 금지"라 iframe 재생 불가. yt-dlp 는 유튜브가 클라우드 IP를 봇 차단해서 실패 →
+//     좋은 IP를 쓰는 Apify 다운로더로 우회(유료: 대략 영상당 ~$0.06, 다운로드 MB 기준).
+//   고유 영상 id 기준 중복 제거(같은 영상 쓰는 광고들 한 번에 갱신), 이어받기(이미 받은 건 스킵), 배치.
 //
-// 필수 env: SUPABASE_URL, SUPABASE_SERVICE_KEY
-// 선택 env: MAX_VIDEOS(이번 실행 최대 영상 수, 0=전체), CONCURRENCY(동시 다운로드, 기본 4), YT_MAX_FILESIZE(기본 200M)
+// 필수 env: SUPABASE_URL, SUPABASE_SERVICE_KEY, APIFY_TOKEN
+// 선택 env: MAX_VIDEOS(이번 실행 최대, 0=전체), BATCH(한 Apify 실행당 영상 수, 기본 25)
 
 import { createClient } from '@supabase/supabase-js'
-import { execFile } from 'child_process'
-import { promisify } from 'util'
-import { readFile, unlink } from 'fs/promises'
-const execFileP = promisify(execFile)
 
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
+const APIFY_TOKEN = (process.env.APIFY_TOKEN || '').trim()
 const MAX_VIDEOS = Number(process.env.MAX_VIDEOS) || 0
-const CONCURRENCY = Number(process.env.CONCURRENCY) || 4
-const YT_MAX_FILESIZE = process.env.YT_MAX_FILESIZE || '200M'
+const BATCH = Number(process.env.BATCH) || 25
 const BUCKET = 'google-ad-media'
+const ACTOR = 'streamers~youtube-video-downloader'
 
-if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) { console.error('SUPABASE_URL / SUPABASE_SERVICE_KEY 필요'); process.exit(1) }
+if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY || !APIFY_TOKEN) { console.error('SUPABASE_URL / SUPABASE_SERVICE_KEY / APIFY_TOKEN 필요'); process.exit(1) }
 const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, { auth: { persistSession: false } })
 const log = (...a) => console.log('[ga-video]', ...a)
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 const vidId = (url) => {
   const s = String(url || '')
@@ -34,11 +32,8 @@ async function loadPending() {
   const out = []
   for (let off = 0; ; off += 1000) {
     const { data, error } = await sb
-      .from('ga_ads')
-      .select('library_id, media_url')
-      .eq('media_type', 'video')
-      .eq('downloaded', false)
-      .ilike('media_url', '%youtu%')
+      .from('ga_ads').select('library_id, media_url')
+      .eq('media_type', 'video').eq('downloaded', false).ilike('media_url', '%youtu%')
       .range(off, off + 999)
     if (error) { log('로드 오류', error.message); break }
     if (!data || !data.length) break
@@ -48,38 +43,42 @@ async function loadPending() {
   return out
 }
 
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
-async function downloadOne(id) {
-  const tmp = `/tmp/gv_${id}.mp4`
-  try {
-    const args = [
-      '-f', 'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b',
-      '--merge-output-format', 'mp4', '--max-filesize', YT_MAX_FILESIZE,
-      '--no-playlist', '--no-warnings',
-      // 데이터센터 IP의 "봇 확인" 차단 우회 시도: 여러 player_client 폴백(쿠키 불필요).
-      '--extractor-args', 'youtube:player_client=tv,mweb,ios,android,web',
-      '--user-agent', UA,
-      '-o', tmp, `https://www.youtube.com/watch?v=${id}`,
-    ]
-    // 쿠키 시크릿(YT_COOKIES)이 있으면 파일로 저장해 사용(가장 확실한 우회).
-    if (process.env.YT_COOKIES_FILE) { args.push('--cookies', process.env.YT_COOKIES_FILE) }
-    await execFileP('yt-dlp', args, { timeout: 150000, maxBuffer: 1024 * 1024 * 64 })
-  } catch (e) {
-    // 실제 원인 파악을 위해 stderr 끝부분(진짜 에러 메시지)을 로그.
-    const err = String((e && (e.stderr || e.message)) || e).replace(/\s+/g, ' ').slice(-260)
-    log('yt-dlp 실패', id, err)
-    return null
+// Apify 다운로더로 여러 영상을 한 실행에서 받아 { id -> downloadedFileUrl } 반환.
+async function apifyDownload(ids) {
+  const input = { videos: ids.map((id) => ({ url: `https://www.youtube.com/watch?v=${id}` })) }
+  const s = await fetch(`https://api.apify.com/v2/acts/${ACTOR}/runs?token=${APIFY_TOKEN}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
+  })
+  if (!s.ok) throw new Error(`start ${s.status}: ${(await s.text()).slice(0, 150)}`)
+  const run = (await s.json()).data
+  let st = run.status
+  const dl = Date.now() + 20 * 60 * 1000
+  while (Date.now() < dl && !['SUCCEEDED', 'FAILED', 'ABORTED', 'TIMED-OUT'].includes(st)) {
+    await sleep(6000)
+    try { const r = await fetch(`https://api.apify.com/v2/actor-runs/${run.id}?token=${APIFY_TOKEN}`); if (r.ok) st = (await r.json()).data.status } catch {}
   }
+  // SUCCEEDED 아니어도 데이터셋에 들어온 만큼은 사용.
+  let items = []
+  try { items = await (await fetch(`https://api.apify.com/v2/datasets/${run.defaultDatasetId}/items?token=${APIFY_TOKEN}&clean=true`)).json() } catch {}
+  const m = new Map()
+  for (const it of items || []) { if (it && it.id && it.downloadedFileUrl) m.set(String(it.id), it.downloadedFileUrl) }
+  return m
+}
+
+// Apify KV의 임시 파일(3일 만료) → 받아서 Supabase 스토리지에 영구 저장. 공개 URL 반환.
+async function storeVideo(id, fileUrl) {
   try {
-    const buf = await readFile(tmp).catch(() => null)
-    await unlink(tmp).catch(() => {})
-    if (!buf || !buf.length) return null
+    const u = fileUrl.includes('token=') ? fileUrl : fileUrl + (fileUrl.includes('?') ? '&' : '?') + 'token=' + APIFY_TOKEN
+    const r = await fetch(u)
+    if (!r.ok) { log('파일 다운로드 실패', id, r.status); return null }
+    const buf = Buffer.from(await r.arrayBuffer())
+    if (!buf.length || buf.length > 300 * 1024 * 1024) return null
     const path = `youtube/${id}.mp4`
     const { error } = await sb.storage.from(BUCKET).upload(path, buf, { contentType: 'video/mp4', upsert: true })
-    if (error) { log('업로드 실패', error.message); return null }
+    if (error) { log('업로드 실패', id, error.message); return null }
     return sb.storage.from(BUCKET).getPublicUrl(path).data.publicUrl
   } catch (e) {
-    log('저장 실패', String(e.message || e).slice(0, 100))
+    log('저장 예외', id, String(e.message || e).slice(0, 100))
     return null
   }
 }
@@ -95,24 +94,26 @@ async function main() {
   }
   let ids = [...byVid.keys()]
   if (MAX_VIDEOS > 0) ids = ids.slice(0, MAX_VIDEOS)
-  log(`미다운로드 영상행 ${pending.length} → 고유 영상 ${byVid.size}개, 이번 처리 ${ids.length}개 (동시 ${CONCURRENCY})`)
+  log(`미다운로드 영상행 ${pending.length} → 고유 영상 ${byVid.size}개, 이번 처리 ${ids.length}개 (배치 ${BATCH})`)
   if (!ids.length) { log('받을 영상이 없습니다.'); return }
 
-  let i = 0, done = 0, fail = 0
-  async function worker() {
-    while (i < ids.length) {
-      const id = ids[i++]
-      const url = await downloadOne(id)
-      if (url) {
-        try { await sb.from('ga_ads').update({ media_url: url, downloaded: true, media_path: `youtube/${id}.mp4` }).in('library_id', byVid.get(id)) } catch {}
+  let done = 0, fail = 0
+  for (let i = 0; i < ids.length; i += BATCH) {
+    const chunk = ids.slice(i, i + BATCH)
+    log(`Apify 다운로드 요청 ${i + 1}~${i + chunk.length} / ${ids.length}...`)
+    let dlMap = new Map()
+    try { dlMap = await apifyDownload(chunk) } catch (e) { log('Apify 배치 실패', String(e.message || e).slice(0, 150)) }
+    for (const id of chunk) {
+      const fileUrl = dlMap.get(id)
+      if (!fileUrl) { fail++; continue }
+      const stored = await storeVideo(id, fileUrl)
+      if (stored) {
+        try { await sb.from('ga_ads').update({ media_url: stored, downloaded: true, media_path: `youtube/${id}.mp4` }).in('library_id', byVid.get(id)) } catch {}
         done++
-      } else {
-        fail++
-      }
-      if ((done + fail) % 10 === 0) log(`진행 ${done + fail}/${ids.length} (성공 ${done}, 실패 ${fail})`)
+      } else fail++
     }
+    log(`누적: 성공 ${done} / 실패 ${fail}`)
   }
-  await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()))
   log(`완료: 성공 ${done} / 실패 ${fail} / 대상 ${ids.length} (실패분은 다시 실행 시 이어받음)`)
 }
 
