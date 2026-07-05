@@ -294,6 +294,20 @@ function pageItems(current: number, total: number): number[] {
   return Array.from({ length: end - start + 1 }, (_, i) => start + i);
 }
 
+// 내 PC의 로컬 온디맨드 영상 서버(serve-videos.mjs). 떠 있으면 재생이 ~5초로 압도적으로 빠름.
+const LOCAL_VIDEO_SERVER = "http://127.0.0.1:47615";
+// 광고에서 유튜브 videoId 추출(poster 썸네일 i.ytimg.com/vi/<id> 우선).
+const ytIdOfAd = (ad: Ad): string | null => {
+  const s = `${ad.poster_url || ""} ${ad.media_url || ""}`;
+  return (
+    s.match(/i\.ytimg\.com\/vi\/([\w-]{6,})\//)?.[1] ||
+    s.match(/[?&]v=([\w-]{6,})/)?.[1] ||
+    s.match(/youtu\.be\/([\w-]{6,})/)?.[1] ||
+    s.match(/shorts\/([\w-]{6,})/)?.[1] ||
+    null
+  );
+};
+
 /* ── 온디맨드 영상: 임베드 차단된 구글 광고(유튜브) 영상을 "재생 누를 때" 그 영상만 자동 다운로드해 인라인 재생.
    재생 클릭 → /api/google-ads/fetch-video 폴링(Apify 다운로드→스토리지 저장) → 완료되면 <video> 자동재생.
    본 영상만 받으므로 비용 최소(영상당 ~$0.06). 한 번 받으면 다음부터 즉시 재생. */
@@ -309,8 +323,8 @@ function OnDemandGoogleVideo({ ad, rounded, videoRef }: { ad: Ad; rounded: strin
     return () => { aliveRef.current = false; if (pollRef.current) clearTimeout(pollRef.current); };
   }, []);
 
-  function start() {
-    setPhase("loading");
+  // Apify 폴백(로컬 서버 없을 때): Vercel 라우트 폴링 → 다운로드 완료되면 재생.
+  function apifyFallback() {
     setMsg("영상 준비 중… (처음 한 번만 받아요, 20~60초)");
     const tick = async () => {
       try {
@@ -331,6 +345,33 @@ function OnDemandGoogleVideo({ ad, rounded, videoRef }: { ad: Ad; rounded: strin
       }
     };
     tick();
+  }
+
+  async function start() {
+    setPhase("loading");
+    setMsg("영상 준비 중…");
+    // ① 내 PC의 로컬 서버가 떠 있으면 그걸로(콜드스타트 없음 ~5초). 없으면 Apify 폴백.
+    const id = ytIdOfAd(ad);
+    if (id) {
+      let localUp = false;
+      try {
+        const h = await fetch(`${LOCAL_VIDEO_SERVER}/health`, { signal: AbortSignal.timeout(1200) });
+        localUp = h.ok;
+      } catch { localUp = false; }
+      if (localUp) {
+        setMsg("내 PC에서 빠르게 받는 중… (~5초)");
+        try {
+          const r = await fetch(`${LOCAL_VIDEO_SERVER}/get?id=${id}`, { signal: AbortSignal.timeout(120000) });
+          const j = await r.json().catch(() => ({}));
+          if (!aliveRef.current) return;
+          if (j.url) { setUrl(j.url); setPhase("ready"); return; }
+          // 로컬 실패 → Apify 폴백으로 진행
+        } catch {
+          if (!aliveRef.current) return;
+        }
+      }
+    }
+    apifyFallback();
   }
 
   const poster = ad.poster_url || undefined;

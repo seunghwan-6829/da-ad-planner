@@ -11,3 +11,5 @@ LICENSE.md
 .vidtmp/
 cookies.txt
 .last-daily-run
+.servetmp/
+.serve-test.log
