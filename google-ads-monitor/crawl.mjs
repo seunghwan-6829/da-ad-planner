@@ -143,7 +143,8 @@ function normalizeAd(it, target) {
   return {
     library_id: String(it.creativeId || it.adId || `${target.advertiser_id}_${Math.random().toString(36).slice(2, 9)}`),
     target_id: target.id,
-    page_name: it.advertiserName || target.label,
+    // 브랜드명은 사용자가 정한 라벨 사용. 구글 advertiserName 은 도메인 호스팅사(예: 카페24)로 뜨는 경우가 많아 안 씀.
+    page_name: target.label,
     started_on: it.firstShown || null,
     last_shown: it.lastShown || null,
     ad_text: adText || null,
@@ -175,9 +176,8 @@ async function saveTargetAds(target, items) {
   const { data: existingRows } = await sb.from('ga_ads').select('library_id').eq('target_id', target.id)
   const existing = new Set((existingRows || []).map((x) => x.library_id))
 
-  // 광고주명 보강
-  const firstName = items.find((x) => x.advertiserName)?.advertiserName
-  if (firstName && !target.profile_name) { try { await sb.from('ga_targets').update({ profile_name: firstName }).eq('id', target.id) } catch {} }
+  // ⚠️ profile_name 을 구글 advertiserName 으로 채우지 않는다(도메인 호스팅사=카페24 등으로 떠서 브랜드명이 뭉개짐).
+  //    브랜드명은 사용자가 정한 target.label 을 그대로 표시.
 
   const seen = new Set()
   const newRows = []
