@@ -18,7 +18,8 @@ on:
 jobs:
   crawl:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # 광고주별 병렬 실행 + 전량수집이라 넉넉히(대부분 이보다 훨씬 일찍 끝남).
+    timeout-minutes: 180
     defaults:
       run:
         working-directory: google-ads-monitor
@@ -40,4 +41,6 @@ jobs:
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
           CRAWL_TARGET_ID: ${{ github.event.inputs.target_id }}
           CRAWL_SINCE_HOURS: ${{ github.event.inputs.since_hours }}
+          # 동시에 돌릴 광고주(=Apify 병렬 실행) 수. Apify 플랜 동시실행 한도에 맞춰 조정.
+          GA_CONCURRENCY: "5"
         run: node crawl.mjs

@@ -6,7 +6,8 @@
 //
 // 필수 env: SUPABASE_URL, SUPABASE_SERVICE_KEY, APIFY_TOKEN
 // 선택 env: CRAWL_TARGET_ID(단일 광고주 즉시), CRAWL_SINCE_HOURS(최근 N시간 추가분만),
-//          GA_RESULTS_LIMIT(광고주당 최대 광고, 기본 120), YT_DOWNLOAD(0=영상 다운로드 끔), YT_MAX_FILESIZE(기본 200M)
+//          GA_RESULTS_LIMIT(광고주당 최대 광고, 0=사실상 전량, 기본 0),
+//          GA_CONCURRENCY(동시에 돌릴 광고주 수 = Apify 병렬 실행 수, 기본 5)
 
 import { createClient } from '@supabase/supabase-js'
 
@@ -14,8 +15,10 @@ const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
 const APIFY_TOKEN = (process.env.APIFY_TOKEN || '').trim()
 const CRAWL_TARGET_ID = (process.env.CRAWL_TARGET_ID || '').trim()
-const GA_RESULTS_LIMIT = Number(process.env.GA_RESULTS_LIMIT) || 500
-const STORAGE_BUCKET = 'google-ad-media'
+// 0(기본) = 사실상 무제한(광고주 광고가 몇 천개여도 전부). 숫자로 상한 지정 가능.
+const GA_RESULTS_LIMIT = Number(process.env.GA_RESULTS_LIMIT) || 0
+const HARD_CAP = 100000 // resultsLimit 미지정 시 액터가 소량만 줄 수 있어 큰 값으로 명시.
+const GA_CONCURRENCY = Math.max(1, Number(process.env.GA_CONCURRENCY) || 5)
 const ACTOR = 'silva95gustavo~google-ads-scraper'
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
@@ -26,23 +29,6 @@ const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, { auth: { persistSes
 
 const log = (...a) => console.log('[ga-crawl]', ...a)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-
-// 직접 미디어 URL(이미지/영상) → 스토리지 영구 저장. 실패 시 null.
-async function downloadToStorage(url, path, contentType) {
-  if (!url) return null
-  try {
-    const r = await fetch(url)
-    if (!r.ok) return null
-    const buf = Buffer.from(await r.arrayBuffer())
-    if (!buf.length || buf.length > 100 * 1024 * 1024) return null
-    const { error } = await sb.storage.from(STORAGE_BUCKET).upload(path, buf, { contentType, upsert: true })
-    if (error) { log('storage 업로드 실패', error.message); return null }
-    return sb.storage.from(STORAGE_BUCKET).getPublicUrl(path).data.publicUrl
-  } catch (e) {
-    log('다운로드 실패', String(e.message || e).slice(0, 120))
-    return null
-  }
-}
 
 async function markEnded(targetId, seenIds, now) {
   try {
@@ -55,27 +41,39 @@ async function markEnded(targetId, seenIds, now) {
   } catch {}
 }
 
-// Apify 액터 비동기 실행 → 완료까지 폴링 → 데이터셋 반환.
-// 여러 광고주(startUrls)를 한 번의 Apify 실행으로 묶어 처리(컨테이너 시작 오버헤드 제거 → 대폭 빠름).
-async function runApifyBatch(startUrls, limit) {
+// Apify 액터 비동기 실행 → 완료까지 폴링 → 데이터셋 전량 반환.
+// 광고주 1명당 1 실행. 실행 여러 개를 동시에 돌려(GA_CONCURRENCY) 시간 단축하고,
+// 각 광고주가 자기 resultsLimit 예산을 온전히 써서 과소수집을 막는다.
+async function runApifyOne(url, limit, label) {
   const input = {
-    startUrls, // [{ url }, ...]
-    resultsLimit: limit, // URL(광고주)당 최대
-    // ⚠️ skipDetails=true: 상세페이지 안 열어 매우 빠름(광고주당 수백~천개 수집 가능). 대신 영상/이미지 "원본 URL"은
-    //    안 나오고 previewUrl(썸네일)만 나옴 → 영상은 재생 시 온디맨드로 상세를 따로 가져온다. (로컬 실측: 1109건 9분)
+    startUrls: [{ url }],
+    resultsLimit: limit > 0 ? limit : HARD_CAP, // 0 이면 사실상 전량.
+    // ⚠️ skipDetails=true: 상세페이지 안 열어 매우 빠름(광고주당 수백~천개 수집). 대신 영상/이미지 "원본 URL"은
+    //    안 나오고 previewUrl(썸네일)+adLibraryUrl 만 나옴 → 영상은 백필/온디맨드로 상세를 따로 받는다.
     skipDetails: true,
     shouldDownloadAssets: false,
     ocr: false,
   }
-  const startRes = await fetch(`https://api.apify.com/v2/acts/${ACTOR}/runs?token=${APIFY_TOKEN}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
-  })
-  if (!startRes.ok) throw new Error(`Apify 시작 실패 ${startRes.status}: ${(await startRes.text()).slice(0, 200)}`)
-  const run = (await startRes.json()).data
+  // 동시 실행 한도(429)·일시 오류 대비: 지수 백오프로 몇 번 재시도.
+  let run = null
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const startRes = await fetch(`https://api.apify.com/v2/acts/${ACTOR}/runs?token=${APIFY_TOKEN}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
+    })
+    if (startRes.ok) { run = (await startRes.json()).data; break }
+    const body = (await startRes.text()).slice(0, 200)
+    if ((startRes.status === 429 || startRes.status >= 500) && attempt < 5) {
+      const wait = Math.min(30000, 3000 * 2 ** attempt)
+      log(`⏳ ${label} 시작 대기(${startRes.status}) ${wait / 1000}s 후 재시도`)
+      await sleep(wait); continue
+    }
+    throw new Error(`Apify 시작 실패 ${startRes.status}: ${body}`)
+  }
+  if (!run) throw new Error('Apify 시작 실패(재시도 소진)')
   const runId = run.id
   const datasetId = run.defaultDatasetId
   let status = run.status
-  const deadline = Date.now() + 75 * 60 * 1000 // 대량 수집이라 넉넉히(잡 타임아웃 90분 내)
+  const deadline = Date.now() + 75 * 60 * 1000 // 광고주 1명 기준 넉넉히.
   while (Date.now() < deadline && !['SUCCEEDED', 'FAILED', 'ABORTED', 'TIMED-OUT'].includes(status)) {
     await sleep(6000)
     try {
@@ -83,8 +81,8 @@ async function runApifyBatch(startUrls, limit) {
       if (st.ok) status = (await st.json()).data.status
     } catch {}
   }
-  if (status !== 'SUCCEEDED') throw new Error(`Apify run 상태 ${status}`)
-  // 데이터셋이 클 수 있어 페이지네이션으로 전부 수집.
+  // SUCCEEDED 아니어도(타임아웃 등) 데이터셋에 들어온 만큼은 사용 — 부분수집이라도 살린다.
+  if (status !== 'SUCCEEDED') log(`⚠️ ${label} run 상태 ${status} — 수집분만 저장`)
   const all = []
   for (let offset = 0; ; offset += 1000) {
     const r = await fetch(`https://api.apify.com/v2/datasets/${datasetId}/items?token=${APIFY_TOKEN}&clean=true&limit=1000&offset=${offset}`)
@@ -97,17 +95,17 @@ async function runApifyBatch(startUrls, limit) {
   return all
 }
 
-// 결과 item 의 startUrl(입력 URL)에서 광고주 식별자(AR… 또는 domain:…) 추출 → 광고주에 매핑.
-function idFromUrl(u) {
-  const s = String(u || '')
-  const ar = s.match(/\/advertiser\/(AR[0-9A-Za-z_-]+)/)
-  if (ar) return ar[1]
-  const dom = s.match(/[?&]domain=([^&#\s]+)/)
-  if (dom) return 'domain:' + decodeURIComponent(dom[1])
-  return null
+// 리스트를 워커 pool(동시 concurrency개)로 처리. 하나 끝나면 다음 것을 집어 계속.
+async function runPool(items, concurrency, worker) {
+  let idx = 0
+  const next = async () => {
+    while (idx < items.length) {
+      const i = idx++
+      await worker(items[i], i)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => next()))
 }
-
-const isYouTube = (u) => /youtube\.com|youtu\.be|googlevideo\.com/i.test(u || '')
 
 // Apify 광고 아이템 → ga_ads row 형태로 정규화.
 function normalizeAd(it, target) {
@@ -236,36 +234,22 @@ async function main() {
   }
   // advertiser_id 없는 항목은 스킵
   list = list.filter((t) => t.advertiser_id)
-  log(`${list.length}개 광고주 크롤 시작(배치 1회 실행)`)
+  log(`${list.length}개 광고주 크롤 시작 (동시 ${GA_CONCURRENCY}개 병렬, 광고주당 상한 ${GA_RESULTS_LIMIT || '무제한'})`)
 
-  // 1) 모든 광고주 URL 을 한 번의 Apify 실행으로 배치 처리.
-  const startUrls = list.map((t) => ({ url: buildTransparencyUrl(t.advertiser_id, t.country || 'KR') }))
-  let items = []
-  try {
-    items = await runApifyBatch(startUrls, GA_RESULTS_LIMIT)
-  } catch (e) {
-    log('Apify 배치 실패', String(e.message || e).slice(0, 200))
-    process.exit(1)
-  }
-  log(`Apify 배치 결과 총 ${items.length}건`)
-
-  // 2) 결과를 광고주(advertiser_id)별로 분류: startUrl 우선, 없으면 advertiserId(AR) 폴백.
-  const byId = new Map(list.map((t) => [t.advertiser_id, t]))
-  const groups = new Map()
-  for (const it of items) {
-    let id = idFromUrl(it.startUrl || it.inputUrl || it.url)
-    if ((!id || !byId.has(id)) && it.advertiserId && byId.has(it.advertiserId)) id = it.advertiserId
-    if (!id || !byId.has(id)) continue
-    if (!groups.has(id)) groups.set(id, [])
-    groups.get(id).push(it)
-  }
-
-  // 3) 광고주별 저장(신규 미디어 처리 + 종료 표기).
-  for (const t of list) {
-    try { await saveTargetAds(t, groups.get(t.advertiser_id) || []) }
-    catch (e) { log('광고주 저장 예외', t.id, String(e.message || e).slice(0, 120)) }
-  }
-  log('완료')
+  // 광고주 1명당 1 Apify 실행 → 최대 GA_CONCURRENCY개를 동시에. 끝나는 즉시 그 광고주 저장.
+  let okCount = 0, totalAds = 0
+  await runPool(list, GA_CONCURRENCY, async (t) => {
+    const url = buildTransparencyUrl(t.advertiser_id, t.country || 'KR')
+    try {
+      const items = await runApifyOne(url, GA_RESULTS_LIMIT, t.label)
+      totalAds += items.length
+      await saveTargetAds(t, items)
+      okCount++
+    } catch (e) {
+      log('광고주 처리 실패', t.label, String(e.message || e).slice(0, 160))
+    }
+  })
+  log(`완료: ${okCount}/${list.length} 광고주, 수집 총 ${totalAds}건`)
 }
 
 main().catch((e) => { console.error(e); process.exit(1) })
