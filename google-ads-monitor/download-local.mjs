@@ -22,7 +22,9 @@ const TMP = join(HERE, '.vidtmp')
 const BUCKET = 'google-ad-media'
 const MAX_VIDEOS = Number(process.env.MAX_VIDEOS) || 0
 const YT_HEIGHT = Number(process.env.YT_HEIGHT) || 720
+const CONCURRENCY = Math.max(1, Number(process.env.CONCURRENCY) || 6) // 동시 다운로드 수(병렬)
 const log = (...a) => console.log('[ga-local]', ...a)
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 // ── 자격증명 로드(환경변수 → .env → ../meta-ad-monitor/.env) ──
 function loadEnvFile(p) {
@@ -102,11 +104,9 @@ async function loadPending() {
   return byId
 }
 
-// yt-dlp 로 영상 1개를 TMP 에 mp4 로 받아 파일경로 반환(없으면 null). ffmpeg 불필요(프로그레시브 mp4).
+// yt-dlp 로 영상 1개를 TMP 에 고유파일로 받아 경로 반환(없으면 null). 병렬 안전(공유 TMP 안 지움). ffmpeg 불필요.
 function ytdlp(id) {
   return new Promise((resolve) => {
-    try { rmSync(TMP, { recursive: true, force: true }) } catch {}
-    mkdirSync(TMP, { recursive: true })
     const out = join(TMP, `${id}.%(ext)s`)
     const fmt = `best[ext=mp4][height<=${YT_HEIGHT}]/best[ext=mp4]/best`
     const args = ['-f', fmt, '--no-playlist', '--no-warnings', '--no-part', '-o', out, `https://www.youtube.com/watch?v=${id}`]
@@ -115,7 +115,7 @@ function ytdlp(id) {
     p.stderr.on('data', (d) => { err += d.toString() })
     p.on('close', () => {
       try {
-        const f = readdirSync(TMP).find((n) => n.startsWith(id))
+        const f = readdirSync(TMP).find((n) => n.startsWith(id + '.'))
         if (f) { const full = join(TMP, f); if (statSync(full).size > 0) return resolve(full) }
       } catch {}
       if (err) log(`  yt-dlp 실패(${id}): ${err.split('\n').filter(Boolean).pop()?.slice(0, 140)}`)
@@ -125,34 +125,52 @@ function ytdlp(id) {
   })
 }
 
+// 영상 1개: 다운로드 → 업로드 → DB 갱신 → 임시파일 삭제.
+async function handleOne(id, libraryIds, n, total) {
+  let file = null
+  for (let a = 0; a < 2 && !file; a++) {
+    if (a) await sleep(1500) // 403(throttle) 등 일시 실패 시 1회 재시도
+    file = await ytdlp(id)
+  }
+  if (!file) { console.log(`[ga-local] (${n}/${total}) ${id} 실패`); return false }
+  try {
+    const buf = readFileSync(file)
+    if (buf.length > 300 * 1024 * 1024) { console.log(`[ga-local] (${n}/${total}) ${id} 너무 큼(스킵)`); return false }
+    const path = `youtube/${id}.mp4`
+    const up = await sb.storage.from(BUCKET).upload(path, buf, { contentType: 'video/mp4', upsert: true })
+    if (up.error) { console.log(`[ga-local] (${n}/${total}) ${id} 업로드 실패:`, up.error.message); return false }
+    const publicUrl = sb.storage.from(BUCKET).getPublicUrl(path).data.publicUrl
+    await sb.from('ga_ads').update({ media_url: publicUrl, downloaded: true, media_path: path }).in('library_id', libraryIds)
+    console.log(`[ga-local] (${n}/${total}) ${id} 저장 (${(buf.length / 1024 / 1024).toFixed(1)}MB, 광고 ${libraryIds.length}건)`)
+    return true
+  } catch (e) {
+    console.log(`[ga-local] (${n}/${total}) ${id} 오류:`, String(e.message || e).slice(0, 120)); return false
+  } finally {
+    try { rmSync(file, { force: true }) } catch {}
+  }
+}
+
 async function main() {
   await ensureYtdlp()
+  try { rmSync(TMP, { recursive: true, force: true }) } catch {}
+  mkdirSync(TMP, { recursive: true })
   const byId = await loadPending()
   let ids = [...byId.keys()]
   if (MAX_VIDEOS > 0) ids = ids.slice(0, MAX_VIDEOS)
-  log(`받을 고유 영상 ${byId.size}개 중 이번 처리 ${ids.length}개 (최대 ${YT_HEIGHT}p)`)
+  log(`받을 고유 영상 ${byId.size}개 중 이번 처리 ${ids.length}개 (동시 ${CONCURRENCY}개 병렬, 최대 ${YT_HEIGHT}p)`)
   if (!ids.length) { log('받을 영상이 없습니다.'); return }
 
-  let done = 0, fail = 0
-  for (let i = 0; i < ids.length; i++) {
-    const id = ids[i]
-    process.stdout.write(`[ga-local] (${i + 1}/${ids.length}) ${id} … `)
-    const file = await ytdlp(id)
-    if (!file) { fail++; console.log('실패'); continue }
-    try {
-      const buf = readFileSync(file)
-      if (buf.length > 300 * 1024 * 1024) { fail++; console.log('너무 큼(스킵)'); continue }
-      const path = `youtube/${id}.mp4`
-      const up = await sb.storage.from(BUCKET).upload(path, buf, { contentType: 'video/mp4', upsert: true })
-      if (up.error) { fail++; console.log('업로드 실패:', up.error.message); continue }
-      const publicUrl = sb.storage.from(BUCKET).getPublicUrl(path).data.publicUrl
-      await sb.from('ga_ads').update({ media_url: publicUrl, downloaded: true, media_path: path }).in('library_id', byId.get(id))
-      done++
-      console.log(`저장 (${(buf.length / 1024 / 1024).toFixed(1)}MB, 광고 ${byId.get(id).length}건 갱신)`)
-    } catch (e) {
-      fail++; console.log('오류:', String(e.message || e).slice(0, 120))
+  let done = 0, fail = 0, idx = 0
+  const worker = async () => {
+    while (idx < ids.length) {
+      const i = idx++
+      const id = ids[i]
+      const ok = await handleOne(id, byId.get(id), i + 1, ids.length)
+      if (ok) done++; else fail++
     }
   }
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, ids.length) }, worker))
+
   try { rmSync(TMP, { recursive: true, force: true }) } catch {}
   log(`완료: 성공 ${done} / 실패 ${fail} / 대상 ${ids.length}. (실패분은 다시 실행하면 이어받음)`)
 }
