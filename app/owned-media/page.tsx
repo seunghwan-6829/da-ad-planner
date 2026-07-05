@@ -91,6 +91,7 @@ type Post = {
 
 const PAGE_SIZE = 15;
 
+// 대분류 표준 목록 — 메타/구글 광고 크롤러와 동일 세트로 통일.
 const CATEGORY_OPTIONS = [
   "미분류",
   "뷰티 & 에어케어",
@@ -101,7 +102,6 @@ const CATEGORY_OPTIONS = [
   "의료 & 건강",
   "교육 & 강의",
   "IT & 전자기기",
-  "여행 & 액티비티",
   "기타",
 ];
 
@@ -235,6 +235,10 @@ function PlatformBadge({ platform, className }: { platform: string; className?: 
   );
 }
 
+// 모듈 메모리 캐시: 다른 탭 갔다가 재진입해도(SPA 이동) 재fetch 없이 그대로 유지.
+// F5(전체 새로고침 → 모듈 초기화) 때만 null 이 되어 새로 로드됨.
+let ownedMemCache: { creators: Creator[]; posts: Post[]; counts: Record<string, number> } | null = null;
+
 export default function OwnedMediaPage() {
   const { canMetaAd, isAdmin, loading: authLoading } = useAuth();
   const [creators, setCreators] = useState<Creator[]>([]);
@@ -330,6 +334,14 @@ export default function OwnedMediaPage() {
   }, [mergePosts]);
 
   useEffect(() => {
+    // 다른 탭 갔다가 재진입(SPA): 메모리 캐시가 있으면 그대로 복원하고 재fetch 안 함(F5 해야 새로고침).
+    if (ownedMemCache) {
+      setCreators(ownedMemCache.creators);
+      setPosts(ownedMemCache.posts);
+      setCounts(ownedMemCache.counts);
+      setLoading(false);
+      return;
+    }
     try {
       const c = sessionStorage.getItem("owned-media-cache");
       if (c) {
@@ -342,6 +354,11 @@ export default function OwnedMediaPage() {
     } catch {}
     loadAll();
   }, [loadAll]);
+
+  // 최신 상태를 모듈 메모리 캐시에 보관 → 재진입 시 위에서 그대로 복원(재fetch 없음).
+  useEffect(() => {
+    if (!loading) ownedMemCache = { creators, posts, counts };
+  }, [creators, posts, counts, loading]);
 
   useEffect(() => {
     getClients().then((cs) => setClients(cs || [])).catch(() => {});
