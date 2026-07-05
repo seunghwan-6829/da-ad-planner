@@ -3,12 +3,12 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
 
-// 모달 열 때 지연 로딩: 목록(경량)에서 뺀 본문·AI분석·대본·지역통계를 단건 조회.
+// 모달 열 때 지연 로딩: 목록(경량)에서 뺀 본문·AI분석·대본·지역통계 + 캐러셀/랜딩/원본을 단건 조회.
 export async function GET(_req: Request, { params }: { params: Promise<{ libraryId: string }> }) {
   const { libraryId } = await params
   const { data, error } = await supabaseAdmin
     .from('ga_ads')
-    .select('library_id, ai_analysis, ad_text, transcript, regions, video_src_url')
+    .select('library_id, ai_analysis, ad_text, transcript, regions, video_src_url, media_urls, landing_url, source_url, format')
     .eq('library_id', libraryId)
     .single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })

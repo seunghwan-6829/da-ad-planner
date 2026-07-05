@@ -546,7 +546,7 @@ export default function GoogleAdsCrawlerPage() {
       (async () => {
         setSyncing(true);
         const PAGE = 1000; // PostgREST 한 요청 최대치
-        const CONCURRENCY = 6;
+        const CONCURRENCY = 12; // 3만+ 대량이라 동시성 상향(경량 컬럼과 함께 sync 속도 개선)
         let nextOffset = 300; // bootstrap 이 최근 300 줬으니 그다음부터
         let done = false;
         const worker = async () => {
