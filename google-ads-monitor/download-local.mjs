@@ -12,8 +12,8 @@
 //            → 로그인 쿠키로 유튜브 "봇 확인" 차단을 우회(한 IP로 대량 받을 때 필요).
 
 import { createClient } from '@supabase/supabase-js'
-import { spawn } from 'node:child_process'
-import { readFileSync, existsSync, mkdirSync, rmSync, readdirSync, statSync, createWriteStream } from 'node:fs'
+import { spawn, spawnSync } from 'node:child_process'
+import { readFileSync, existsSync, mkdirSync, rmSync, readdirSync, statSync, createWriteStream, copyFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { get } from 'node:https'
@@ -21,7 +21,10 @@ import { get } from 'node:https'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const IS_WIN = process.platform === 'win32'
 const YT = join(HERE, IS_WIN ? 'yt-dlp.exe' : 'yt-dlp')
+const DENO = join(HERE, IS_WIN ? 'deno.exe' : 'deno') // 유튜브 nsig(JS 챌린지) 해결용 런타임
 const TMP = join(HERE, '.vidtmp')
+// yt-dlp 가 이 폴더의 deno 를 찾도록 PATH 앞에 붙임.
+const CHILD_ENV = { ...process.env, PATH: HERE + (IS_WIN ? ';' : ':') + (process.env.PATH || '') }
 const BUCKET = 'google-ad-media'
 const MAX_VIDEOS = Number(process.env.MAX_VIDEOS) || 0
 const YT_HEIGHT = Number(process.env.YT_HEIGHT) || 720
@@ -29,9 +32,6 @@ const CONCURRENCY = Math.max(1, Number(process.env.CONCURRENCY) || 6) // 동시 
 const COOKIES_FROM_BROWSER = (process.env.COOKIES_FROM_BROWSER || '').trim()
 // COOKIES_FILE 미지정 시, 이 폴더의 cookies.txt 를 자동 사용(있으면). 파일만 넣어두면 됨.
 const COOKIES_FILE = (process.env.COOKIES_FILE || '').trim() || (existsSync(join(HERE, 'cookies.txt')) ? join(HERE, 'cookies.txt') : '')
-// 쿠키 인증 옵션(있으면 유튜브 봇확인 우회). 브라우저 쿠키 우선, 없으면 cookies.txt.
-const COOKIE_ARGS = COOKIES_FROM_BROWSER ? ['--cookies-from-browser', COOKIES_FROM_BROWSER]
-  : COOKIES_FILE ? ['--cookies', COOKIES_FILE] : []
 const log = (...a) => console.log('[ga-local]', ...a)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -85,6 +85,21 @@ async function ensureYtdlp() {
   log('yt-dlp 준비 완료')
 }
 
+// ── deno(JS 런타임) 없으면 자동 설치 ── 유튜브 nsig 챌린지 해결에 필요(쿠키로 봇차단 우회 시 특히).
+async function ensureDeno() {
+  if (existsSync(DENO)) return
+  if (!IS_WIN) { log('⚠️ deno 없음 — https://deno.com 에서 설치하면 유튜브 nsig 해결이 됩니다.'); return }
+  log('deno(JS 런타임) 없음 → 다운로드/설치 중…')
+  const zip = join(HERE, 'deno.zip')
+  try {
+    await download('https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip', zip)
+    spawnSync('powershell', ['-NoProfile', '-Command', `Expand-Archive -Path "${zip}" -DestinationPath "${HERE}" -Force`], { stdio: 'ignore' })
+  } catch (e) { log('deno 설치 실패', String(e.message || e).slice(0, 100)) }
+  try { rmSync(zip, { force: true }) } catch {}
+  if (existsSync(DENO)) log('deno 준비 완료')
+  else log('⚠️ deno 설치 실패 — 쿠키 사용 시 일부 영상 포맷을 못 받을 수 있어요.')
+}
+
 const idFrom = (u) => {
   const s = String(u || '')
   return s.match(/i\.ytimg\.com\/vi\/([\w-]{6,})\//)?.[1]
@@ -113,16 +128,29 @@ async function loadPending() {
   return byId
 }
 
+// 쿠키 인자 구성. 병렬 실행 시 yt-dlp 가 쿠키파일을 각자 덮어써 충돌하므로, 다운로드마다 사본을 준다.
+function cookieArgsFor(id) {
+  if (COOKIES_FILE) {
+    const copy = join(TMP, `${id}.cookies.txt`)
+    try { copyFileSync(COOKIES_FILE, copy); return { args: ['--cookies', copy], tmp: copy } } catch {}
+  } else if (COOKIES_FROM_BROWSER) {
+    return { args: ['--cookies-from-browser', COOKIES_FROM_BROWSER], tmp: null }
+  }
+  return { args: [], tmp: null }
+}
+
 // yt-dlp 로 영상 1개를 TMP 에 고유파일로 받아 경로 반환(없으면 null). 병렬 안전(공유 TMP 안 지움). ffmpeg 불필요.
 function ytdlp(id) {
   return new Promise((resolve) => {
     const out = join(TMP, `${id}.%(ext)s`)
     const fmt = `best[ext=mp4][height<=${YT_HEIGHT}]/best[ext=mp4]/best`
-    const args = ['-f', fmt, '--no-playlist', '--no-warnings', '--no-part', ...COOKIE_ARGS, '-o', out, `https://www.youtube.com/watch?v=${id}`]
-    const p = spawn(YT, args, { stdio: ['ignore', 'ignore', 'pipe'] })
+    const { args: cArgs, tmp: cookieTmp } = cookieArgsFor(id)
+    const args = ['-f', fmt, '--no-playlist', '--no-warnings', '--no-part', ...cArgs, '-o', out, `https://www.youtube.com/watch?v=${id}`]
+    const p = spawn(YT, args, { stdio: ['ignore', 'ignore', 'pipe'], env: CHILD_ENV })
     let err = ''
     p.stderr.on('data', (d) => { err += d.toString() })
     p.on('close', () => {
+      try { if (cookieTmp) rmSync(cookieTmp, { force: true }) } catch {} // 쿠키 사본 먼저 정리(영상파일 검색 오탐 방지)
       try {
         const f = readdirSync(TMP).find((n) => n.startsWith(id + '.'))
         if (f) { const full = join(TMP, f); if (statSync(full).size > 0) return resolve(full) }
@@ -161,6 +189,7 @@ async function handleOne(id, libraryIds, n, total) {
 
 async function main() {
   await ensureYtdlp()
+  await ensureDeno()
   try { rmSync(TMP, { recursive: true, force: true }) } catch {}
   mkdirSync(TMP, { recursive: true })
   const byId = await loadPending()
