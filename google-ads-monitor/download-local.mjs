@@ -27,7 +27,8 @@ const MAX_VIDEOS = Number(process.env.MAX_VIDEOS) || 0
 const YT_HEIGHT = Number(process.env.YT_HEIGHT) || 720
 const CONCURRENCY = Math.max(1, Number(process.env.CONCURRENCY) || 6) // 동시 다운로드 수(병렬)
 const COOKIES_FROM_BROWSER = (process.env.COOKIES_FROM_BROWSER || '').trim()
-const COOKIES_FILE = (process.env.COOKIES_FILE || '').trim()
+// COOKIES_FILE 미지정 시, 이 폴더의 cookies.txt 를 자동 사용(있으면). 파일만 넣어두면 됨.
+const COOKIES_FILE = (process.env.COOKIES_FILE || '').trim() || (existsSync(join(HERE, 'cookies.txt')) ? join(HERE, 'cookies.txt') : '')
 // 쿠키 인증 옵션(있으면 유튜브 봇확인 우회). 브라우저 쿠키 우선, 없으면 cookies.txt.
 const COOKIE_ARGS = COOKIES_FROM_BROWSER ? ['--cookies-from-browser', COOKIES_FROM_BROWSER]
   : COOKIES_FILE ? ['--cookies', COOKIES_FILE] : []
