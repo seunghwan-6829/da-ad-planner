@@ -6,7 +6,10 @@
 //
 // 실행: google-ads-monitor 폴더에서  node download-local.mjs   (또는 download-videos-local.bat 더블클릭)
 // 자격증명: 환경변수 → 이 폴더 .env → ../meta-ad-monitor/.env 순으로 SUPABASE_URL / SUPABASE_SERVICE_KEY 자동 탐색.
-// 선택 env: MAX_VIDEOS(이번 실행 최대 영상 수, 0=전체), YT_HEIGHT(최대 해상도, 기본 720)
+// 선택 env: MAX_VIDEOS(이번 실행 최대 영상 수, 0=전체), YT_HEIGHT(최대 해상도, 기본 720),
+//          CONCURRENCY(동시 다운로드 수, 기본 6),
+//          COOKIES_FROM_BROWSER(chrome|edge|firefox|brave|whale …) 또는 COOKIES_FILE(cookies.txt 경로)
+//            → 로그인 쿠키로 유튜브 "봇 확인" 차단을 우회(한 IP로 대량 받을 때 필요).
 
 import { createClient } from '@supabase/supabase-js'
 import { spawn } from 'node:child_process'
@@ -23,6 +26,11 @@ const BUCKET = 'google-ad-media'
 const MAX_VIDEOS = Number(process.env.MAX_VIDEOS) || 0
 const YT_HEIGHT = Number(process.env.YT_HEIGHT) || 720
 const CONCURRENCY = Math.max(1, Number(process.env.CONCURRENCY) || 6) // 동시 다운로드 수(병렬)
+const COOKIES_FROM_BROWSER = (process.env.COOKIES_FROM_BROWSER || '').trim()
+const COOKIES_FILE = (process.env.COOKIES_FILE || '').trim()
+// 쿠키 인증 옵션(있으면 유튜브 봇확인 우회). 브라우저 쿠키 우선, 없으면 cookies.txt.
+const COOKIE_ARGS = COOKIES_FROM_BROWSER ? ['--cookies-from-browser', COOKIES_FROM_BROWSER]
+  : COOKIES_FILE ? ['--cookies', COOKIES_FILE] : []
 const log = (...a) => console.log('[ga-local]', ...a)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -109,7 +117,7 @@ function ytdlp(id) {
   return new Promise((resolve) => {
     const out = join(TMP, `${id}.%(ext)s`)
     const fmt = `best[ext=mp4][height<=${YT_HEIGHT}]/best[ext=mp4]/best`
-    const args = ['-f', fmt, '--no-playlist', '--no-warnings', '--no-part', '-o', out, `https://www.youtube.com/watch?v=${id}`]
+    const args = ['-f', fmt, '--no-playlist', '--no-warnings', '--no-part', ...COOKIE_ARGS, '-o', out, `https://www.youtube.com/watch?v=${id}`]
     const p = spawn(YT, args, { stdio: ['ignore', 'ignore', 'pipe'] })
     let err = ''
     p.stderr.on('data', (d) => { err += d.toString() })
@@ -157,7 +165,8 @@ async function main() {
   const byId = await loadPending()
   let ids = [...byId.keys()]
   if (MAX_VIDEOS > 0) ids = ids.slice(0, MAX_VIDEOS)
-  log(`받을 고유 영상 ${byId.size}개 중 이번 처리 ${ids.length}개 (동시 ${CONCURRENCY}개 병렬, 최대 ${YT_HEIGHT}p)`)
+  const cookieMode = COOKIES_FROM_BROWSER ? `브라우저쿠키(${COOKIES_FROM_BROWSER})` : COOKIES_FILE ? 'cookies.txt' : '쿠키없음'
+  log(`받을 고유 영상 ${byId.size}개 중 이번 처리 ${ids.length}개 (동시 ${CONCURRENCY}개, 최대 ${YT_HEIGHT}p, ${cookieMode})`)
   if (!ids.length) { log('받을 영상이 없습니다.'); return }
 
   let done = 0, fail = 0, idx = 0
