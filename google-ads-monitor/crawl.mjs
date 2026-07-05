@@ -14,7 +14,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
 const APIFY_TOKEN = (process.env.APIFY_TOKEN || '').trim()
 const CRAWL_TARGET_ID = (process.env.CRAWL_TARGET_ID || '').trim()
-const GA_RESULTS_LIMIT = Number(process.env.GA_RESULTS_LIMIT) || 50
+const GA_RESULTS_LIMIT = Number(process.env.GA_RESULTS_LIMIT) || 500
 const STORAGE_BUCKET = 'google-ad-media'
 const ACTOR = 'silva95gustavo~google-ads-scraper'
 
@@ -61,9 +61,11 @@ async function runApifyBatch(startUrls, limit) {
   const input = {
     startUrls, // [{ url }, ...]
     resultsLimit: limit, // URL(광고주)당 최대
-    skipDetails: false,
-    shouldDownloadAssets: false, // ⚠️ true면 Apify가 미디어를 자기서버에 받느라 매우 느림(타임아웃). false여도 영상/이미지 URL은 다 나옴(로컬검증).
-    ocr: false, // OCR(이미지 텍스트 추출)은 AI라 느림 → 끔(카피는 변형 description/CTA로 충분)
+    // ⚠️ skipDetails=true: 상세페이지 안 열어 매우 빠름(광고주당 수백~천개 수집 가능). 대신 영상/이미지 "원본 URL"은
+    //    안 나오고 previewUrl(썸네일)만 나옴 → 영상은 재생 시 온디맨드로 상세를 따로 가져온다. (로컬 실측: 1109건 9분)
+    skipDetails: true,
+    shouldDownloadAssets: false,
+    ocr: false,
   }
   const startRes = await fetch(`https://api.apify.com/v2/acts/${ACTOR}/runs?token=${APIFY_TOKEN}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
@@ -73,7 +75,7 @@ async function runApifyBatch(startUrls, limit) {
   const runId = run.id
   const datasetId = run.defaultDatasetId
   let status = run.status
-  const deadline = Date.now() + 35 * 60 * 1000 // 배치라 넉넉히(잡 타임아웃 45분 내)
+  const deadline = Date.now() + 75 * 60 * 1000 // 대량 수집이라 넉넉히(잡 타임아웃 90분 내)
   while (Date.now() < deadline && !['SUCCEEDED', 'FAILED', 'ABORTED', 'TIMED-OUT'].includes(status)) {
     await sleep(6000)
     try {
@@ -134,6 +136,12 @@ function normalizeAd(it, target) {
   if (it.text) copyParts.push(it.text)
   const adText = Array.from(new Set(copyParts.map((s) => String(s).trim()).filter(Boolean))).join('\n')
 
+  const preview = it.previewUrl || null
+  // skipDetails=true 라 영상/이미지 원본 URL이 없을 수 있음.
+  //  - 영상: media_url=null → 재생 시 온디맨드로 상세(유튜브 URL) 가져와 다운로드. poster는 previewUrl(썸네일).
+  //  - 이미지/텍스트/캐러셀: 원본 이미지 있으면 그걸, 없으면 previewUrl 을 media_url 로(카드/상세에서 바로 표시).
+  const mediaUrl = mediaType === 'video' ? null : (images[0] || preview || null)
+
   return {
     library_id: String(it.creativeId || it.adId || `${target.advertiser_id}_${Math.random().toString(36).slice(2, 9)}`),
     target_id: target.id,
@@ -143,12 +151,13 @@ function normalizeAd(it, target) {
     ad_text: adText || null,
     media_type: mediaType,
     media_urls: images.length ? images : null,
-    poster_url: it.previewUrl || images[0] || null,
+    poster_url: preview || images[0] || null,
     landing_url: variations.find((v) => v && v.clickUrl)?.clickUrl || null,
     source_url: it.adLibraryUrl || null,
     format: format || null,
     regions: Array.isArray(it.regionStats) ? it.regionStats : null,
     video_src_url: videoSrc,
+    _mediaUrl: mediaUrl,
     _images: images,
   }
 }
@@ -185,33 +194,14 @@ async function saveTargetAds(target, items) {
       continue
     }
 
-    // 신규: 미디어 처리
-    //   - 유튜브 영상 광고(대부분) → 다운로드 X, 임베드(유튜브 URL 그대로). 빠르고 영구.
-    //   - 비유튜브 영상(구글 CDN 등, 만료 가능) → 스토리지 저장.
-    //   - 이미지 → 대표 1장 스토리지 저장(썸네일용).
-    let mediaUrl = null
-    let downloaded = false
-    const key = row.library_id.replace(/[^\w-]/g, '').slice(0, 40)
-    if (row.media_type === 'video' && row.video_src_url) {
-      if (/youtube\.com|youtu\.be/i.test(row.video_src_url)) {
-        mediaUrl = row.video_src_url
-        downloaded = false
-      } else {
-        mediaUrl = await downloadToStorage(row.video_src_url, `video/${key}.mp4`, 'video/mp4')
-        downloaded = !!mediaUrl
-      }
-    } else if (row._images && row._images.length) {
-      mediaUrl = await downloadToStorage(row._images[0], `image/${key}.jpg`, 'image/jpeg')
-      downloaded = !!mediaUrl
-    }
-
-    const { _images, ...clean } = row
+    // 신규: 크롤 단계에선 다운로드 안 함(빠르게). 영상=media_url null(재생 시 온디맨드), 이미지/텍스트=previewUrl 표시.
+    const { _images, _mediaUrl, video_src_url, ...clean } = row
     void _images
     newRows.push({
       ...clean,
-      media_url: mediaUrl || row.video_src_url || (row._images && row._images[0]) || null,
-      poster_url: (downloaded && row.media_type !== 'video' ? mediaUrl : null) || row.poster_url,
-      downloaded,
+      video_src_url,
+      media_url: _mediaUrl, // 영상=null, 이미지/텍스트=previewUrl(또는 원본 이미지)
+      downloaded: false,
       last_seen_at: now,
       status: 'active',
     })

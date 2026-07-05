@@ -385,19 +385,20 @@ function MediaView({
   const [idx, setIdx] = useState(0);
   const r = rounded ?? "";
 
-  if (ad.media_type === "video" && ad.media_url) {
-    // 구글 영상 광고는 대부분 유튜브 → 임베드. 우리 스토리지에 받은 mp4면 <video> 로 직접 재생.
-    const ytEmbed = youtubeEmbed(ad.media_url);
+  if (ad.media_type === "video") {
+    // 스토리지 mp4로 저장돼 있으면 바로 재생. 아니면(media_url null/유튜브) 재생 시 온디맨드로 상세+다운로드.
+    const stored = !!ad.media_url && /\/storage\/v1\/object\//.test(ad.media_url);
     if (card) {
-      // 카드: 클릭을 가로채지 않도록 포스터/썸네일 + 가운데 ▶ (iframe/video 로딩으로 클릭 가로채기 방지)
-      const thumb = ad.poster_url || (!ytEmbed ? ad.media_url : null);
+      // 카드: 썸네일(previewUrl/poster) + 가운데 ▶ (클릭하면 모달 열림)
       return (
         <div className="pointer-events-none relative h-full w-full bg-black">
-          {ytEmbed || !ad.media_url ? (
+          {stored ? (
+            <video src={ad.media_url!} poster={ad.poster_url || undefined} muted playsInline preload="metadata" className={`h-full w-full object-cover ${r}`} />
+          ) : ad.poster_url ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={ad.poster_url || ""} alt="" loading="lazy" decoding="async" className={`h-full w-full object-cover ${r}`} />
+            <img src={ad.poster_url} alt="" loading="lazy" decoding="async" className={`h-full w-full object-cover ${r}`} />
           ) : (
-            <video src={thumb || undefined} poster={ad.poster_url || undefined} muted playsInline preload="metadata" className={`h-full w-full object-cover ${r}`} />
+            <div className="h-full w-full" />
           )}
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="flex h-9 w-9 items-center justify-center rounded-full bg-black/45">
@@ -407,24 +408,13 @@ function MediaView({
         </div>
       );
     }
-    // 유튜브 URL(임베드 차단 광고 영상) → 재생 누르면 그 순간 자동 다운로드해 인라인 재생.
-    if (ytEmbed) {
-      return <OnDemandGoogleVideo ad={ad} rounded={r} videoRef={videoRef} />;
+    if (stored) {
+      return (
+        <video ref={videoRef} src={ad.media_url!} poster={ad.poster_url || undefined} controls autoPlay playsInline preload="metadata" onClick={(e) => e.stopPropagation()} className={`h-full w-full bg-black object-contain ${r}`} />
+      );
     }
-    // 이미 스토리지 mp4 → 바로 재생.
-    return (
-      <video
-        ref={videoRef}
-        src={ad.media_url}
-        poster={ad.poster_url || undefined}
-        controls
-        autoPlay
-        playsInline
-        preload="metadata"
-        onClick={(e) => e.stopPropagation()}
-        className={`h-full w-full bg-black object-contain ${r}`}
-      />
-    );
+    // media_url 없음/유튜브 → 재생 누르면 상세 로딩 → 다운로드 → 재생 (온디맨드).
+    return <OnDemandGoogleVideo ad={ad} rounded={r} videoRef={videoRef} />;
   }
   if (urls.length === 0) {
     return (
