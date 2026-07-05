@@ -294,6 +294,80 @@ function pageItems(current: number, total: number): number[] {
   return Array.from({ length: end - start + 1 }, (_, i) => start + i);
 }
 
+/* ── 온디맨드 영상: 임베드 차단된 구글 광고(유튜브) 영상을 "재생 누를 때" 그 영상만 자동 다운로드해 인라인 재생.
+   재생 클릭 → /api/google-ads/fetch-video 폴링(Apify 다운로드→스토리지 저장) → 완료되면 <video> 자동재생.
+   본 영상만 받으므로 비용 최소(영상당 ~$0.06). 한 번 받으면 다음부터 즉시 재생. */
+function OnDemandGoogleVideo({ ad, rounded, videoRef }: { ad: Ad; rounded: string; videoRef?: React.RefObject<HTMLVideoElement | null> }) {
+  const [phase, setPhase] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [url, setUrl] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string>("");
+  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const aliveRef = useRef(true);
+
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => { aliveRef.current = false; if (pollRef.current) clearTimeout(pollRef.current); };
+  }, []);
+
+  function start() {
+    setPhase("loading");
+    setMsg("영상 준비 중… (처음 한 번만 받아요, 20~60초)");
+    const tick = async () => {
+      try {
+        const res = await fetch("/api/google-ads/fetch-video", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ library_id: ad.library_id }),
+        });
+        const j = await res.json().catch(() => ({}));
+        if (!aliveRef.current) return;
+        if (j.done && j.url) { setUrl(j.url); setPhase("ready"); return; }
+        if (j.error) { setMsg(j.error); setPhase("error"); return; }
+        pollRef.current = setTimeout(tick, 4000); // processing → 계속 폴링
+      } catch {
+        if (!aliveRef.current) return;
+        setMsg("네트워크 오류. 다시 시도해 주세요.");
+        setPhase("error");
+      }
+    };
+    tick();
+  }
+
+  const poster = ad.poster_url || undefined;
+
+  if (phase === "ready" && url) {
+    return <video ref={videoRef} src={url} poster={poster} controls autoPlay playsInline preload="metadata" onClick={(e) => e.stopPropagation()} className={`h-full w-full bg-black object-contain ${rounded}`} />;
+  }
+  return (
+    <button type="button" onClick={(e) => { e.stopPropagation(); if (phase !== "loading") start(); }} className={`relative flex h-full w-full items-center justify-center overflow-hidden bg-black ${rounded}`}>
+      {poster && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={poster} alt="" className="absolute inset-0 h-full w-full object-cover opacity-40" />
+      )}
+      <div className="relative z-10 flex flex-col items-center gap-2 px-4 text-center text-white">
+        {phase === "loading" ? (
+          <>
+            <Loader2 className="h-8 w-8 animate-spin" />
+            <span className="text-xs">{msg}</span>
+          </>
+        ) : phase === "error" ? (
+          <>
+            <span className="text-xs text-red-300">{msg}</span>
+            <span className="rounded-full bg-white/20 px-3 py-1 text-xs">다시 시도 ▶</span>
+          </>
+        ) : (
+          <>
+            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-white/25 backdrop-blur">
+              <Play className="h-7 w-7 fill-white text-white" />
+            </div>
+            <span className="text-[11px] opacity-80">재생 (자동으로 불러와요)</span>
+          </>
+        )}
+      </div>
+    </button>
+  );
+}
+
 /* ── 미디어 뷰: 영상 재생 / 캐러셀 슬라이드 / 이미지 ──
    card=true(그리드 카드): 영상은 컨트롤 없는 '미리보기'로 렌더하고 클릭이 카드로 전달되게(=클릭하면 모달 열림). */
 function MediaView({
@@ -333,15 +407,18 @@ function MediaView({
         </div>
       );
     }
+    // 유튜브 URL(임베드 차단 광고 영상) → 재생 누르면 그 순간 자동 다운로드해 인라인 재생.
     if (ytEmbed) {
-      return <iframe src={ytEmbed} title="" allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen className={`h-full w-full bg-black ${r}`} />;
+      return <OnDemandGoogleVideo ad={ad} rounded={r} videoRef={videoRef} />;
     }
+    // 이미 스토리지 mp4 → 바로 재생.
     return (
       <video
         ref={videoRef}
         src={ad.media_url}
         poster={ad.poster_url || undefined}
         controls
+        autoPlay
         playsInline
         preload="metadata"
         onClick={(e) => e.stopPropagation()}
