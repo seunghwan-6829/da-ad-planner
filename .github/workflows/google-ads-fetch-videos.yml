@@ -1,9 +1,9 @@
-name: Fetch Google Ad Videos (yt-dlp)
+name: Fetch Google Ad Videos (bulk backfill)
 
+# ⚠️ 자동 스케줄 없음(수동 전용). 영상은 기본적으로 "재생할 때만" 온디맨드로 받아 저장하므로,
+#    전량 백필은 비용이 큼(영상당 ~$0.06 → 수천개면 수백 달러). 필요할 때만 아래 dispatch 로 수동 실행.
+#    범위 조절: max_videos(다운로드 상한), RESOLVE_MAX(상세해석 상한)은 crawl 잡 env 로도 조정 가능.
 on:
-  schedule:
-    # 매주 화요일 KST 오전 11시 (UTC 화 02:00) — 광고 크롤(10시) 1시간 뒤 신규 영상 다운로드.
-    - cron: "0 2 * * 2"
   workflow_dispatch:
     inputs:
       max_videos:
