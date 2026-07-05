@@ -62,7 +62,7 @@ async function runApifyBatch(startUrls, limit) {
     startUrls, // [{ url }, ...]
     resultsLimit: limit, // URL(광고주)당 최대
     skipDetails: false,
-    shouldDownloadAssets: true, // 영상/이미지 크리에이티브 URL 확보
+    shouldDownloadAssets: false, // ⚠️ true면 Apify가 미디어를 자기서버에 받느라 매우 느림(타임아웃). false여도 영상/이미지 URL은 다 나옴(로컬검증).
     ocr: false, // OCR(이미지 텍스트 추출)은 AI라 느림 → 끔(카피는 변형 description/CTA로 충분)
   }
   const startRes = await fetch(`https://api.apify.com/v2/acts/${ACTOR}/runs?token=${APIFY_TOKEN}`, {
