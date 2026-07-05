@@ -18,7 +18,9 @@ const BUCKET = 'google-ad-media'
 
 const vidId = (url: string) => {
   const s = String(url || '')
-  return s.match(/[?&]v=([\w-]{6,})/)?.[1] || s.match(/youtu\.be\/([\w-]{6,})/)?.[1] || s.match(/shorts\/([\w-]{6,})/)?.[1] || null
+  return s.match(/i\.ytimg\.com\/vi\/([\w-]{6,})\//)?.[1] // poster 썸네일(i.ytimg.com/vi/<id>/…)
+    || s.match(/[?&]v=([\w-]{6,})/)?.[1] || s.match(/youtu\.be\/([\w-]{6,})/)?.[1]
+    || s.match(/shorts\/([\w-]{6,})/)?.[1] || s.match(/embed\/([\w-]{6,})/)?.[1] || null
 }
 const isStored = (u: string | null) => !!u && /\/storage\/v1\/object\//.test(u)
 
@@ -61,7 +63,7 @@ export async function POST(req: Request) {
 
   const { data: ad, error } = await supabaseAdmin
     .from('ga_ads')
-    .select('library_id, media_url, media_path, media_type, source_url')
+    .select('library_id, media_url, media_path, media_type, source_url, poster_url')
     .eq('library_id', libraryId)
     .single()
   if (error || !ad) return NextResponse.json({ error: '광고를 찾을 수 없습니다.' }, { status: 404 })
@@ -137,9 +139,17 @@ export async function POST(req: Request) {
   }
 
   // ── 마커 없음: 다음 할 일 결정 ──
-  const yid = vidId(ad.media_url || '')
+  let yid = vidId(ad.media_url || '')
   if (!yid) {
-    // media_url 이 유튜브가 아님(대개 null) → 먼저 상세 로딩으로 유튜브 URL 확보.
+    // poster(i.ytimg.com/vi/<id>/…)에서 유튜브ID 무료 추출 → Apify 상세조회(느린 1단계) 건너뜀(영상 92%).
+    const pid = vidId(ad.poster_url || '')
+    if (pid) {
+      await supabaseAdmin.from('ga_ads').update({ media_url: `https://www.youtube.com/watch?v=${pid}` }).eq('library_id', libraryId)
+      yid = pid
+    }
+  }
+  if (!yid) {
+    // media_url·poster 모두 없음 → 최후수단으로 상세 스크레이프(Apify)로 유튜브 URL 확보.
     if (!ad.source_url) return NextResponse.json({ error: '이 광고의 상세 링크가 없어요.' }, { status: 400 })
     const runId = await startRun(SCRAPER, { startUrls: [{ url: ad.source_url }], resultsLimit: 1, skipDetails: false, shouldDownloadAssets: false, ocr: false }, token)
     if (!runId) return NextResponse.json({ error: '상세 로딩 시작 실패' }, { status: 502 })
@@ -147,7 +157,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ processing: true })
   }
 
-  // media_url 이 유튜브 URL → 다운로드 시작.
+  // 유튜브ID 확보 → 다운로드 시작.
   const runId = await startRun(DOWNLOADER, { videos: [{ url: `https://www.youtube.com/watch?v=${yid}` }] }, token)
   if (!runId) return NextResponse.json({ error: '다운로드 시작 실패' }, { status: 502 })
   await supabaseAdmin.from('ga_ads').update({ media_path: `apify:${runId}` }).ilike('media_url', `%${yid}%`)
