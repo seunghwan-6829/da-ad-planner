@@ -309,19 +309,39 @@ const ytIdOfAd = (ad: Ad): string | null => {
 };
 
 /* ── 온디맨드 영상: 임베드 차단된 구글 광고(유튜브) 영상 재생.  ※ Apify 안 씀(과금 0).
-   재생 클릭 → ① 내 PC 로컬 서버(127.0.0.1) 있으면 그 영상만 무료로 받아 ~5초 재생.
-              ② 없으면 이미 받아둔 영상인지만 확인(있으면 재생, 없으면 안내). 다운로드는 매일 자동/로컬로 처리. */
+   상세창 열리는 순간 로컬 서버(내 PC)로 스트림 URL을 "미리" 추출(프리페치) → 재생 클릭 시 즉시 재생.
+   재생하는 동안 Supabase 영구저장은 백그라운드로 진행. 로컬 서버 없으면 이미 받아둔 것만 재생(안내). */
 function OnDemandGoogleVideo({ ad, rounded, videoRef }: { ad: Ad; rounded: string; videoRef?: React.RefObject<HTMLVideoElement | null> }) {
   const [phase, setPhase] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [url, setUrl] = useState<string | null>(null);
   const [msg, setMsg] = useState<string>("");
-  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [preReady, setPreReady] = useState(false);
+  const preRef = useRef<Promise<string | null> | null>(null);
   const aliveRef = useRef(true);
 
+  // 로컬 서버(내 PC)로 스트림 URL 추출(+백그라운드로 Supabase 영구저장). 로컬 서버 없으면 null.
+  const resolveViaLocal = useCallback(async (): Promise<string | null> => {
+    const id = ytIdOfAd(ad);
+    if (!id) return null;
+    try {
+      const h = await fetch(`${LOCAL_VIDEO_SERVER}/health`, { signal: AbortSignal.timeout(1200) });
+      if (!h.ok) return null;
+    } catch { return null; }
+    try {
+      const r = await fetch(`${LOCAL_VIDEO_SERVER}/get?id=${id}`, { signal: AbortSignal.timeout(120000) });
+      const j = await r.json().catch(() => ({}));
+      return (j.url as string) || null;
+    } catch { return null; }
+  }, [ad]);
+
+  // 상세창 열리는 즉시 프리페치 시작 → 사용자가 광고 보는 2~3초 사이 준비 완료 → 재생 클릭 = 즉시.
   useEffect(() => {
     aliveRef.current = true;
-    return () => { aliveRef.current = false; if (pollRef.current) clearTimeout(pollRef.current); };
-  }, []);
+    const p = resolveViaLocal();
+    preRef.current = p;
+    p.then((u) => { if (aliveRef.current && u) setPreReady(true); }).catch(() => {});
+    return () => { aliveRef.current = false; };
+  }, [resolveViaLocal]);
 
   // 로컬 서버 없을 때: Apify 안 씀(과금 X). 이미 받아둔 영상이면 재생, 아니면 안내만.
   async function checkStoredOrNotify() {
@@ -346,27 +366,11 @@ function OnDemandGoogleVideo({ ad, rounded, videoRef }: { ad: Ad; rounded: strin
   async function start() {
     setPhase("loading");
     setMsg("영상 준비 중…");
-    // ① 내 PC의 로컬 서버가 떠 있으면 그걸로(콜드스타트 없음 ~5초). 없으면 Apify 폴백.
-    const id = ytIdOfAd(ad);
-    if (id) {
-      let localUp = false;
-      try {
-        const h = await fetch(`${LOCAL_VIDEO_SERVER}/health`, { signal: AbortSignal.timeout(1200) });
-        localUp = h.ok;
-      } catch { localUp = false; }
-      if (localUp) {
-        setMsg("내 PC에서 빠르게 받는 중… (~5초)");
-        try {
-          const r = await fetch(`${LOCAL_VIDEO_SERVER}/get?id=${id}`, { signal: AbortSignal.timeout(120000) });
-          const j = await r.json().catch(() => ({}));
-          if (!aliveRef.current) return;
-          if (j.url) { setUrl(j.url); setPhase("ready"); return; }
-          // 로컬 실패 → Apify 폴백으로 진행
-        } catch {
-          if (!aliveRef.current) return;
-        }
-      }
-    }
+    // 프리페치가 이미 끝났으면 즉시 재생. 아직이면 그 결과를 기다림(로컬 서버 있을 때만 값 나옴).
+    let pre: string | null = null;
+    try { pre = await (preRef.current ?? resolveViaLocal()); } catch {}
+    if (!aliveRef.current) return;
+    if (pre) { setUrl(pre); setPhase("ready"); return; }
     checkStoredOrNotify();
   }
 
@@ -394,10 +398,10 @@ function OnDemandGoogleVideo({ ad, rounded, videoRef }: { ad: Ad; rounded: strin
           </>
         ) : (
           <>
-            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-white/25 backdrop-blur">
+            <div className={`flex h-14 w-14 items-center justify-center rounded-full backdrop-blur ${preReady ? "bg-emerald-500/70" : "bg-white/25"}`}>
               <Play className="h-7 w-7 fill-white text-white" />
             </div>
-            <span className="text-[11px] opacity-80">재생 (자동으로 불러와요)</span>
+            <span className="text-[11px] opacity-80">{preReady ? "재생 (준비 완료 · 즉시)" : "재생 (자동으로 불러와요)"}</span>
           </>
         )}
       </div>
