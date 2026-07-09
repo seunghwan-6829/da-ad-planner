@@ -308,9 +308,9 @@ const ytIdOfAd = (ad: Ad): string | null => {
   );
 };
 
-/* ── 온디맨드 영상: 임베드 차단된 구글 광고(유튜브) 영상을 "재생 누를 때" 그 영상만 자동 다운로드해 인라인 재생.
-   재생 클릭 → /api/google-ads/fetch-video 폴링(Apify 다운로드→스토리지 저장) → 완료되면 <video> 자동재생.
-   본 영상만 받으므로 비용 최소(영상당 ~$0.06). 한 번 받으면 다음부터 즉시 재생. */
+/* ── 온디맨드 영상: 임베드 차단된 구글 광고(유튜브) 영상 재생.  ※ Apify 안 씀(과금 0).
+   재생 클릭 → ① 내 PC 로컬 서버(127.0.0.1) 있으면 그 영상만 무료로 받아 ~5초 재생.
+              ② 없으면 이미 받아둔 영상인지만 확인(있으면 재생, 없으면 안내). 다운로드는 매일 자동/로컬로 처리. */
 function OnDemandGoogleVideo({ ad, rounded, videoRef }: { ad: Ad; rounded: string; videoRef?: React.RefObject<HTMLVideoElement | null> }) {
   const [phase, setPhase] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [url, setUrl] = useState<string | null>(null);
@@ -323,28 +323,24 @@ function OnDemandGoogleVideo({ ad, rounded, videoRef }: { ad: Ad; rounded: strin
     return () => { aliveRef.current = false; if (pollRef.current) clearTimeout(pollRef.current); };
   }, []);
 
-  // Apify 폴백(로컬 서버 없을 때): Vercel 라우트 폴링 → 다운로드 완료되면 재생.
-  function apifyFallback() {
-    setMsg("영상 준비 중… (처음 한 번만 받아요, 20~60초)");
-    const tick = async () => {
-      try {
-        const res = await fetch("/api/google-ads/fetch-video", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ library_id: ad.library_id }),
-        });
-        const j = await res.json().catch(() => ({}));
-        if (!aliveRef.current) return;
-        if (j.done && j.url) { setUrl(j.url); setPhase("ready"); return; }
-        if (j.error) { setMsg(j.error); setPhase("error"); return; }
-        pollRef.current = setTimeout(tick, 4000); // processing → 계속 폴링
-      } catch {
-        if (!aliveRef.current) return;
-        setMsg("네트워크 오류. 다시 시도해 주세요.");
-        setPhase("error");
-      }
-    };
-    tick();
+  // 로컬 서버 없을 때: Apify 안 씀(과금 X). 이미 받아둔 영상이면 재생, 아니면 안내만.
+  async function checkStoredOrNotify() {
+    try {
+      const res = await fetch("/api/google-ads/fetch-video", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ library_id: ad.library_id }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!aliveRef.current) return;
+      if (j.done && j.url) { setUrl(j.url); setPhase("ready"); return; }
+      setMsg(j.error || "아직 다운로드 전이에요. 곧 자동으로 받아집니다.");
+      setPhase("error");
+    } catch {
+      if (!aliveRef.current) return;
+      setMsg("네트워크 오류. 다시 시도해 주세요.");
+      setPhase("error");
+    }
   }
 
   async function start() {
@@ -371,7 +367,7 @@ function OnDemandGoogleVideo({ ad, rounded, videoRef }: { ad: Ad; rounded: strin
         }
       }
     }
-    apifyFallback();
+    checkStoredOrNotify();
   }
 
   const poster = ad.poster_url || undefined;
