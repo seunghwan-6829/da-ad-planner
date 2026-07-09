@@ -95,6 +95,37 @@ function ytdlp(id) {
   })
 }
 
+// yt-dlp -g 로 "직접 스트림 URL"만 빠르게 추출(다운로드 X, ~2초). 없으면 null.
+//   브라우저가 로컬서버와 같은 IP라 이 URL(IP잠금)을 그대로 재생 가능 → 다운로드/업로드 대기 없음.
+function ytdlpGetUrl(id) {
+  return new Promise((resolve) => {
+    const fmt = `best[ext=mp4][height<=${YT_HEIGHT}]/best[ext=mp4]/best`
+    let cArgs = [], cookieTmp = null
+    if (COOKIES_FILE) { cookieTmp = join(TMP, `${id}.g.cookies.txt`); try { copyFileSync(COOKIES_FILE, cookieTmp); cArgs = ['--cookies', cookieTmp] } catch {} }
+    const args = ['-g', '-f', fmt, '--no-playlist', '--no-warnings', ...cArgs, `https://www.youtube.com/watch?v=${id}`]
+    const p = spawn(YT, args, { stdio: ['ignore', 'pipe', 'ignore'], env: CHILD_ENV })
+    let out = ''
+    p.stdout.on('data', (d) => { out += d.toString() })
+    p.on('close', () => {
+      try { if (cookieTmp) rmSync(cookieTmp, { force: true }) } catch {}
+      resolve(out.split('\n').map((s) => s.trim()).find((s) => s.startsWith('http')) || null)
+    })
+    p.on('error', () => resolve(null))
+  })
+}
+
+// 빠른 경로: 이미 저장돼 있으면 그 URL, 아니면 직접 스트림 URL을 즉시 반환(+백그라운드로 Supabase 영구저장).
+async function resolveFast(id) {
+  try {
+    const { data } = await sb.from('ga_ads').select('media_url').ilike('poster_url', `%${id}%`).eq('downloaded', true).limit(1)
+    if (data?.[0]?.media_url) return data[0].media_url
+  } catch {}
+  const direct = await ytdlpGetUrl(id)
+  if (!direct) throw new Error('영상 URL 추출 실패(삭제/차단이거나 쿠키 만료)')
+  getOrDownload(id).catch(() => {}) // 백그라운드 영구저장(재생엔 영향 없음, inflight 로 중복 방지)
+  return direct
+}
+
 // 이미 받은 영상이면 그 URL, 아니면 받아서 저장 후 URL.
 const inflight = new Map() // id → Promise (동시 중복요청 합치기)
 async function getOrDownload(id) {
@@ -146,12 +177,12 @@ createServer(async (req, res) => {
     if (u.pathname === '/get') {
       const id = u.searchParams.get('id') || ''
       if (!validId(id)) return cors(res, 400, { error: '잘못된 id' })
-      try { const url = await getOrDownload(id); return cors(res, 200, { url }) }
+      try { const url = await resolveFast(id); return cors(res, 200, { url }) }
       catch (e) { return cors(res, 502, { error: String(e.message || e).slice(0, 160) }) }
     }
     return cors(res, 404, { error: 'not found' })
   } catch (e) { return cors(res, 500, { error: String(e.message || e).slice(0, 160) }) }
 }).listen(PORT, '127.0.0.1', () => {
   log(`로컬 영상 서버 실행 중 → http://127.0.0.1:${PORT}  (쿠키 ${COOKIES_FILE ? '있음' : '없음'})`)
-  log('이 창을 열어두면 페이지에서 재생 버튼이 빠르게(~5초) 동작합니다. 닫으면 Apify 폴백.')
+  log('이 창을 열어두면 페이지에서 재생 버튼이 빠르게(~2초) 동작합니다. 닫으면 안내만(과금 없음).')
 })
