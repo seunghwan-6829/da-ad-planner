@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -136,16 +137,24 @@ def ensure_media(client, ad: dict) -> None:
         else:
             urls = ad.get("media_urls") or ([ad["media_url"]] if ad.get("media_url") else [])
             our_urls: list[str] = []
-            for i, u in enumerate(urls[:10]):
+            seen_hashes: set[str] = set()  # 같은 이미지(바이트 동일) 중복 제거 → 단일 이미지가 '슬라이드'로 부풀지 않게
+            for u in urls[:12]:
                 d = _download(u)
                 if not d:
                     continue
-                ou = _upload(client, f"{lib}/img-{i}.jpg", d, "image/jpeg")
+                h = hashlib.md5(d).hexdigest()
+                if h in seen_hashes:
+                    continue
+                seen_hashes.add(h)
+                idx = len(our_urls)
+                ou = _upload(client, f"{lib}/img-{idx}.jpg", d, "image/jpeg")
                 if ou:
                     our_urls.append(ou)
             if our_urls:
                 ad["media_url"] = our_urls[0]
                 ad["media_urls"] = our_urls if len(our_urls) > 1 else None
+                # 중복 제거 후 실제 고유 이미지 수로 유형 재판정(1장이면 이미지, 2장 이상이면 캐러셀)
+                ad["media_type"] = "carousel" if len(our_urls) > 1 else "image"
                 ad["media_path"] = f"{lib}/"
                 ad["downloaded"] = True
     except Exception as e:
