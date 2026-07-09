@@ -153,9 +153,12 @@ def _select_targets(client):
         t = supabase_store.fetch_target(client, target_id)
         return [t] if t else []
     targets = supabase_store.fetch_enabled_targets(client)
+    # CRAWL_SINCE_HOURS(시간, 소수 가능) 우선 → 없으면 CRAWL_SINCE_DAYS(일). 방금 추가한 브랜드만 콕 집어 크롤할 때 사용.
+    since_hours = float(os.environ.get("CRAWL_SINCE_HOURS") or "0")
     since_days = int(os.environ.get("CRAWL_SINCE_DAYS") or "0")
-    if since_days > 0:
-        cutoff = datetime.now(timezone.utc) - timedelta(days=since_days)
+    if since_hours > 0 or since_days > 0:
+        delta = timedelta(hours=since_hours) if since_hours > 0 else timedelta(days=since_days)
+        cutoff = datetime.now(timezone.utc) - delta
 
         def _is_new(t):
             v = t.get("created_at")
@@ -168,7 +171,8 @@ def _select_targets(client):
 
         before = len(targets)
         targets = [t for t in targets if _is_new(t)]
-        print(f"최근 {since_days}일 내 추가된 브랜드만: {len(targets)}/{before}개")
+        window = f"{since_hours}시간" if since_hours > 0 else f"{since_days}일"
+        print(f"최근 {window} 내 추가된 브랜드만: {len(targets)}/{before}개")
     return targets
 
 

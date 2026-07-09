@@ -49,10 +49,12 @@ def main() -> int:
         print(f"단일 브랜드 즉시 크롤: {targets[0].get('label')} ({target_id})")
     else:
         targets = supabase_store.fetch_enabled_targets(client)
-        # CRAWL_SINCE_DAYS: 최근 N일 내 추가된 브랜드만 크롤(신규 브랜드만 로컬에서 전체 크롤할 때).
+        # CRAWL_SINCE_HOURS(시간, 소수 가능) 우선 → 없으면 CRAWL_SINCE_DAYS(일). 방금 추가한 브랜드만 콕 집어 크롤.
+        since_hours = float(os.environ.get("CRAWL_SINCE_HOURS") or "0")
         since_days = int(os.environ.get("CRAWL_SINCE_DAYS") or "0")
-        if since_days > 0:
-            cutoff = datetime.now(timezone.utc) - timedelta(days=since_days)
+        if since_hours > 0 or since_days > 0:
+            delta = timedelta(hours=since_hours) if since_hours > 0 else timedelta(days=since_days)
+            cutoff = datetime.now(timezone.utc) - delta
 
             def _is_new(t: dict) -> bool:
                 v = t.get("created_at")
@@ -65,7 +67,8 @@ def main() -> int:
 
             before = len(targets)
             targets = [t for t in targets if _is_new(t)]
-            print(f"최근 {since_days}일 내 추가된 브랜드만: {len(targets)}/{before}개")
+            window = f"{since_hours}시간" if since_hours > 0 else f"{since_days}일"
+            print(f"최근 {window} 내 추가된 브랜드만: {len(targets)}/{before}개")
         # CRAWL_MAX_COUNT: 현재 광고 수가 N개 이하인 브랜드만 크롤(=아직 다 못 가져온 브랜드).
         # 클라우드 30개 제한에 걸린 브랜드만 골라 로컬(집 IP)에서 전량 보충할 때 사용. 이미 많이 쌓인 브랜드는 건너뜀.
         max_count = int(os.environ.get("CRAWL_MAX_COUNT") or "0")
