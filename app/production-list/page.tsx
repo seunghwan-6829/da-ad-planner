@@ -433,6 +433,12 @@ export default function ProductionListPage() {
   const [fClient, setFClient] = useState<string>("all"); // 클라이언트 필터('all' | 'none' | client_id)
   const [search, setSearch] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
+  const [page, setPage] = useState(1); // 16개씩 페이지 나누기
+
+  // 필터/검색이 바뀌면 1페이지로
+  useEffect(() => {
+    setPage(1);
+  }, [fSource, fStatus, fClient, search]);
 
   useEffect(() => {
     getClients().then((cs) => setClients(cs || [])).catch(() => {});
@@ -466,6 +472,11 @@ export default function ProductionListPage() {
         (!s || (it.brand || "").toLowerCase().includes(s))
     );
   }, [items, fSource, fStatus, fClient, search]);
+
+  const PAGE_SIZE = 16;
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount);
+  const pageItems = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   const open = openId ? items.find((i) => i.id === openId) || null : null;
   const counts = useMemo(() => {
@@ -527,8 +538,9 @@ export default function ProductionListPage() {
             : "필터에 맞는 소재가 없어요."}
         </div>
       ) : (
+        <>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-          {filtered.map((it) => (
+          {pageItems.map((it) => (
             <button
               key={it.id}
               onClick={() => setOpenId(it.id)}
@@ -567,6 +579,27 @@ export default function ProductionListPage() {
             </button>
           ))}
         </div>
+
+        {/* 페이지네이션: 16개 = 1페이지 */}
+        {pageCount > 1 && (
+          <div className="mt-5 flex items-center justify-center gap-1.5">
+            <button onClick={() => setPage(Math.max(1, safePage - 1))} disabled={safePage === 1} className="rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs text-gray-600 disabled:opacity-40 dark:border-gray-700 dark:text-gray-300">
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            {Array.from({ length: pageCount }, (_, i) => i + 1)
+              .filter((n) => n === 1 || n === pageCount || Math.abs(n - safePage) <= 3)
+              .map((n, idx, arr) => (
+                <span key={n} className="flex items-center gap-1.5">
+                  {idx > 0 && arr[idx - 1] !== n - 1 && <span className="text-xs text-gray-400">…</span>}
+                  <button onClick={() => setPage(n)} className={`min-w-[32px] rounded-lg px-2.5 py-1.5 text-xs font-medium ${n === safePage ? "bg-primary text-white" : "border border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"}`}>{n}</button>
+                </span>
+              ))}
+            <button onClick={() => setPage(Math.min(pageCount, safePage + 1))} disabled={safePage === pageCount} className="rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs text-gray-600 disabled:opacity-40 dark:border-gray-700 dark:text-gray-300">
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+        </>
       )}
 
       {open && (
