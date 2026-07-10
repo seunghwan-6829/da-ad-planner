@@ -1,12 +1,16 @@
--- 네이버 카페 자동화 v2: 카페(페르소나/일정) + 글(초안→발행→24h 반응 추적) + 에이전트 하트비트
--- Supabase SQL Editor 에서 1회 실행 (v1 을 이미 실행했다면 맨 아래 [v1→v2 마이그레이션]만 실행)
+-- ═══════════════════════════════════════════════════════════════
+-- 네이버 카페 자동화 v2 — Supabase SQL Editor 에 통째로 붙여넣고 실행
+-- 멱등: 처음 실행이든 재실행이든(v1 테이블이 있든 없든) 몇 번을 돌려도 안전, 데이터 안 지워짐
+-- 실행 순서: ① 테이블 생성 → ② 기본 인덱스 → ③ 컬럼 보강(alter) → ④ 새 컬럼 인덱스
+-- ═══════════════════════════════════════════════════════════════
 
+-- ① 테이블 (이미 있으면 건너뜀)
 create table if not exists nc_cafes (
   id uuid primary key default gen_random_uuid(),
   name text not null,                    -- 표시명 (예: 강남맘 카페)
   cafe_url text not null,                -- https://cafe.naver.com/<카페주소>
   board_name text not null default '',   -- 글 올릴 게시판 이름(비우면 기본 게시판)
-  tone text not null default '',         -- 페르소나(이 카페에서 활동하는 인물상/말투)
+  tone text not null default '',         -- 활동 페르소나(인물상/말투)
   topics text not null default '',       -- 주로 다룰 주제
   notes text not null default '',        -- 주의사항/금지어 등
   plan_schedule text not null default '',-- 기획 일정 메모(예: 월·수·금 오전)
@@ -26,9 +30,8 @@ create table if not exists nc_posts (
   published_at timestamptz,
   published_url text,
   error text,
-  -- 발행 24시간 후 반응 추적(카페 가입자만 열람 가능 → 내 PC 로그인 브라우저(에이전트)가 측정)
-  track_due_at timestamptz,              -- 발행 시각 + 24h (이 시각 이후 에이전트가 측정)
-  tracked_at timestamptz,                -- 측정 완료 시각(null = 측정 대기/놓침 → 에이전트 켜지면 한번에 처리)
+  track_due_at timestamptz,              -- 발행 +24h (이후 에이전트가 반응 측정)
+  tracked_at timestamptz,                -- 측정 완료 시각(null = 대기/놓침 → 에이전트가 몰아서 처리)
   views int,
   likes int,
   comments int,
@@ -36,22 +39,18 @@ create table if not exists nc_posts (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
-create index if not exists idx_nc_posts_status on nc_posts (status, created_at desc);
-create index if not exists idx_nc_posts_cafe on nc_posts (cafe_id, created_at desc);
--- (track_due_at 인덱스는 맨 아래 — v1 테이블에 컬럼을 먼저 추가한 뒤 만들어야 함)
 
--- 로컬 발행 에이전트 하트비트(내 PC에서 도는 publish-agent 가 30초마다 갱신)
 create table if not exists nc_agent (
   id int primary key default 1,
   last_seen timestamptz not null default now(),
   info text
 );
 
-alter table nc_cafes enable row level security;
-alter table nc_posts enable row level security;
-alter table nc_agent enable row level security;
+-- ② 기본 인덱스(v1 컬럼만 사용 — 어떤 상태에서도 안전)
+create index if not exists idx_nc_posts_status on nc_posts (status, created_at desc);
+create index if not exists idx_nc_posts_cafe on nc_posts (cafe_id, created_at desc);
 
--- ── v1→v2 보강(멱등): v1 때 만든 테이블에도 새 컬럼을 채움. 처음 실행이든 재실행이든 안전. ──
+-- ③ v1 → v2 컬럼 보강 (v1 때 만든 테이블에 새 컬럼 추가. 이미 있으면 건너뜀)
 alter table nc_cafes add column if not exists plan_schedule text not null default '';
 alter table nc_cafes add column if not exists publish_slot text not null default '';
 alter table nc_posts add column if not exists origin text not null default 'manual';
@@ -60,4 +59,11 @@ alter table nc_posts add column if not exists tracked_at timestamptz;
 alter table nc_posts add column if not exists views int;
 alter table nc_posts add column if not exists likes int;
 alter table nc_posts add column if not exists comments int;
+
+-- ④ 새 컬럼을 쓰는 인덱스 — 반드시 ③ 다음에!
 create index if not exists idx_nc_posts_track on nc_posts (track_due_at) where tracked_at is null;
+
+-- 보안: service_role(서버 API·로컬 에이전트)만 접근
+alter table nc_cafes enable row level security;
+alter table nc_posts enable row level security;
+alter table nc_agent enable row level security;

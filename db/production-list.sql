@@ -1,6 +1,9 @@
--- 제작 리스트: 크롤러(메타/구글/온드미디어)에서 "제작할 소재"를 담아두는 보드
--- Supabase SQL Editor 에서 1회 실행
+-- ═══════════════════════════════════════════════════════════════
+-- 제작 리스트 — Supabase SQL Editor 에 통째로 붙여넣고 실행
+-- 멱등: 처음 실행이든 재실행이든 몇 번을 돌려도 안전, 데이터 안 지워짐
+-- ═══════════════════════════════════════════════════════════════
 
+-- ① 테이블 (이미 있으면 건너뜀)
 create table if not exists production_list (
   id uuid primary key default gen_random_uuid(),
   source text not null check (source in ('meta','google','owned')),
@@ -16,11 +19,12 @@ create table if not exists production_list (
   unique (source, ref_id)               -- 같은 소재 중복 담기 방지
 );
 
--- 보강(멱등): 이미 테이블을 만든 경우에도 새 컬럼을 채움. 처음 실행이든 재실행이든 안전.
-alter table production_list add column if not exists client_id uuid references clients(id) on delete set null;
-
+-- ② 기본 인덱스
 create index if not exists idx_prodlist_created on production_list (created_at desc);
 create index if not exists idx_prodlist_status on production_list (status);
 
--- service_role(서버 API)만 접근 — 클라이언트 직접 접근 차단
+-- ③ 기존 테이블 보강(v1 때 만든 경우 client_id 추가. 이미 있으면 건너뜀)
+alter table production_list add column if not exists client_id uuid references clients(id) on delete set null;
+
+-- 보안: service_role(서버 API)만 접근
 alter table production_list enable row level security;
