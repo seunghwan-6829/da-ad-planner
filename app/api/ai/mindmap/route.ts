@@ -121,7 +121,13 @@ ${mediaNote}
     }
     // 나레이션은 AI 생성이 아니라 실제 영상 대본(transcript) 원문을 그대로 싣는다.
     parsed.narration = transcript || ''
-    parsed.media = { url: ad.media_url ?? null, type: ad.media_type ?? null, poster: ad.poster_url ?? null }
+    // 임베드형 온드미디어 인스타(영상 미저장, media_url null) → 만료 없는 임베드 URL 로 중앙 노드 재생.
+    //   (캔버스가 유튜브/인스타 URL 을 iframe 임베드로 렌더)
+    let mediaUrl: string | null = ad.media_url ?? null
+    if (!mediaUrl && body.source === 'om' && ad.media_type === 'video' && libraryId.startsWith('ig_')) {
+      mediaUrl = `https://www.instagram.com/reel/${libraryId.slice(3)}/embed/`
+    }
+    parsed.media = { url: mediaUrl, type: ad.media_type ?? null, poster: ad.poster_url ?? null }
     return NextResponse.json({ data: parsed })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)

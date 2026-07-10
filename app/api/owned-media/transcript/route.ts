@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { extractIgVideoUrl, igShortCodeOf } from '@/lib/ig-video'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -25,7 +26,7 @@ export async function POST(req: Request) {
 
   const { data: ad, error } = await supabaseAdmin
     .from('om_posts')
-    .select('post_id, media_type, media_url, transcript')
+    .select('post_id, platform, media_type, media_url, post_url, transcript')
     .eq('post_id', postId)
     .single()
   if (error || !ad) return NextResponse.json({ error: '콘텐츠를 찾을 수 없습니다.' }, { status: 404 })
@@ -33,20 +34,41 @@ export async function POST(req: Request) {
   if (ad.transcript && !force) {
     return NextResponse.json({ transcript: ad.transcript, cached: true })
   }
-  if (ad.media_type !== 'video' || !ad.media_url) {
+  if (ad.media_type !== 'video') {
     return NextResponse.json({ error: '영상 콘텐츠만 대본(나레이션)을 추출할 수 있어요.' }, { status: 400 })
   }
   // 유튜브 임베드/워치 URL 은 직접 다운로드가 안 되므로 STT 불가(인스타 등 직접 영상 파일만 지원).
-  if (/youtube\.com|youtu\.be/i.test(ad.media_url)) {
+  if (/youtube\.com|youtu\.be/i.test(ad.media_url || '')) {
     return NextResponse.json({ error: '유튜브 영상은 대본 자동 추출을 지원하지 않아요.' }, { status: 400 })
   }
 
-  let videoBuf: Buffer
+  // 영상 소스: 저장된 mp4 → 그대로. 임베드형 인스타(영상 미저장) → 원본 mp4 즉석 추출.
+  const igCode = ad.platform === 'instagram' ? igShortCodeOf(ad.post_id, ad.post_url) : null
+  let videoSrc: string | null = ad.media_url
+  if (!videoSrc) {
+    if (igCode) videoSrc = await extractIgVideoUrl(igCode)
+    if (!videoSrc) return NextResponse.json({ error: '영상 원본을 가져오지 못했어요(비공개/삭제일 수 있음).' }, { status: 502 })
+  }
+
+  let videoBuf: Buffer | null = null
   try {
-    const vr = await fetch(ad.media_url)
+    const vr = await fetch(videoSrc)
     if (!vr.ok) throw new Error(`status ${vr.status}`)
     videoBuf = Buffer.from(await vr.arrayBuffer())
   } catch {
+    videoBuf = null
+  }
+  // 저장된 인스타 CDN 링크가 만료된 경우 → 신선한 원본 URL 로 1회 재시도
+  if (!videoBuf && igCode) {
+    const fresh = await extractIgVideoUrl(igCode)
+    if (fresh && fresh !== videoSrc) {
+      try {
+        const vr = await fetch(fresh)
+        if (vr.ok) videoBuf = Buffer.from(await vr.arrayBuffer())
+      } catch {}
+    }
+  }
+  if (!videoBuf) {
     return NextResponse.json({ error: '영상을 불러오지 못했어요.' }, { status: 502 })
   }
   if (videoBuf.byteLength > 25 * 1024 * 1024) {

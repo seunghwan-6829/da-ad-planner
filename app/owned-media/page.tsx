@@ -157,6 +157,70 @@ function instagramEmbed(p: Post): string | null {
 function platformLabel(pl: string): string {
   return pl === "instagram" ? "인스타그램" : "유튜브";
 }
+
+// 릴스 shortCode 추출(ig_<code> 또는 /reel|/p/<code>)
+function igCodeOf(post: Post): string | null {
+  if (post.post_id?.startsWith("ig_")) return post.post_id.slice(3);
+  const m = (post.post_url || "").match(/instagram\.com\/(?:reel|reels|p|tv)\/([\w-]+)/);
+  return m ? m[1] : null;
+}
+
+/* 인스타 릴스 재생: 임베드 iframe 은 타임라인 바가 없음 → 로컬 영상 서버(내 PC, residential IP)로
+   원본 mp4 URL 을 뽑아 네이티브 <video controls> 로 재생(원하는 시간 탐색 O, +백그라운드 영구저장).
+   로컬 서버가 꺼져 있으면 임베드(iframe)로 폴백(재생은 되지만 타임라인 없음). */
+function IgSmartVideo({ post, rounded }: { post: Post; rounded: string }) {
+  const [src, setSrc] = useState<string | null>(post.media_url && /\/storage\/v1\/object\//.test(post.media_url) ? post.media_url : null);
+  const [phase, setPhase] = useState<"resolving" | "native" | "embed">(
+    post.media_url && /\/storage\/v1\/object\//.test(post.media_url) ? "native" : "resolving"
+  );
+
+  useEffect(() => {
+    // 이미 저장된 mp4 면 그대로 네이티브 재생(타임라인 O)
+    if (post.media_url && /\/storage\/v1\/object\//.test(post.media_url)) {
+      setSrc(post.media_url);
+      setPhase("native");
+      return;
+    }
+    let alive = true;
+    setSrc(null);
+    setPhase("resolving");
+    const code = igCodeOf(post);
+    (async () => {
+      // 로컬 서버 살아있으면 그걸로 원본 mp4 URL 추출(타임라인 O)
+      if (code) {
+        try {
+          const h = await fetch(`${LOCAL_VIDEO_SERVER}/health`, { signal: AbortSignal.timeout(1200) });
+          if (h.ok) {
+            const r = await fetch(`${LOCAL_VIDEO_SERVER}/ig?code=${encodeURIComponent(code)}`, { signal: AbortSignal.timeout(60000) });
+            const j = await r.json().catch(() => ({}));
+            if (alive && j?.url) { setSrc(j.url as string); setPhase("native"); return; }
+          }
+        } catch { /* 로컬 서버 없음 → 임베드 폴백 */ }
+      }
+      if (alive) setPhase("embed"); // 로컬 서버 없거나 실패 → 임베드(타임라인 없음)
+    })();
+    return () => { alive = false; };
+  }, [post.post_id, post.media_url]);
+
+  if (phase === "native" && src) {
+    return <video src={src} poster={post.poster_url || undefined} controls playsInline preload="metadata" onClick={(e) => e.stopPropagation()} className={`h-full w-full bg-black object-contain ${rounded}`} />;
+  }
+  if (phase === "embed") {
+    const ig = instagramEmbed(post);
+    if (ig) return <iframe src={ig} title="" scrolling="no" allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share" allowFullScreen className={`h-full w-full bg-white ${rounded}`} />;
+    return <div className={`flex h-full w-full items-center justify-center bg-black text-xs text-white/70 ${rounded}`}>영상을 불러오지 못했어요</div>;
+  }
+  // resolving
+  return (
+    <div className={`relative flex h-full w-full items-center justify-center overflow-hidden bg-black ${rounded}`}>
+      {post.poster_url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={post.poster_url} alt="" className="absolute inset-0 h-full w-full object-cover opacity-50" />
+      ) : null}
+      <Loader2 className="relative z-10 h-7 w-7 animate-spin text-white" />
+    </div>
+  );
+}
 function typeLabelOf(p: Post): string {
   if (p.media_type === "video") return "영상";
   if (p.media_type === "slide" || (p.media_urls && p.media_urls.length > 1)) return "슬라이드";
@@ -289,8 +353,8 @@ function MediaView({ post, card, rounded }: { post: Post; card?: boolean; rounde
       return <video src={post.media_url!} poster={post.poster_url || undefined} controls playsInline preload="metadata" onClick={(e) => e.stopPropagation()} className={`h-full w-full bg-black object-contain ${r}`} />;
     }
     if (post.platform === "instagram") {
-      const ig = instagramEmbed(post);
-      if (ig) return <iframe src={ig} title="" scrolling="no" allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share" allowFullScreen className={`h-full w-full bg-white ${r}`} />;
+      // 원본 mp4 추출 → 타임라인 있는 네이티브 재생(실패 시 컴포넌트 내부에서 임베드 폴백)
+      return <IgSmartVideo post={post} rounded={r} />;
     }
     if (post.platform === "youtube" && !post.media_url) {
       return <OnDemandOwnedVideo post={post} rounded={r} />;
@@ -354,6 +418,7 @@ export default function OwnedMediaPage() {
   const [activeCategory, setActiveCategory] = useState<string>("all");
   const [platformFilter, setPlatformFilter] = useState<"all" | "youtube" | "instagram">("all");
   const [mediaFilter, setMediaFilter] = useState<"all" | "image" | "slide" | "video">("all");
+  const [sortBy, setSortBy] = useState<"latest" | "views" | "likes" | "comments">("latest"); // 데이터 정렬
   const [selectedCreators, setSelectedCreators] = useState<string[]>([]);
   const [showCreatorPicker, setShowCreatorPicker] = useState(false);
   const [showClientMap, setShowClientMap] = useState(false); // 클라이언트↔크리에이터 매핑 편집
@@ -529,13 +594,19 @@ export default function OwnedMediaPage() {
       return true;
     });
     list.sort((a, b) => {
+      // 데이터 정렬(조회수/좋아요/댓글 많은 순, 값 없으면 뒤로) → 동률이면 최신순
+      if (sortBy !== "latest") {
+        const va = a[sortBy] ?? -1;
+        const vb = b[sortBy] ?? -1;
+        if (vb !== va) return vb - va;
+      }
       const ta = a.first_seen_at ? new Date(a.first_seen_at).getTime() : 0;
       const tb = b.first_seen_at ? new Date(b.first_seen_at).getTime() : 0;
       return tb - ta;
     });
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [posts, search, activeCategory, platformFilter, selectedCreators, mediaFilter, savedOnly, workedOnly, creatorMap]);
+  }, [posts, search, activeCategory, platformFilter, selectedCreators, mediaFilter, savedOnly, workedOnly, sortBy, creatorMap]);
 
   const savedCount = useMemo(() => posts.filter((a) => a.saved).length, [posts]);
   const workedCount = useMemo(() => posts.filter((a) => (a.memo && a.memo.trim()) || a.has_analysis).length, [posts]);
@@ -750,6 +821,18 @@ export default function OwnedMediaPage() {
           })()}
         </div>
         <div className="flex items-center gap-2">
+          {/* 데이터 정렬 */}
+          <select
+            value={sortBy}
+            onChange={(e) => { setSortBy(e.target.value as typeof sortBy); resetToFirst(); }}
+            title="수집된 데이터 값으로 정렬"
+            className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium ${sortBy !== "latest" ? "border-primary bg-primary/5 text-primary" : "border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-300"}`}
+          >
+            <option value="latest">최신순</option>
+            <option value="views">조회수 많은 순</option>
+            <option value="likes">좋아요 많은 순</option>
+            <option value="comments">댓글 많은 순</option>
+          </select>
           {/* 플랫폼 */}
           <div className="flex items-center overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700 text-xs">
             {([["all", "전체"], ["youtube", "유튜브"], ["instagram", "인스타"]] as const).map(([v, label], i) => (
@@ -825,11 +908,11 @@ export default function OwnedMediaPage() {
                     </button>
                   </div>
 
-                  {/* 지표 바(없으면 '—') */}
-                  <div className="flex items-center justify-between px-2.5 py-1.5 text-[10px] text-gray-500 dark:text-gray-400">
-                    <span className="flex items-center gap-0.5" title="조회수"><Eye className="h-3 w-3" /> {fmtNum(p.views)}</span>
-                    <span className="flex items-center gap-0.5" title="좋아요"><Heart className="h-3 w-3" /> {fmtNum(p.likes)}</span>
-                    <span className="flex items-center gap-0.5" title="댓글"><MessageCircle className="h-3 w-3" /> {fmtNum(p.comments)}</span>
+                  {/* 지표 바(없으면 '—') — 데이터가 한눈에 보이게 강조 */}
+                  <div className="flex items-center justify-between border-t border-gray-100 bg-gray-50 px-2.5 py-2 text-[11px] font-semibold text-gray-700 dark:border-gray-800 dark:bg-gray-800/60 dark:text-gray-200">
+                    <span className={`flex items-center gap-1 ${sortBy === "views" ? "text-primary" : ""}`} title="조회수"><Eye className="h-3.5 w-3.5 text-sky-500" /> {fmtNum(p.views)}</span>
+                    <span className={`flex items-center gap-1 ${sortBy === "likes" ? "text-primary" : ""}`} title="좋아요"><Heart className="h-3.5 w-3.5 text-rose-500" /> {fmtNum(p.likes)}</span>
+                    <span className={`flex items-center gap-1 ${sortBy === "comments" ? "text-primary" : ""}`} title="댓글"><MessageCircle className="h-3.5 w-3.5 text-amber-500" /> {fmtNum(p.comments)}</span>
                   </div>
                 </div>
               );
@@ -1256,7 +1339,8 @@ function PostDetailModal({
   const [cgPicking, setCgPicking] = useState(false);
   const [cgGenerating, setCgGenerating] = useState(false);
   const ended = post.status === "ended";
-  const isDirectVideo = post.media_type === "video" && post.platform !== "youtube" && !!post.media_url;
+  // 대본(나레이션) 추출 가능 여부: 저장된 mp4 또는 인스타(서버가 원본 mp4 즉석 추출). 유튜브는 미지원.
+  const isDirectVideo = post.media_type === "video" && post.platform !== "youtube" && (!!post.media_url || post.platform === "instagram");
 
   useEffect(() => { setMemo(post.memo ?? ""); }, [post.memo]);
   useEffect(() => { setAnalysis(post.ai_analysis ?? null); setAnalysisSaved(!!post.ai_analysis); }, [post.ai_analysis]);

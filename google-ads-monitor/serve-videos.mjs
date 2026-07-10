@@ -21,6 +21,7 @@ const DENO = join(HERE, IS_WIN ? 'deno.exe' : 'deno')
 const TMP = join(HERE, '.servetmp')
 const CHILD_ENV = { ...process.env, PATH: HERE + (IS_WIN ? ';' : ':') + (process.env.PATH || '') }
 const BUCKET = 'google-ad-media'
+const OM_BUCKET = 'owned-media' // 온드미디어(인스타 릴스) 저장 버킷
 const PORT = Number(process.env.PORT) || 47615
 const YT_HEIGHT = Number(process.env.YT_HEIGHT) || 720
 const log = (...a) => console.log('[ga-serve]', ...a)
@@ -173,6 +174,83 @@ async function getOrDownload(id) {
   try { return await job } finally { inflight.delete(id) }
 }
 
+// ─────────────────────────── 인스타 릴스(온드미디어) ───────────────────────────
+// 임베드 iframe 은 타임라인 바가 없어 탐색 불가 → residential IP(내 PC) yt-dlp 로 원본 mp4 URL 을
+// 뽑아 페이지가 네이티브 <video controls> 로 재생(타임라인 O). Vercel/데이터센터 IP 는 인스타가 차단.
+const igValidCode = (c) => /^[\w-]+$/.test(c || '')
+
+// yt-dlp -g 로 릴스 직접 스트림 URL(다운로드 X, 빠름). 없으면 null.
+function ytdlpGetUrlUrl(pageUrl, tag) {
+  return new Promise((resolve) => {
+    let cArgs = [], cookieTmp = null
+    if (COOKIES_FILE) { cookieTmp = join(TMP, `${tag}.g.cookies.txt`); try { copyFileSync(COOKIES_FILE, cookieTmp); cArgs = ['--cookies', cookieTmp] } catch {} }
+    const args = ['-g', '-f', 'best[ext=mp4]/best', '--no-playlist', '--no-warnings', ...cArgs, pageUrl]
+    const p = spawn(YT, args, { stdio: ['ignore', 'pipe', 'ignore'], env: CHILD_ENV })
+    let out = ''
+    p.stdout.on('data', (d) => { out += d.toString() })
+    p.on('close', () => {
+      try { if (cookieTmp) rmSync(cookieTmp, { force: true }) } catch {}
+      resolve(out.split('\n').map((s) => s.trim()).find((s) => s.startsWith('http')) || null)
+    })
+    p.on('error', () => resolve(null))
+  })
+}
+
+// 릴스 1개 다운로드 → 파일경로(없으면 null).
+function ytdlpDownloadUrl(pageUrl, base) {
+  return new Promise((resolve) => {
+    const out = join(TMP, `${base}.%(ext)s`)
+    let cArgs = [], cookieTmp = null
+    if (COOKIES_FILE) { cookieTmp = join(TMP, `${base}.cookies.txt`); try { copyFileSync(COOKIES_FILE, cookieTmp); cArgs = ['--cookies', cookieTmp] } catch {} }
+    const args = ['-f', 'best[ext=mp4]/best', '--no-playlist', '--no-warnings', '--no-part', ...cArgs, '-o', out, pageUrl]
+    const p = spawn(YT, args, { stdio: ['ignore', 'ignore', 'ignore'], env: CHILD_ENV })
+    p.on('close', () => {
+      try { if (cookieTmp) rmSync(cookieTmp, { force: true }) } catch {}
+      try { const f = readdirSync(TMP).find((n) => n.startsWith(base + '.') && !n.endsWith('.cookies.txt')); if (f) { const full = join(TMP, f); if (statSync(full).size > 0) return resolve(full) } } catch {}
+      resolve(null)
+    })
+    p.on('error', () => resolve(null))
+  })
+}
+
+const igInflight = new Map()
+async function getOrDownloadIg(code) {
+  const path = `reels/${code}.mp4`
+  try {
+    const { data } = await sb.from('om_posts').select('media_url').eq('post_id', `ig_${code}`).limit(1)
+    const u = data?.[0]?.media_url
+    if (u && /\/storage\/v1\/object\//.test(u)) return u
+  } catch {}
+  if (igInflight.has(code)) return igInflight.get(code)
+  const job = (async () => {
+    const file = await ytdlpDownloadUrl(`https://www.instagram.com/reel/${code}/`, `ig_${code}`)
+    if (!file) throw new Error('릴스 다운로드 실패(비공개/삭제이거나 쿠키 만료)')
+    const buf = readFileSync(file)
+    try { rmSync(file, { force: true }) } catch {}
+    if (!buf.length || buf.length > 300 * 1024 * 1024) throw new Error('파일 크기 이상')
+    const up = await sb.storage.from(OM_BUCKET).upload(path, buf, { contentType: 'video/mp4', upsert: true })
+    if (up.error) throw new Error(up.error.message)
+    const publicUrl = sb.storage.from(OM_BUCKET).getPublicUrl(path).data.publicUrl
+    try { await sb.from('om_posts').update({ media_url: publicUrl }).eq('post_id', `ig_${code}`) } catch {}
+    return publicUrl
+  })()
+  igInflight.set(code, job)
+  try { return await job } finally { igInflight.delete(code) }
+}
+
+// 빠른 경로: 저장돼 있으면 그 URL, 아니면 직접 스트림 URL 즉시 반환(+백그라운드 영구저장).
+async function resolveFastIg(code) {
+  try {
+    const { data } = await sb.from('om_posts').select('media_url').eq('post_id', `ig_${code}`).limit(1)
+    const u = data?.[0]?.media_url
+    if (u && /\/storage\/v1\/object\//.test(u)) return u
+  } catch {}
+  const direct = await ytdlpGetUrlUrl(`https://www.instagram.com/reel/${code}/`, `ig_${code}`)
+  if (!direct) throw new Error('릴스 URL 추출 실패(비공개/삭제이거나 쿠키 만료)')
+  getOrDownloadIg(code).catch(() => {}) // 백그라운드 영구저장(재생엔 영향 없음)
+  return direct
+}
+
 function cors(res, status, body) {
   res.writeHead(status, {
     'Content-Type': 'application/json',
@@ -199,6 +277,12 @@ createServer(async (req, res) => {
       if (!validId(id)) return cors(res, 400, { error: '잘못된 id' })
       try { const url = await resolveFast(id); return cors(res, 200, { url }) }
       catch (e) { return cors(res, 502, { error: String(e.message || e).slice(0, 160), dead: !!e.dead }) }
+    }
+    if (u.pathname === '/ig') {
+      const code = u.searchParams.get('code') || ''
+      if (!igValidCode(code)) return cors(res, 400, { error: '잘못된 code' })
+      try { const url = await resolveFastIg(code); return cors(res, 200, { url }) }
+      catch (e) { return cors(res, 502, { error: String(e.message || e).slice(0, 160) }) }
     }
     return cors(res, 404, { error: 'not found' })
   } catch (e) { return cors(res, 500, { error: String(e.message || e).slice(0, 160) }) }

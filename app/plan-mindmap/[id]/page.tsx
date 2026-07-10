@@ -14,6 +14,20 @@ import { aiFetch } from '@/lib/ai-fetch'
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 const uid = () => Math.random().toString(36).slice(2, 9)
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x))
+
+// 유튜브/인스타 URL → 임베드 URL. 임베드형 소재(영상 파일 미저장)의 중앙 노드 재생용. 그 외(mp4 등)면 null.
+function embedSrcOf(u?: string | null): string | null {
+  if (!u) return null
+  const yt =
+    u.match(/[?&]v=([\w-]{6,})/)?.[1] ||
+    u.match(/youtu\.be\/([\w-]{6,})/)?.[1] ||
+    u.match(/\/shorts\/([\w-]{6,})/)?.[1] ||
+    u.match(/youtube\.com\/embed\/([\w-]{6,})/)?.[1]
+  if (yt) return `https://www.youtube.com/embed/${yt}?playsinline=1`
+  const ig = u.match(/instagram\.com\/(?:reel|reels|p|tv)\/([\w-]+)/)?.[1]
+  if (ig) return `https://www.instagram.com/reel/${ig}/embed/`
+  return null
+}
 const SOURCE_W = 360
 
 // 기획안 섹션(각각 병렬 스트리밍 → 동시 타이핑). 대본은 우측 한 면.
@@ -510,7 +524,11 @@ export default function MindmapCanvasPage() {
           <div className="flex-1 overflow-y-auto p-5">
             <div className="mx-auto w-full max-w-[300px] overflow-hidden rounded-xl bg-black" style={{ aspectRatio: String(centerAspect) }}>
               {center?.media_type === 'video' && center?.media_url ? (
-                <video src={center.media_url} poster={center.poster || undefined} controls autoPlay playsInline className="h-full w-full bg-black object-contain" />
+                embedSrcOf(center.media_url) ? (
+                  <iframe src={embedSrcOf(center.media_url)!} title="" scrolling="no" allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share" allowFullScreen className="h-full w-full bg-black" />
+                ) : (
+                  <video src={center.media_url} poster={center.poster || undefined} controls autoPlay playsInline className="h-full w-full bg-black object-contain" />
+                )
               ) : center?.poster ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={center.poster} alt="" className="h-full w-full object-contain" />
@@ -714,7 +732,11 @@ function NodeView({
         <button onMouseDown={(e) => e.stopPropagation()} onClick={onOpenSource} title="소재를 옆 창으로 열기" className="absolute right-2 top-2 z-10 flex items-center gap-1 rounded-md bg-black/60 px-2 py-1 text-[11px] font-bold text-white hover:bg-black/80"><PanelLeftOpen className="h-3.5 w-3.5" /> 별도 탭</button>
         <div className="w-full overflow-hidden rounded-lg bg-black" style={{ aspectRatio: String(centerAspect) }}>
           {n.media_type === 'video' && n.media_url ? (
-            <video ref={centerVideoRef} src={n.media_url} poster={n.poster || undefined} controls playsInline preload="metadata" className="h-full w-full bg-black object-contain" onMouseDown={(e) => e.stopPropagation()} onLoadedMetadata={(e) => { const v = e.currentTarget; if (v.videoWidth && v.videoHeight) onCenterAspect(v.videoWidth / v.videoHeight) }} />
+            embedSrcOf(n.media_url) ? (
+              <iframe src={embedSrcOf(n.media_url)!} title="" scrolling="no" allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share" allowFullScreen className="h-full w-full bg-black" onMouseDown={(e) => e.stopPropagation()} onLoad={() => onCenterAspect(9 / 16)} />
+            ) : (
+              <video ref={centerVideoRef} src={n.media_url} poster={n.poster || undefined} controls playsInline preload="metadata" className="h-full w-full bg-black object-contain" onMouseDown={(e) => e.stopPropagation()} onLoadedMetadata={(e) => { const v = e.currentTarget; if (v.videoWidth && v.videoHeight) onCenterAspect(v.videoWidth / v.videoHeight) }} />
+            )
           ) : n.poster ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={n.poster} alt="" className="h-full w-full object-contain" onLoad={(e) => { const i = e.currentTarget; if (i.naturalWidth && i.naturalHeight) onCenterAspect(i.naturalWidth / i.naturalHeight) }} />
