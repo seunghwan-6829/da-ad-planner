@@ -54,3 +54,8 @@ next-env.d.ts
 
 # 사용자 별도 로컬 앱(이식 원본) — 절대 커밋 금지(자격증명 포함 가능)
 네이버 카페 자동화/
+
+# 네이버 카페 발행 에이전트 로컬 산출물
+naver-cafe-agent/logs/
+naver-cafe-agent/node_modules/
+naver-cafe-agent/.env

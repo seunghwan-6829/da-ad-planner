@@ -1,0 +1,10 @@
+{
+  "name": "naver-cafe-agent",
+  "private": true,
+  "type": "module",
+  "description": "네이버 카페 발행 에이전트 — 내 PC의 로그인된 웨일 프로필로 발행 대기 글을 자동 등록",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "playwright-core": "^1.47.0"
+  }
+}

@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
+import { AddToProductionButton } from "@/components/add-to-production";
 import { aiFetch } from "@/lib/ai-fetch";
 import { getClients, type Client } from "@/lib/api/clients";
 import { createMindmap } from "@/lib/api/mindmaps";
@@ -2870,6 +2871,7 @@ function AdDetailModal({
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <AddToProductionButton source="google" refId={ad.library_id} brand={brandName} thumb={ad.poster_url} mediaType={ad.media_type} />
             <button
               onClick={() => onToggleSaved(ad)}
               title={ad.saved ? "스와이프 파일에서 제거" : "스와이프 파일에 저장"}

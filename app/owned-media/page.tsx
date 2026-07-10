@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
+import { AddToProductionButton } from "@/components/add-to-production";
 import { aiFetch } from "@/lib/ai-fetch";
 import { getClients, type Client } from "@/lib/api/clients";
 import { createMindmap } from "@/lib/api/mindmaps";
@@ -1360,6 +1361,7 @@ function PostDetailModal({
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <AddToProductionButton source="owned" refId={post.post_id} brand={creatorName} thumb={post.poster_url} mediaType={post.media_type} />
             <button onClick={() => onToggleSaved(post)} title={post.saved ? "스와이프 파일에서 제거" : "스와이프 파일에 저장"} className={`flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium ${post.saved ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300" : "border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"}`}>
               <Star className={`h-3.5 w-3.5 ${post.saved ? "fill-amber-400 text-amber-400" : ""}`} />{post.saved ? "저장됨" : "스와이프"}
             </button>

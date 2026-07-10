@@ -11,11 +11,13 @@ import {
   ChevronRight,
   Chrome,
   Clapperboard,
+  Coffee,
   FileCode,
   Film,
   Images,
   LayoutDashboard,
   Lightbulb,
+  ListChecks,
   LogOut,
   Megaphone,
   Network,
@@ -37,9 +39,11 @@ const navigationTop = [
   { name: '온드미디어 크롤러', href: '/owned-media', icon: Radio },
   { name: '메타 광고 크롤러', href: '/meta-ad-crawler', icon: Megaphone },
   { name: '구글 광고 크롤러', href: '/google-ads', icon: Chrome },
+  { name: '네이버 카페 자동화', href: '/naver-cafe', icon: Coffee },
 ]
 
 const navigationBottom = [
+  { name: '제작 리스트', href: '/production-list', icon: ListChecks },
   { name: '기획안 제작', href: '/project-plans', icon: Clapperboard },
   { name: '기획 마인드맵', href: '/plan-mindmap', icon: Network },
   { name: '기획안 아이디어', href: '/plan-ideas', icon: Lightbulb },
@@ -73,8 +77,8 @@ export function Sidebar() {
     setActivePath(window.location.pathname)
   }, [pathname])
 
-  // '메타 광고 크롤러' · '온드미디어 크롤러'는 권한(can_meta_ad) 또는 관리자만 노출
-  const restrictedHrefs = ['/meta-ad-crawler', '/owned-media', '/google-ads']
+  // '메타 광고 크롤러' · '온드미디어 크롤러' 등 수집/자동화 도구는 권한(can_meta_ad) 또는 관리자만 노출
+  const restrictedHrefs = ['/meta-ad-crawler', '/owned-media', '/google-ads', '/naver-cafe']
   const topItems = navigationTop.filter((item) => !restrictedHrefs.includes(item.href) || canMetaAd)
 
   // #6 메타 광고 5일 알림: 신규/종료 변화가 있으면 하단 배지. 닫으면 그 시그니처는 다시 안 뜸(새 변화 시 재등장).
