@@ -317,13 +317,15 @@ async function main() {
 
   const youtube = list.filter((c) => c.platform === 'youtube')
   const instagram = list.filter((c) => c.platform === 'instagram')
-  log(`유튜브 ${youtube.length}명(쇼츠) / 인스타 ${instagram.length}명(릴스) 크롤 시작`)
+  log(`━━━ 온드미디어 크롤 시작: 크리에이터 ${list.length}명 (유튜브 ${youtube.length} · 인스타 ${instagram.length}) ━━━`)
 
   // ── 유튜브 쇼츠: yt-dlp ──
-  for (const c of youtube) {
+  for (let i = 0; i < youtube.length; i++) {
+    const c = youtube[i]
+    log(`[유튜브 ${i + 1}/${youtube.length}] ${c.label} 크롤 시작…`)
     try {
       const { results, profile } = await enumerateYouTubeShorts(c)
-      log(`유튜브 ${c.label} → 쇼츠 ${results.length}개`)
+      log(`[유튜브 ${i + 1}/${youtube.length}] ${c.label} → 쇼츠 ${results.length}개`)
       await saveYouTube(c, results, profile)
     } catch (e) {
       log('유튜브 처리 실패', c.id, String((e && e.message) || e).slice(0, 120))
@@ -337,9 +339,11 @@ async function main() {
     if (!APIFY_TOKEN) {
       log('⚠️ APIFY_TOKEN 미설정 → 인스타 수집 건너뜀. (GitHub 시크릿 APIFY_TOKEN 등록 필요)')
     } else {
-      for (const c of instagram) {
+      for (let i = 0; i < instagram.length; i++) {
+        const c = instagram[i]
         const h = normHandle(c)
         if (!h) { log('인스타 핸들 없음, 스킵', c.label); continue }
+        log(`[인스타 ${i + 1}/${instagram.length}] @${h} 크롤 시작… (Apify)`)
         try {
           const items = await runApifyInstagram([`https://www.instagram.com/${h}/`], IG_RESULTS_LIMIT)
           await saveInstagram(c, items) // 이 계정 결과만 들어오므로 그대로 저장(saveInstagram 이 릴스만 필터)
