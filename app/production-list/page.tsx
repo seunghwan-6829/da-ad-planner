@@ -42,6 +42,8 @@ type PLItem = {
 
 // AI 라우트(loadCreative)의 source 파라미터 매핑: 메타=기본(am), 구글=ga, 온드=om
 const AI_SOURCE: Record<Source, string | undefined> = { meta: undefined, google: "ga", owned: "om" };
+// 대본(나레이션) 추출 엔드포인트 — 크롤러 페이지와 동일하게 마인드맵/가이드 생성 전에 먼저 호출
+const TRANSCRIPT_EP: Record<Source, string> = { meta: "/api/meta-ad/transcript", google: "/api/google-ads/transcript", owned: "/api/owned-media/transcript" };
 
 type Detail = {
   source: Source;
@@ -177,11 +179,21 @@ function DetailModal({
   const [genMM, setGenMM] = useState(false); // 기획 마인드맵 생성 중
   const [genCG, setGenCG] = useState(false); // 컨텐츠 가이드 생성 중
 
+  // 영상 소재면 대본(나레이션)부터 확보 — 없이 만들면 마인드맵에 '나레이션 없음'으로 나온다.
+  //   (이미 추출돼 있으면 캐시라 즉시 반환. 유튜브 등 추출 불가 소재는 조용히 건너뜀)
+  async function ensureTranscript() {
+    if (detail?.media_type !== "video") return;
+    try {
+      await aiFetch(TRANSCRIPT_EP[item.source], { method: "POST", body: JSON.stringify({ library_id: item.ref_id, post_id: item.ref_id }) });
+    } catch { /* 대본 없이도 생성은 진행 */ }
+  }
+
   // 크롤러 상세와 동일: 이 소재로 기획 마인드맵 생성(선택된 클라이언트 폴더로) 후 캔버스 이동.
   async function generateMindmap() {
     if (!item.client_id) { alert("먼저 아래에서 클라이언트를 지정해 주세요."); return; }
     setGenMM(true);
     try {
+      await ensureTranscript();
       const res = await aiFetch("/api/ai/mindmap", { method: "POST", body: JSON.stringify({ library_id: item.ref_id, source: AI_SOURCE[item.source] }) });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) { alert(j.error || "마인드맵 생성에 실패했어요."); return; }
@@ -195,6 +207,7 @@ function DetailModal({
     if (!item.client_id) { alert("먼저 아래에서 클라이언트를 지정해 주세요."); return; }
     setGenCG(true);
     try {
+      await ensureTranscript();
       const res = await aiFetch("/api/ai/content-guide", { method: "POST", body: JSON.stringify({ library_id: item.ref_id, source: AI_SOURCE[item.source] }) });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) { alert(j.error || "컨텐츠 가이드 생성에 실패했어요."); return; }
