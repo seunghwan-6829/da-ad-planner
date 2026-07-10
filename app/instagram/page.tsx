@@ -43,7 +43,7 @@ export default function InstagramPage() {
       const e = q.get('error') || ''
       const msg =
         e === 'no_ig_account' ? '연결된 인스타 프로페셔널 계정을 찾지 못했어요. (페이지 연결/테스터 승인 확인)'
-        : e === 'config' ? '메타 앱 설정(env)이 아직 없어요.'
+        : e === 'config' ? '메타 개발자 앱 연결이 아직 안 됐어요 — Vercel 환경변수에 META_APP_ID · META_APP_SECRET · OAUTH_REDIRECT_URI 3개를 등록하고 재배포하면 [계정 연동]이 활성화됩니다. (developers.facebook.com에서 앱 생성 → Facebook 로그인 제품 추가)'
         : e === 'state_mismatch' ? '보안 검증(state)에 실패했어요. 다시 시도해 주세요.'
         : `연동 실패: ${e}`
       setBanner({ type: 'err', msg })
