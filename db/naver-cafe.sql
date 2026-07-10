@@ -38,7 +38,7 @@ create table if not exists nc_posts (
 );
 create index if not exists idx_nc_posts_status on nc_posts (status, created_at desc);
 create index if not exists idx_nc_posts_cafe on nc_posts (cafe_id, created_at desc);
-create index if not exists idx_nc_posts_track on nc_posts (track_due_at) where tracked_at is null;
+-- (track_due_at 인덱스는 맨 아래 — v1 테이블에 컬럼을 먼저 추가한 뒤 만들어야 함)
 
 -- 로컬 발행 에이전트 하트비트(내 PC에서 도는 publish-agent 가 30초마다 갱신)
 create table if not exists nc_agent (
