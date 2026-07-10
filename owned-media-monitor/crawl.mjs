@@ -330,28 +330,22 @@ async function main() {
     }
   }
 
-  // ── 인스타 릴스: Apify(한 번에 전체) ──
+  // ── 인스타 릴스: Apify(크리에이터별 개별 실행) ──
+  //   한 번에 몰면 실행이 오래 걸려 타임아웃 → 계정마다 따로 돌린다(각 실행이 작아 빨리 끝나고 안 끊김,
+  //   하나 실패해도 나머지는 저장, 저장도 즉시). 메타·구글 크롤러가 브랜드/광고주별로 도는 것과 동일.
   if (instagram.length) {
     if (!APIFY_TOKEN) {
       log('⚠️ APIFY_TOKEN 미설정 → 인스타 수집 건너뜀. (GitHub 시크릿 APIFY_TOKEN 등록 필요)')
     } else {
-      const urls = instagram.map((c) => `https://www.instagram.com/${normHandle(c)}/`).filter((u) => !u.endsWith('//'))
-      try {
-        const items = await runApifyInstagram(urls, IG_RESULTS_LIMIT)
-        log(`Apify 인스타 결과 ${items.length}건`)
-        const byHandle = new Map(instagram.map((c) => [normHandle(c), c]))
-        const grouped = new Map()
-        for (const it of items) {
-          const h = (it.ownerUsername || '').toLowerCase()
-          if (!byHandle.has(h)) continue
-          if (!grouped.has(h)) grouped.set(h, [])
-          grouped.get(h).push(it)
+      for (const c of instagram) {
+        const h = normHandle(c)
+        if (!h) { log('인스타 핸들 없음, 스킵', c.label); continue }
+        try {
+          const items = await runApifyInstagram([`https://www.instagram.com/${h}/`], IG_RESULTS_LIMIT)
+          await saveInstagram(c, items) // 이 계정 결과만 들어오므로 그대로 저장(saveInstagram 이 릴스만 필터)
+        } catch (e) {
+          log('인스타 처리 실패', c.label, String((e && e.message) || e).slice(0, 120))
         }
-        for (const c of instagram) {
-          await saveInstagram(c, grouped.get(normHandle(c)) || [])
-        }
-      } catch (e) {
-        log('Apify 인스타 실패', String((e && e.message) || e).slice(0, 120))
       }
     }
   }
