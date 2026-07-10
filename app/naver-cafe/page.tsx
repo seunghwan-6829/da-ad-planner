@@ -235,12 +235,15 @@ function PostRow({ p, showCafe, onOpen, onQuick, onDelete }: { p: Post; showCafe
   );
 }
 
+// 모듈 메모리 캐시: 다른 탭 갔다 와도(SPA 이동) 마지막 데이터를 즉시 그려 깜빡임 제거(F5 때만 초기화).
+let ncMemCache: { cafes: Cafe[]; posts: Post[]; agentOnline: boolean | null } | null = null;
+
 /* ── 메인 ── */
 export default function NaverCafePage() {
   const { isAdmin, loading: authLoading } = useAuth();
-  const [cafes, setCafes] = useState<Cafe[]>([]);
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [agentOnline, setAgentOnline] = useState<boolean | null>(null);
+  const [cafes, setCafes] = useState<Cafe[]>(() => ncMemCache?.cafes ?? []);
+  const [posts, setPosts] = useState<Post[]>(() => ncMemCache?.posts ?? []);
+  const [agentOnline, setAgentOnline] = useState<boolean | null>(() => ncMemCache?.agentOnline ?? null);
   const [loadErr, setLoadErr] = useState("");
   const [sel, setSel] = useState<string | "dash">("dash"); // 좌측 패널 선택(대시보드 또는 카페 id)
   const [postModal, setPostModal] = useState<Post | null>(null);
@@ -260,6 +263,8 @@ export default function NaverCafePage() {
     fetch("/api/naver-cafe/agent").then((r) => (r.ok ? r.json() : null)).then((j) => j && setAgentOnline(!!j.online)).catch(() => {});
   }, []);
   useEffect(() => { loadAll(); const t = setInterval(loadAll, 15_000); return () => clearInterval(t); }, [loadAll]);
+  // 최신 상태를 메모리 캐시에 보관 → 재진입 시 즉시 복원(로딩 깜빡임 없음)
+  useEffect(() => { ncMemCache = { cafes, posts, agentOnline }; }, [cafes, posts, agentOnline]);
 
   const cafe = sel !== "dash" ? cafes.find((c) => c.id === sel) || null : null;
   useEffect(() => {
@@ -330,6 +335,28 @@ export default function NaverCafePage() {
     return s;
   }, [posts]);
   const trackQueue = useMemo(() => posts.filter((p) => p.published_url && !p.tracked_at && p.track_due_at && new Date(p.track_due_at) <= new Date()), [posts]);
+  // 메인 대시보드용 집계: 이번 주 발행/오늘 AI 초안/카페별 성과/베스트 글
+  const dash = useMemo(() => {
+    const weekAgo = Date.now() - 7 * 86400_000;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    let weekPub = 0, todayDrafts = 0;
+    const per = new Map(cafes.map((c) => [c.id, { name: c.name, published: 0, tracked: 0, views: 0, likes: 0, comments: 0, last: null as string | null }]));
+    const measured: Post[] = [];
+    for (const p of posts) {
+      if (p.origin === "auto" && new Date(p.created_at) >= today) todayDrafts++;
+      if (p.status !== "published") continue;
+      if (p.published_at && new Date(p.published_at).getTime() >= weekAgo) weekPub++;
+      const s = per.get(p.cafe_id);
+      if (s) {
+        s.published++;
+        if (p.published_at && (!s.last || p.published_at > s.last)) s.last = p.published_at;
+        if (p.tracked_at) { s.tracked++; s.views += p.views || 0; s.likes += p.likes || 0; s.comments += p.comments || 0; }
+      }
+      if (p.tracked_at) measured.push(p);
+    }
+    measured.sort((a, b) => (b.views || 0) - (a.views || 0));
+    return { weekPub, todayDrafts, perCafe: [...per.values()], best: measured.slice(0, 3) };
+  }, [posts, cafes]);
   const cafePosts = useMemo(() => (cafe ? posts.filter((p) => p.cafe_id === cafe.id) : []), [posts, cafe]);
   // 선택한 카페의 대시보드 지표
   const cafeStats = useMemo(() => {
@@ -405,11 +432,13 @@ export default function NaverCafePage() {
             </div>
 
             {/* 현황 통계 */}
-            <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+            <div className="mb-5 grid grid-cols-3 gap-3 md:grid-cols-6">
               {[
                 { label: "가입 카페", value: cafes.length },
                 { label: "발행 대기·중", value: stats.queued },
                 { label: "발행 완료", value: stats.published },
+                { label: "이번 주 발행", value: dash.weekPub },
+                { label: "오늘 AI 초안", value: dash.todayDrafts },
                 { label: "반응 측정 대기", value: stats.trackWait, warn: stats.trackWait > 0 },
               ].map((s) => (
                 <div key={s.label} className={`rounded-2xl border p-4 ${s.warn ? "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30" : "border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900"}`}>
@@ -443,17 +472,68 @@ export default function NaverCafePage() {
               )}
             </div>
 
-            {/* 대시보드 기획 섹션(카페 선택형) */}
-            <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-sm font-bold dark:text-gray-100">기획하기</h2>
-                  <p className="mt-0.5 text-xs text-gray-400">직접 제목/원고를 쓰고 어느 카페에 저장할지 선택</p>
+            {/* 카페별 성과 | 베스트 글 */}
+            <div className="mb-5 grid items-start gap-4 xl:grid-cols-2">
+              <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+                <h2 className="mb-2 text-sm font-bold dark:text-gray-100">카페별 성과 <span className="ml-1 text-[11px] font-normal text-gray-400">— 측정된 글 기준 평균 반응</span></h2>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b text-left text-[11px] text-gray-400 dark:border-gray-800">
+                        <th className="py-1.5 pr-2 font-medium">카페</th>
+                        <th className="py-1.5 pr-2 font-medium">발행</th>
+                        <th className="py-1.5 pr-2 font-medium">평균 조회</th>
+                        <th className="py-1.5 pr-2 font-medium">평균 좋아요·댓글</th>
+                        <th className="py-1.5 font-medium">최근 발행</th>
+                      </tr>
+                    </thead>
+                    <tbody className="dark:text-gray-300">
+                      {dash.perCafe.map((s) => (
+                        <tr key={s.name} className="border-b last:border-0 dark:border-gray-800">
+                          <td className="max-w-[120px] truncate py-2 pr-2 font-semibold dark:text-gray-200">{s.name}</td>
+                          <td className="py-2 pr-2">{s.published}</td>
+                          <td className="py-2 pr-2">{s.tracked ? Math.round(s.views / s.tracked).toLocaleString() : "—"}</td>
+                          <td className="py-2 pr-2">{s.tracked ? `${Math.round(s.likes / s.tracked)}·${Math.round(s.comments / s.tracked)}` : "—"}</td>
+                          <td className="py-2 text-gray-400">{s.last ? new Date(s.last).toLocaleDateString("ko-KR") : "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-                <button onClick={() => setCompose({ fixed: null })} disabled={!cafes.length} className="flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-sm font-medium text-white disabled:opacity-50">
-                  <PenLine className="h-4 w-4" /> 새 기획
-                </button>
               </div>
+              <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+                <h2 className="mb-2 text-sm font-bold dark:text-gray-100">베스트 글 TOP 3 <span className="ml-1 text-[11px] font-normal text-gray-400">— 24h 조회수 기준</span></h2>
+                {dash.best.length === 0 ? (
+                  <p className="py-4 text-center text-xs text-gray-400">아직 반응이 측정된 글이 없어요. 발행 24시간 후 자동 측정돼요.</p>
+                ) : (
+                  <div className="divide-y dark:divide-gray-800">
+                    {dash.best.map((p, i) => (
+                      <div key={p.id} className="flex items-center gap-3 py-2.5">
+                        <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white ${i === 0 ? "bg-amber-400" : i === 1 ? "bg-gray-400" : "bg-orange-400"}`}>{i + 1}</span>
+                        <button onClick={() => setPostModal(p)} className="min-w-0 flex-1 text-left">
+                          <p className="truncate text-sm font-medium hover:text-primary dark:text-gray-200">{p.title}</p>
+                          <p className="text-[11px] text-gray-400">{p.nc_cafes?.name}</p>
+                        </button>
+                        <div className="flex shrink-0 items-center gap-2.5 text-xs font-semibold text-gray-700 dark:text-gray-200">
+                          <span className="flex items-center gap-1"><Eye className="h-3.5 w-3.5 text-sky-500" /> {fmtN(p.views)}</span>
+                          <span className="flex items-center gap-1"><Heart className="h-3.5 w-3.5 text-rose-500" /> {fmtN(p.likes)}</span>
+                          <span className="flex items-center gap-1"><MessageCircle className="h-3.5 w-3.5 text-amber-500" /> {fmtN(p.comments)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* 기획하기 | 전체 원고 — 1열 2섹션 */}
+            <div className="grid items-start gap-4 xl:grid-cols-[300px_minmax(0,1fr)]">
+            <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+              <h2 className="text-sm font-bold dark:text-gray-100">기획하기</h2>
+              <p className="mt-0.5 text-xs text-gray-400">직접 제목/원고를 쓰고 어느 카페에 저장할지 선택</p>
+              <button onClick={() => setCompose({ fixed: null })} disabled={!cafes.length} className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-sm font-medium text-white disabled:opacity-50">
+                <PenLine className="h-4 w-4" /> 새 기획
+              </button>
             </div>
 
             {/* 전체 원고 최근순 */}
@@ -468,6 +548,7 @@ export default function NaverCafePage() {
                   ))}
                 </div>
               )}
+            </div>
             </div>
           </>
         ) : cafe ? (
