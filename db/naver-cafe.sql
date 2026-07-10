@@ -59,6 +59,8 @@ alter table nc_posts add column if not exists tracked_at timestamptz;
 alter table nc_posts add column if not exists views int;
 alter table nc_posts add column if not exists likes int;
 alter table nc_posts add column if not exists comments int;
+alter table nc_cafes add column if not exists selling_point text not null default ''; -- 채널 소구점
+alter table nc_cafes add column if not exists daily_drafts int not null default 3;    -- 하루 AI 초안 개수(카페별)
 
 -- ④ 새 컬럼을 쓰는 인덱스 — 반드시 ③ 다음에!
 create index if not exists idx_nc_posts_track on nc_posts (track_due_at) where tracked_at is null;

@@ -32,15 +32,26 @@ import { useAuth } from "@/lib/auth-context";
 type Cafe = {
   id: string;
   name: string;
-  cafe_url: string;
+  cafe_url: string; // 게시판 URL(…/cafes/<id>/menus/<menuId> 형태 권장 — 에이전트가 게시판까지 바로 진입)
   board_name: string;
-  tone: string; // 페르소나
-  topics: string;
+  tone: string; // 활동 컨셉(페르소나)
+  topics: string; // 주로 업로드하는 컨텐츠
   notes: string;
   plan_schedule: string;
-  publish_slot: string;
+  publish_slot: string; // 업로드 주기
+  selling_point?: string | null; // 채널 소구점
+  daily_drafts?: number | null; // 하루 AI 초안 개수
   enabled: boolean;
 };
+
+// 카페 추가/설정 공용 필드 정의(라벨·placeholder 한 곳 관리)
+const CAFE_FIELDS: { key: "cafe_url" | "tone" | "selling_point" | "topics" | "publish_slot"; label: string; ph: string; rows?: number }[] = [
+  { key: "cafe_url", label: "게시판 URL", ph: "https://cafe.naver.com/f-e/cafes/.../menus/... (글 올릴 게시판 주소)" },
+  { key: "tone", label: "활동 컨셉", ph: "예: 정보 많은 의문의 보따리 상인, 싸가지 없지만 일은 잘함(어투·잘난척 금물)", rows: 2 },
+  { key: "selling_point", label: "채널 소구점", ph: "예: 마케팅 꿀팁·파일 방출하며 팬층 쌓기", rows: 2 },
+  { key: "topics", label: "주로 업로드하는 컨텐츠", ph: "예: 마케팅과 상세페이지 관련", rows: 2 },
+  { key: "publish_slot", label: "업로드 주기", ph: "예: 2일에 1번씩" },
+];
 
 type Post = {
   id: string;
@@ -234,8 +245,8 @@ export default function NaverCafePage() {
   const [sel, setSel] = useState<string | "dash">("dash"); // 좌측 패널 선택(대시보드 또는 카페 id)
   const [postModal, setPostModal] = useState<Post | null>(null);
   const [compose, setCompose] = useState<null | { fixed: string | null }>(null);
-  const [addingCafe, setAddingCafe] = useState(false);
-  const [newCafe, setNewCafe] = useState({ name: "", cafe_url: "", board_name: "" });
+  const [addingCafe, setAddingCafe] = useState(false); // 카페 추가 플로팅 창
+  const [newCafe, setNewCafe] = useState<Record<string, string>>({ name: "", cafe_url: "", tone: "", selling_point: "", topics: "", publish_slot: "", daily_drafts: "3" });
   const [cafeForm, setCafeForm] = useState<Partial<Cafe>>({});
   const [savingCafe, setSavingCafe] = useState(false);
   const [genBusy, setGenBusy] = useState(false);
@@ -252,15 +263,15 @@ export default function NaverCafePage() {
   const cafe = sel !== "dash" ? cafes.find((c) => c.id === sel) || null : null;
   useEffect(() => {
     // 카페 선택 시 설정 폼 동기화
-    if (cafe) setCafeForm({ tone: cafe.tone, topics: cafe.topics, notes: cafe.notes, plan_schedule: cafe.plan_schedule, publish_slot: cafe.publish_slot, board_name: cafe.board_name });
+    if (cafe) setCafeForm({ cafe_url: cafe.cafe_url, tone: cafe.tone, selling_point: cafe.selling_point || "", topics: cafe.topics, notes: cafe.notes, publish_slot: cafe.publish_slot, daily_drafts: cafe.daily_drafts ?? 3 });
   }, [cafe?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function addCafe() {
-    if (!newCafe.name.trim() || !/cafe\.naver\.com\//i.test(newCafe.cafe_url)) { alert("카페 이름과 cafe.naver.com 주소를 입력해 주세요."); return; }
-    const r = await fetch("/api/naver-cafe/cafes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(newCafe) });
+    if (!newCafe.name.trim() || !/cafe\.naver\.com\//i.test(newCafe.cafe_url)) { alert("카페명과 cafe.naver.com 게시판 URL을 입력해 주세요."); return; }
+    const r = await fetch("/api/naver-cafe/cafes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...newCafe, daily_drafts: Number(newCafe.daily_drafts) || 3 }) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) { alert(j.error || "추가 실패"); return; }
-    setNewCafe({ name: "", cafe_url: "", board_name: "" });
+    setNewCafe({ name: "", cafe_url: "", tone: "", selling_point: "", topics: "", publish_slot: "", daily_drafts: "3" });
     setAddingCafe(false);
     loadAll();
     if (j.cafe?.id) setSel(j.cafe.id);
@@ -291,7 +302,7 @@ export default function NaverCafePage() {
       const r = await fetch("/api/naver-cafe/auto-drafts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cafe_id: cafe.id }) });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) { alert(j.error || "초안 생성 실패"); return; }
-      if (!j.made) alert("오늘 분량(3개)이 이미 채워져 있어요. 내일 아침 자동으로 다시 생성돼요.");
+      if (!j.made) alert("오늘 분량이 이미 채워져 있어요. 내일 아침 자동으로 다시 생성돼요.");
       loadAll();
     } finally { setGenBusy(false); }
   }
@@ -357,21 +368,9 @@ export default function NaverCafePage() {
               <span className="truncate">{c.name}</span>
             </button>
           ))}
-          {addingCafe ? (
-            <div className="space-y-1.5 rounded-lg border border-dashed border-gray-300 p-2 dark:border-gray-700">
-              <input value={newCafe.name} onChange={(e) => setNewCafe({ ...newCafe, name: e.target.value })} placeholder="카페 이름" className={inputCls} />
-              <input value={newCafe.cafe_url} onChange={(e) => setNewCafe({ ...newCafe, cafe_url: e.target.value })} placeholder="https://cafe.naver.com/..." className={inputCls} />
-              <input value={newCafe.board_name} onChange={(e) => setNewCafe({ ...newCafe, board_name: e.target.value })} placeholder="게시판(선택)" className={inputCls} />
-              <div className="flex gap-1.5">
-                <button onClick={addCafe} className="flex-1 rounded-lg bg-primary px-2 py-1.5 text-xs font-medium text-white">추가</button>
-                <button onClick={() => setAddingCafe(false)} className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs dark:border-gray-700 dark:text-gray-300">취소</button>
-              </div>
-            </div>
-          ) : (
-            <button onClick={() => setAddingCafe(true)} className="flex w-full items-center gap-2 rounded-lg border border-dashed border-gray-300 px-2.5 py-2 text-sm text-gray-500 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-800">
-              <Plus className="h-4 w-4" /> 카페 추가
-            </button>
-          )}
+          <button onClick={() => setAddingCafe(true)} className="flex w-full items-center gap-2 rounded-lg border border-dashed border-gray-300 px-2.5 py-2 text-sm text-gray-500 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-800">
+            <Plus className="h-4 w-4" /> 카페 추가
+          </button>
         </div>
       </div>
 
@@ -408,7 +407,11 @@ export default function NaverCafePage() {
             <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
               <div className="mb-2 flex items-center justify-between">
                 <h2 className="text-sm font-bold dark:text-gray-100">반응 측정 대기 ({trackQueue.length})</h2>
-                <p className="text-[11px] text-gray-400">PC가 꺼져 있어 놓친 것 포함 — 에이전트가 켜지면 순서대로 한 번에 측정돼요</p>
+                <p className={`text-[11px] ${trackQueue.length > 0 && !agentOnline ? "font-semibold text-amber-600 dark:text-amber-300" : "text-gray-400"}`}>
+                  {trackQueue.length > 0 && !agentOnline
+                    ? "⚠ 에이전트 오프라인 — publish-agent.bat 을 켜면 밀린 것까지 한 번에 일괄 측정돼요"
+                    : "PC가 꺼져 있어 놓친 것 포함 — 에이전트가 켜져 있으면 순서대로 자동 측정"}
+                </p>
               </div>
               {trackQueue.length === 0 ? (
                 <p className="py-3 text-center text-xs text-gray-400">측정 대기 중인 글이 없어요.</p>
@@ -470,29 +473,33 @@ export default function NaverCafePage() {
             <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
               <h2 className="mb-3 text-sm font-bold dark:text-gray-100">운영 설정 <span className="ml-1 text-[11px] font-normal text-gray-400">— AI 초안이 이 설정(특히 페르소나)에 맞춰 작성돼요</span></h2>
               <div className="grid gap-3 md:grid-cols-2">
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">활동 페르소나</label>
-                  <textarea value={cafeForm.tone || ""} onChange={(e) => setCafeForm({ ...cafeForm, tone: e.target.value })} rows={3} placeholder="예: 8살 아이 키우는 워킹맘. 존댓말, 담백한 후기톤, 이모지 가끔" className={inputCls} />
+                <div className="md:col-span-2">
+                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">게시판 URL</label>
+                  <input value={(cafeForm.cafe_url as string) || ""} onChange={(e) => setCafeForm({ ...cafeForm, cafe_url: e.target.value })} placeholder="https://cafe.naver.com/f-e/cafes/.../menus/..." className={inputCls} />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">주제</label>
-                  <textarea value={cafeForm.topics || ""} onChange={(e) => setCafeForm({ ...cafeForm, topics: e.target.value })} rows={3} placeholder="예: 초등 학습지 비교, 공부습관, 학원 정보" className={inputCls} />
+                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">활동 컨셉</label>
+                  <textarea value={cafeForm.tone || ""} onChange={(e) => setCafeForm({ ...cafeForm, tone: e.target.value })} rows={3} placeholder="예: 정보 많은 의문의 보따리 상인(어투·잘난척 금물)" className={inputCls} />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">기획 일정</label>
-                  <input value={cafeForm.plan_schedule || ""} onChange={(e) => setCafeForm({ ...cafeForm, plan_schedule: e.target.value })} placeholder="예: 월·수·금 오전 기획" className={inputCls} />
+                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">채널 소구점</label>
+                  <textarea value={(cafeForm.selling_point as string) || ""} onChange={(e) => setCafeForm({ ...cafeForm, selling_point: e.target.value })} rows={3} placeholder="예: 마케팅 꿀팁·파일 방출하며 팬층 쌓기" className={inputCls} />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">발행 예약(시간대)</label>
-                  <input value={cafeForm.publish_slot || ""} onChange={(e) => setCafeForm({ ...cafeForm, publish_slot: e.target.value })} placeholder="예: 평일 19시 (에이전트 켜져 있을 때 발행)" className={inputCls} />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">게시판</label>
-                  <input value={cafeForm.board_name || ""} onChange={(e) => setCafeForm({ ...cafeForm, board_name: e.target.value })} placeholder="비우면 기본 게시판" className={inputCls} />
+                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">주로 업로드하는 컨텐츠</label>
+                  <textarea value={cafeForm.topics || ""} onChange={(e) => setCafeForm({ ...cafeForm, topics: e.target.value })} rows={2} placeholder="예: 마케팅과 상세페이지 관련" className={inputCls} />
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">주의사항</label>
-                  <input value={cafeForm.notes || ""} onChange={(e) => setCafeForm({ ...cafeForm, notes: e.target.value })} placeholder="예: 직접 링크 금지" className={inputCls} />
+                  <textarea value={cafeForm.notes || ""} onChange={(e) => setCafeForm({ ...cafeForm, notes: e.target.value })} rows={2} placeholder="예: 직접 링크 금지" className={inputCls} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">업로드 주기</label>
+                  <input value={cafeForm.publish_slot || ""} onChange={(e) => setCafeForm({ ...cafeForm, publish_slot: e.target.value })} placeholder="예: 2일에 1번씩" className={inputCls} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">하루 AI 원고 개수</label>
+                  <input type="number" min={0} max={10} value={cafeForm.daily_drafts ?? 3} onChange={(e) => setCafeForm({ ...cafeForm, daily_drafts: Number(e.target.value) })} className={inputCls} />
                 </div>
               </div>
               <div className="mt-3 flex justify-end">
@@ -503,11 +510,11 @@ export default function NaverCafePage() {
             {/* 원고(초안/대기/실패) */}
             <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                <h2 className="text-sm font-bold dark:text-gray-100">원고 <span className="ml-1 text-[11px] font-normal text-gray-400">— 매일 아침 AI가 3개씩 자동 작성(페르소나 반영)</span></h2>
+                <h2 className="text-sm font-bold dark:text-gray-100">원고 <span className="ml-1 text-[11px] font-normal text-gray-400">— 매일 아침 AI가 {cafe.daily_drafts ?? 3}개씩 자동 작성(활동 컨셉·소구점 반영)</span></h2>
                 <div className="flex gap-2">
                   <button onClick={() => setCompose({ fixed: cafe.id })} className="flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"><PenLine className="h-3.5 w-3.5" /> 직접 기획</button>
                   <button onClick={genDrafts} disabled={genBusy} className="flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50">
-                    {genBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />} 오늘 초안 3개 생성
+                    {genBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />} 오늘 초안 {cafe.daily_drafts ?? 3}개 생성
                   </button>
                 </div>
               </div>
@@ -560,6 +567,41 @@ export default function NaverCafePage() {
 
       {postModal && <PostModal post={postModal} onClose={() => setPostModal(null)} onChanged={loadAll} />}
       {compose && <ComposeModal cafes={cafes} fixedCafeId={compose.fixed} onClose={() => setCompose(null)} onSaved={loadAll} />}
+
+      {/* 카페 추가 플로팅 */}
+      {addingCafe && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setAddingCafe(false)}>
+          <div className="flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b p-4 dark:border-gray-800">
+              <h3 className="text-sm font-bold dark:text-gray-100">가입한 카페 추가</h3>
+              <button onClick={() => setAddingCafe(false)} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"><X className="h-5 w-5" /></button>
+            </div>
+            <div className="flex-1 space-y-3 overflow-y-auto p-4">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">카페명 *</label>
+                <input value={newCafe.name} onChange={(e) => setNewCafe({ ...newCafe, name: e.target.value })} placeholder="예: 돈셀모" className={inputCls} />
+              </div>
+              {CAFE_FIELDS.map((f) => (
+                <div key={f.key}>
+                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{f.label}{f.key === "cafe_url" ? " *" : ""}</label>
+                  {f.rows ? (
+                    <textarea value={newCafe[f.key] || ""} onChange={(e) => setNewCafe({ ...newCafe, [f.key]: e.target.value })} rows={f.rows} placeholder={f.ph} className={inputCls} />
+                  ) : (
+                    <input value={newCafe[f.key] || ""} onChange={(e) => setNewCafe({ ...newCafe, [f.key]: e.target.value })} placeholder={f.ph} className={inputCls} />
+                  )}
+                </div>
+              ))}
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">하루 AI 원고 개수</label>
+                <input type="number" min={0} max={10} value={newCafe.daily_drafts} onChange={(e) => setNewCafe({ ...newCafe, daily_drafts: e.target.value })} className={inputCls} />
+              </div>
+            </div>
+            <div className="flex justify-end border-t p-4 dark:border-gray-800">
+              <button onClick={addCafe} className="rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-white">카페 추가</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

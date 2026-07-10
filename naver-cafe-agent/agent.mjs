@@ -81,20 +81,26 @@ async function humanType(page, text) {
 // ── 카페 글 등록(핵심) ──
 async function publishPost(post, cafe) {
   const page = await getPage()
-  const cluburl = (cafe.cafe_url || '').match(/cafe\.naver\.com\/([^/?#]+)/i)?.[1]
-  if (!cluburl) throw new Error(`카페 URL 형식이 이상해요: ${cafe.cafe_url}`)
 
-  // 1) 카페 홈 → 내부 clubid 추출(레거시 홈 HTML의 g_sClubId)
-  await page.goto(`https://cafe.naver.com/${cluburl}`, { waitUntil: 'domcontentloaded', timeout: 30000 })
-  if (page.url().includes('nid.naver.com')) {
-    throw new Error('네이버 로그인 세션이 만료됐어요. 열린 브라우저 창에서 로그인한 뒤 이 글을 다시 [발행 대기]로 돌려주세요.')
+  // 1) 카페 ID(+게시판 menuId) 확보 — 게시판 URL(…/cafes/<id>/menus/<menuId>)이면 바로 사용,
+  //    구형 주소(cafe.naver.com/이름)면 카페 홈에서 g_sClubId 추출.
+  const direct = (cafe.cafe_url || '').match(/cafe\.naver\.com\/(?:f-e\/|ca-fe\/)?cafes\/(\d+)(?:\/menus\/(\d+))?/i)
+  let clubId = direct?.[1] || null
+  const menuId = direct?.[2] || null
+  if (!clubId) {
+    const cluburl = (cafe.cafe_url || '').match(/cafe\.naver\.com\/([^/?#]+)/i)?.[1]
+    if (!cluburl) throw new Error(`카페 URL 형식이 이상해요: ${cafe.cafe_url}`)
+    await page.goto(`https://cafe.naver.com/${cluburl}`, { waitUntil: 'domcontentloaded', timeout: 30000 })
+    if (page.url().includes('nid.naver.com')) {
+      throw new Error('네이버 로그인 세션이 만료됐어요. 열린 브라우저 창에서 로그인한 뒤 이 글을 다시 [발행 대기]로 돌려주세요.')
+    }
+    const html = await page.content()
+    clubId = html.match(/g_sClubId\s*=\s*["'](\d+)["']/)?.[1] || null
+    if (!clubId) throw new Error('카페 ID를 찾지 못했어요(카페 미가입이거나 페이지 구조 변경).')
   }
-  const html = await page.content()
-  const clubId = html.match(/g_sClubId\s*=\s*["'](\d+)["']/)?.[1]
-  if (!clubId) throw new Error('카페 ID를 찾지 못했어요(카페 미가입이거나 페이지 구조 변경).')
 
-  // 2) 글쓰기(스마트에디터 ONE) 진입
-  await page.goto(`https://cafe.naver.com/ca-fe/cafes/${clubId}/articles/write?boardType=L`, { waitUntil: 'domcontentloaded', timeout: 30000 })
+  // 2) 글쓰기(스마트에디터 ONE) 진입 — menuId 있으면 해당 게시판이 미리 선택되게 시도
+  await page.goto(`https://cafe.naver.com/ca-fe/cafes/${clubId}/articles/write?boardType=L${menuId ? `&menuId=${menuId}` : ''}`, { waitUntil: 'domcontentloaded', timeout: 30000 })
   if (page.url().includes('nid.naver.com')) {
     throw new Error('네이버 로그인 세션이 만료됐어요. 열린 브라우저 창에서 로그인한 뒤 이 글을 다시 [발행 대기]로 돌려주세요.')
   }
@@ -106,8 +112,8 @@ async function publishPost(post, cafe) {
     if (await cancel.isVisible({ timeout: 1500 })) await cancel.click()
   } catch {}
 
-  // 3) 게시판 선택(설정돼 있으면 — 실패해도 기본 게시판으로 진행)
-  if (cafe.board_name) {
+  // 3) 게시판 선택(menuId 로 이미 선택됐으면 생략 — 실패해도 기본 게시판으로 진행)
+  if (cafe.board_name && !menuId) {
     try {
       await page.locator('.FormSelectButton button, button.button_select, [class*="select_board"] button').first().click({ timeout: 4000 })
       await page.locator(`li:has-text("${cafe.board_name}"), [role="option"]:has-text("${cafe.board_name}")`).first().click({ timeout: 4000 })

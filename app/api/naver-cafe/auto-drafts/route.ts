@@ -7,17 +7,17 @@ export const maxDuration = 300
 const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages'
 const MODEL = 'claude-sonnet-4-6'
 
-// 카페별 자동 초안: 하루 3개까지, 각 카페의 페르소나/주제에 맞춰 Claude(회사 공용 키)가 작성.
+// 카페별 자동 초안: 카페마다 설정한 개수(daily_drafts, 기본 3)까지, 활동 컨셉/소구점에 맞춰 Claude(회사 공용 키)가 작성.
 //   POST { cafe_id? }  → cafe_id 있으면 그 카페만, 없으면 enabled 카페 전체.
 //   매일 아침 GitHub Actions(naver-cafe-drafts.yml)가 전체 호출 + 페이지 버튼으로 수동 호출.
-const DAILY_TARGET = 3
 
-async function draftOne(apiKey: string, cafe: { name: string; tone: string; topics: string; notes: string }, avoidTitles: string[]) {
+async function draftOne(apiKey: string, cafe: { name: string; tone: string; topics: string; notes: string; selling_point?: string | null }, avoidTitles: string[]) {
   const prompt = `네이버 카페에 올릴 글의 초안을 작성해줘.
 
 [카페] ${cafe.name}
-[활동 페르소나(이 인물이 쓴 것처럼)] ${cafe.tone || '자연스러운 일반 회원'}
-[주로 다룰 주제] ${cafe.topics || '(자유 주제 — 카페 성격에 맞게)'}
+[활동 컨셉(이 인물이 쓴 것처럼)] ${cafe.tone || '자연스러운 일반 회원'}
+[채널 소구점(글이 궁극적으로 쌓아야 할 것)] ${cafe.selling_point || '(없음)'}
+[주로 업로드하는 컨텐츠] ${cafe.topics || '(자유 주제 — 카페 성격에 맞게)'}
 [주의사항] ${cafe.notes || '(없음)'}
 [이미 쓴 제목(겹치지 않게)] ${avoidTitles.slice(0, 15).join(' / ') || '(없음)'}
 
@@ -61,7 +61,8 @@ export async function POST(req: Request) {
         .gte('created_at', today.toISOString())
       const { data: recent } = await supabaseAdmin
         .from('nc_posts').select('title').eq('cafe_id', cafe.id).order('created_at', { ascending: false }).limit(15)
-      const need = Math.max(0, DAILY_TARGET - (todays?.length || 0))
+      const target = Math.max(0, Math.min(10, Number((cafe as { daily_drafts?: number }).daily_drafts ?? 3) || 0))
+      const need = Math.max(0, target - (todays?.length || 0))
       let made = 0
       const avoid = (recent || []).map((r) => r.title).filter(Boolean)
       for (let i = 0; i < need; i++) {

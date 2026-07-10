@@ -19,18 +19,24 @@ export async function POST(req: Request) {
   if (!name || !/cafe\.naver\.com\//i.test(cafeUrl)) {
     return NextResponse.json({ error: '카페 이름과 cafe.naver.com 주소가 필요해요.' }, { status: 400 })
   }
-  const { data, error } = await supabaseAdmin
-    .from('nc_cafes')
-    .insert({
-      name,
-      cafe_url: cafeUrl,
-      board_name: (b.board_name || '').toString(),
-      tone: (b.tone || '').toString(),
-      topics: (b.topics || '').toString(),
-      notes: (b.notes || '').toString(),
-    })
-    .select()
-    .single()
+  const row: Record<string, unknown> = {
+    name,
+    cafe_url: cafeUrl,
+    board_name: (b.board_name || '').toString(),
+    tone: (b.tone || '').toString(),               // 활동 컨셉(페르소나)
+    topics: (b.topics || '').toString(),           // 주로 업로드하는 컨텐츠
+    notes: (b.notes || '').toString(),
+    publish_slot: (b.publish_slot || '').toString(), // 업로드 주기
+    selling_point: (b.selling_point || '').toString(), // 채널 소구점
+    daily_drafts: Math.max(0, Math.min(10, Number(b.daily_drafts ?? 3) || 3)), // 하루 AI 초안 개수
+  }
+  let { data, error } = await supabaseAdmin.from('nc_cafes').insert(row).select().single()
+  if (error && /selling_point|daily_drafts/.test(error.message)) {
+    // 컬럼 보강 SQL 실행 전 환경 폴백
+    delete row.selling_point
+    delete row.daily_drafts
+    ;({ data, error } = await supabaseAdmin.from('nc_cafes').insert(row).select().single())
+  }
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true, cafe: data })
 }
@@ -40,9 +46,10 @@ export async function PATCH(req: Request) {
   const id = (b.id || '').toString()
   if (!id) return NextResponse.json({ error: 'id 필요' }, { status: 400 })
   const patch: Record<string, unknown> = {}
-  for (const k of ['name', 'cafe_url', 'board_name', 'tone', 'topics', 'notes', 'plan_schedule', 'publish_slot'] as const) {
+  for (const k of ['name', 'cafe_url', 'board_name', 'tone', 'topics', 'notes', 'plan_schedule', 'publish_slot', 'selling_point'] as const) {
     if (typeof b[k] === 'string') patch[k] = b[k]
   }
+  if (b.daily_drafts !== undefined) patch.daily_drafts = Math.max(0, Math.min(10, Number(b.daily_drafts) || 0))
   if (typeof b.enabled === 'boolean') patch.enabled = b.enabled
   if (!Object.keys(patch).length) return NextResponse.json({ error: '변경 내용 없음' }, { status: 400 })
   const { error } = await supabaseAdmin.from('nc_cafes').update(patch).eq('id', id)
