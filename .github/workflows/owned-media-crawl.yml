@@ -22,7 +22,8 @@ on:
 jobs:
   crawl:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # 무제한(전량) 백필 시 인스타 수집·다운로드가 오래 걸릴 수 있어 넉넉히(스케줄 실행은 훨씬 일찍 끝남).
+    timeout-minutes: 120
     # Node Playwright 크롤러는 owned-media-monitor/ 에 격리.
     defaults:
       run:

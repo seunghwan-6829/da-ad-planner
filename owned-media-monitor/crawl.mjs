@@ -221,18 +221,27 @@ async function runApifyInstagram(directUrls, limit) {
   const runId = run.id
   const datasetId = run.defaultDatasetId
   let status = run.status
-  const deadline = Date.now() + 12 * 60 * 1000
+  // 무제한(전량) 수집은 오래 걸림 → 넉넉히(잡 타임아웃 내). 타임아웃돼도 그때까지 모인 데이터셋은 가져온다.
+  const deadline = Date.now() + 40 * 60 * 1000
   while (Date.now() < deadline && !['SUCCEEDED', 'FAILED', 'ABORTED', 'TIMED-OUT'].includes(status)) {
-    await sleep(5000)
+    await sleep(6000)
     try {
       const st = await fetch(`https://api.apify.com/v2/actor-runs/${runId}?token=${APIFY_TOKEN}`)
       if (st.ok) status = (await st.json()).data.status
     } catch {}
   }
-  if (status !== 'SUCCEEDED') throw new Error(`Apify run 상태 ${status}`)
-  const itemsRes = await fetch(`https://api.apify.com/v2/datasets/${datasetId}/items?token=${APIFY_TOKEN}&clean=true`)
-  if (!itemsRes.ok) throw new Error(`Apify items ${itemsRes.status}`)
-  return await itemsRes.json()
+  if (status !== 'SUCCEEDED') log(`⚠️ 인스타 Apify 상태 ${status} — 수집분만 임포트`)
+  // 데이터셋 전량(페이지네이션).
+  const all = []
+  for (let off = 0; ; off += 1000) {
+    const r = await fetch(`https://api.apify.com/v2/datasets/${datasetId}/items?token=${APIFY_TOKEN}&clean=true&limit=1000&offset=${off}`)
+    if (!r.ok) break
+    const chunk = await r.json()
+    if (!Array.isArray(chunk) || !chunk.length) break
+    all.push(...chunk)
+    if (chunk.length < 1000) break
+  }
+  return all
 }
 
 const normHandle = (creator) =>
