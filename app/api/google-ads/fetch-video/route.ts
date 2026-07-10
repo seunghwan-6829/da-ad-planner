@@ -17,13 +17,18 @@ export async function POST(req: Request) {
 
   const { data: ad, error } = await supabaseAdmin
     .from('ga_ads')
-    .select('library_id, media_url')
+    .select('library_id, media_url, media_path')
     .eq('library_id', libraryId)
     .single()
   if (error || !ad) return NextResponse.json({ error: '광고를 찾을 수 없습니다.' }, { status: 404 })
 
   // 이미 받아둔 영상 → 바로 재생.
   if (isStored(ad.media_url)) return NextResponse.json({ done: true, url: ad.media_url })
+
+  // 원본이 유튜브에서 내려간 영상(삭제/차단) → 영영 재생 불가. 정직하게 안내.
+  if (ad.media_path === 'dead') {
+    return NextResponse.json({ dead: true, error: '원본 영상이 유튜브에서 삭제/차단돼 재생할 수 없어요.' })
+  }
 
   // 아직 안 받음 → Apify 안 쓰고 안내만.
   return NextResponse.json({

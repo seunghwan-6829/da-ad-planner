@@ -51,3 +51,6 @@ __pycache__/
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# 사용자 별도 로컬 앱(이식 원본) — 절대 커밋 금지(자격증명 포함 가능)
+네이버 카페 자동화/

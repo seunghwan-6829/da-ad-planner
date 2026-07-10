@@ -32,9 +32,6 @@ import { Button } from '@/components/ui/button'
 
 const navigationTop = [
   { name: '대시보드', href: '/', icon: LayoutDashboard },
-  { name: 'BP소재', href: '/templates', icon: FileCode },
-  { name: '영상 보드', href: '/video-board', icon: Video },
-  { name: '이미지 보드', href: '/image-board', icon: Images },
   { name: '인스타 성과', href: '/instagram', icon: BarChart3 },
   { name: '데이터 추적', href: '/data-tracking', icon: Activity },
   { name: '온드미디어 크롤러', href: '/owned-media', icon: Radio },
@@ -48,6 +45,10 @@ const navigationBottom = [
   { name: '기획안 아이디어', href: '/plan-ideas', icon: Lightbulb },
   { name: '컨텐츠 가이드', href: '/content-guide', icon: Film },
   { name: '모델 촬영 가이드', href: '/shooting-guide', icon: Camera },
+  // 참고용 보드류는 맨 하단(모델 촬영 가이드 아래)으로
+  { name: 'BP소재', href: '/templates', icon: FileCode },
+  { name: '이미지 보드', href: '/image-board', icon: Images },
+  { name: '영상 보드', href: '/video-board', icon: Video },
 ]
 
 type MetaChange = { newCount: number; endedCount: number; latest: string | null }

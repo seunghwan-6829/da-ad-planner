@@ -315,14 +315,21 @@ function OnDemandGoogleVideo({ ad, rounded, videoRef }: { ad: Ad; rounded: strin
   const [phase, setPhase] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [url, setUrl] = useState<string | null>(null);
   const [msg, setMsg] = useState<string>("");
+  const [dead, setDead] = useState(false); // 원본 삭제/차단 등 재시도 무의미
   const [preReady, setPreReady] = useState(false);
   const preRef = useRef<Promise<string | null> | null>(null);
+  // 로컬 서버가 알려준 "진짜 실패 이유"(영상 삭제/차단, 추출 실패 등). 서버가 꺼져 있으면 null 유지.
+  const localErrRef = useRef<{ msg: string; dead: boolean } | null>(null);
   const aliveRef = useRef(true);
 
   // 로컬 서버(내 PC)로 스트림 URL 추출(+백그라운드로 Supabase 영구저장). 로컬 서버 없으면 null.
   const resolveViaLocal = useCallback(async (): Promise<string | null> => {
     const id = ytIdOfAd(ad);
-    if (!id) return null;
+    if (!id) {
+      // 크롤 데이터에 유튜브 영상 정보가 아예 없는 광고 → 재생 수단 없음(원본 링크로 안내).
+      localErrRef.current = { msg: "이 광고는 영상 정보가 수집되지 않아 재생할 수 없어요.", dead: true };
+      return null;
+    }
     try {
       const h = await fetch(`${LOCAL_VIDEO_SERVER}/health`, { signal: AbortSignal.timeout(1200) });
       if (!h.ok) return null;
@@ -330,6 +337,7 @@ function OnDemandGoogleVideo({ ad, rounded, videoRef }: { ad: Ad; rounded: strin
     try {
       const r = await fetch(`${LOCAL_VIDEO_SERVER}/get?id=${id}`, { signal: AbortSignal.timeout(120000) });
       const j = await r.json().catch(() => ({}));
+      if (!r.ok && j.error) localErrRef.current = { msg: j.error as string, dead: !!j.dead };
       return (j.url as string) || null;
     } catch { return null; }
   }, [ad]);
@@ -354,6 +362,7 @@ function OnDemandGoogleVideo({ ad, rounded, videoRef }: { ad: Ad; rounded: strin
       const j = await res.json().catch(() => ({}));
       if (!aliveRef.current) return;
       if (j.done && j.url) { setUrl(j.url); setPhase("ready"); return; }
+      if (j.dead) setDead(true);
       setMsg(j.error || "아직 다운로드 전이에요. 곧 자동으로 받아집니다.");
       setPhase("error");
     } catch {
@@ -371,6 +380,13 @@ function OnDemandGoogleVideo({ ad, rounded, videoRef }: { ad: Ad; rounded: strin
     try { pre = await (preRef.current ?? resolveViaLocal()); } catch {}
     if (!aliveRef.current) return;
     if (pre) { setUrl(pre); setPhase("ready"); return; }
+    // 로컬 서버가 실패 이유를 알려줬으면 그걸 그대로(삭제/차단 영상을 "준비 전"으로 오안내하지 않게).
+    if (localErrRef.current) {
+      setDead(localErrRef.current.dead);
+      setMsg(localErrRef.current.msg);
+      setPhase("error");
+      return;
+    }
     checkStoredOrNotify();
   }
 
@@ -380,7 +396,7 @@ function OnDemandGoogleVideo({ ad, rounded, videoRef }: { ad: Ad; rounded: strin
     return <video ref={videoRef} src={url} poster={poster} controls autoPlay playsInline preload="metadata" onClick={(e) => e.stopPropagation()} className={`h-full w-full bg-black object-contain ${rounded}`} />;
   }
   return (
-    <button type="button" onClick={(e) => { e.stopPropagation(); if (phase !== "loading") start(); }} className={`relative flex h-full w-full items-center justify-center overflow-hidden bg-black ${rounded}`}>
+    <button type="button" onClick={(e) => { e.stopPropagation(); if (phase !== "loading" && !dead) start(); }} className={`relative flex h-full w-full items-center justify-center overflow-hidden bg-black ${rounded}`}>
       {poster && (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={poster} alt="" className="absolute inset-0 h-full w-full object-cover opacity-40" />
@@ -394,7 +410,17 @@ function OnDemandGoogleVideo({ ad, rounded, videoRef }: { ad: Ad; rounded: strin
         ) : phase === "error" ? (
           <>
             <span className="text-xs text-red-300">{msg}</span>
-            <span className="rounded-full bg-white/20 px-3 py-1 text-xs">다시 시도 ▶</span>
+            <span className="flex items-center gap-2">
+              {!dead && <span className="rounded-full bg-white/20 px-3 py-1 text-xs">다시 시도 ▶</span>}
+              <span
+                role="link"
+                tabIndex={0}
+                onClick={(e) => { e.stopPropagation(); window.open(sourceLink(ad), "_blank", "noopener"); }}
+                className="rounded-full bg-white/20 px-3 py-1 text-xs hover:bg-white/30"
+              >
+                원본 광고 보기 ↗
+              </span>
+            </span>
           </>
         ) : (
           <>

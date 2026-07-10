@@ -95,7 +95,7 @@ function ytdlp(id) {
   })
 }
 
-// yt-dlp -g 로 "직접 스트림 URL"만 빠르게 추출(다운로드 X, ~2초). 없으면 null.
+// yt-dlp -g 로 "직접 스트림 URL"만 빠르게 추출(다운로드 X, ~2초). 실패 시 { url: null, err: 원인 }.
 //   브라우저가 로컬서버와 같은 IP라 이 URL(IP잠금)을 그대로 재생 가능 → 다운로드/업로드 대기 없음.
 function ytdlpGetUrl(id) {
   return new Promise((resolve) => {
@@ -103,16 +103,20 @@ function ytdlpGetUrl(id) {
     let cArgs = [], cookieTmp = null
     if (COOKIES_FILE) { cookieTmp = join(TMP, `${id}.g.cookies.txt`); try { copyFileSync(COOKIES_FILE, cookieTmp); cArgs = ['--cookies', cookieTmp] } catch {} }
     const args = ['-g', '-f', fmt, '--no-playlist', '--no-warnings', ...cArgs, `https://www.youtube.com/watch?v=${id}`]
-    const p = spawn(YT, args, { stdio: ['ignore', 'pipe', 'ignore'], env: CHILD_ENV })
-    let out = ''
+    const p = spawn(YT, args, { stdio: ['ignore', 'pipe', 'pipe'], env: CHILD_ENV })
+    let out = '', err = ''
     p.stdout.on('data', (d) => { out += d.toString() })
+    p.stderr.on('data', (d) => { err += d.toString() })
     p.on('close', () => {
       try { if (cookieTmp) rmSync(cookieTmp, { force: true }) } catch {}
-      resolve(out.split('\n').map((s) => s.trim()).find((s) => s.startsWith('http')) || null)
+      resolve({ url: out.split('\n').map((s) => s.trim()).find((s) => s.startsWith('http')) || null, err })
     })
-    p.on('error', () => resolve(null))
+    p.on('error', (e) => resolve({ url: null, err: String((e && e.message) || e) }))
   })
 }
+
+// 영구실패(다시 시도해도 소용없음): 삭제/비공개/지역차단 등. download-local.mjs 와 동일 판정.
+const isPermanentFail = (err) => /removed for violating|not available on this country|Video unavailable\. This content is|Private video|no longer available|account (associated|has been) |members-only|Sign in to confirm your age/i.test(err || '')
 
 // 빠른 경로: 이미 저장돼 있으면 그 URL, 아니면 직접 스트림 URL을 즉시 반환(+백그라운드로 Supabase 영구저장).
 // 구글 광고(ga_ads)와 온드미디어(om_posts, post_id='yt_<id>') 양쪽에서 조회/갱신.
@@ -126,8 +130,17 @@ async function resolveFast(id) {
     const u = data?.[0]?.media_url
     if (u && /\/storage\/v1\/object\//.test(u)) return u // 이미 스토리지에 저장된 쇼츠
   } catch {}
-  const direct = await ytdlpGetUrl(id)
-  if (!direct) throw new Error('영상 URL 추출 실패(삭제/차단이거나 쿠키 만료)')
+  const { url: direct, err } = await ytdlpGetUrl(id)
+  if (!direct) {
+    if (isPermanentFail(err)) {
+      // 원본이 유튜브에서 내려간 영상 → 'dead' 표시(일일 다운로더와 동일 컨벤션)해 다음부터 시도 안 함.
+      try { await sb.from('ga_ads').update({ media_path: 'dead' }).or(`poster_url.ilike.%${id}%,media_url.ilike.%${id}%`) } catch {}
+      const e = new Error('원본 영상이 유튜브에서 삭제/차단돼 재생할 수 없어요.')
+      e.dead = true
+      throw e
+    }
+    throw new Error('영상 URL 추출 실패(일시 오류 또는 쿠키 만료) — 다시 시도해 주세요')
+  }
   getOrDownload(id).catch(() => {}) // 백그라운드 영구저장(재생엔 영향 없음, inflight 로 중복 방지)
   return direct
 }
@@ -185,7 +198,7 @@ createServer(async (req, res) => {
       const id = u.searchParams.get('id') || ''
       if (!validId(id)) return cors(res, 400, { error: '잘못된 id' })
       try { const url = await resolveFast(id); return cors(res, 200, { url }) }
-      catch (e) { return cors(res, 502, { error: String(e.message || e).slice(0, 160) }) }
+      catch (e) { return cors(res, 502, { error: String(e.message || e).slice(0, 160), dead: !!e.dead }) }
     }
     return cors(res, 404, { error: 'not found' })
   } catch (e) { return cors(res, 500, { error: String(e.message || e).slice(0, 160) }) }
