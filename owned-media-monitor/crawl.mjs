@@ -8,7 +8,7 @@
 //
 // 필수 env: SUPABASE_URL, SUPABASE_SERVICE_KEY
 // 선택 env: APIFY_TOKEN(인스타 — 없으면 인스타 스킵), CRAWL_CREATOR_ID(단일), CRAWL_SINCE_HOURS(최근 N시간 추가분만),
-//          IG_RESULTS_LIMIT(인스타 프로필당 최신 개수, 기본 5), YT_MAX_POSTS(유튜브 쇼츠 나열 상한, 기본 40),
+//          IG_RESULTS_LIMIT(인스타 프로필당 최신 개수, 기본 5), YT_MAX_POSTS(유튜브 쇼츠 나열 상한, 기본 0=무제한),
 //          YT_DOWNLOAD(0=다운로드 끔), YT_MAX_FILESIZE(기본 150M)
 
 import { createClient } from '@supabase/supabase-js'
@@ -22,7 +22,8 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
 const APIFY_TOKEN = (process.env.APIFY_TOKEN || '').trim()
 const CRAWL_CREATOR_ID = (process.env.CRAWL_CREATOR_ID || '').trim()
 const IG_RESULTS_LIMIT = Number(process.env.IG_RESULTS_LIMIT) || 5
-const YT_MAX_POSTS = Number(process.env.YT_MAX_POSTS) || 40
+// 채널당 쇼츠 나열 상한. 기본 0=무제한(임베드 방식이라 다운로드가 없어 전부 나열해도 부담 없음).
+const YT_MAX_POSTS = Number(process.env.YT_MAX_POSTS ?? '0') || 0
 // 유튜브는 기본 "임베드"로 가져온다(다운로드 X — 저장공간·봇차단 리스크 없음).
 //   임베드 차단된 쇼츠만 media_url=null 로 표시 → 페이지에서 재생 버튼 누르면 온디맨드(로컬 서버)로 받는다.
 //   YT_DOWNLOAD=1 을 명시하면 예전처럼 mp4 다운로드(로컬 실행용).
@@ -77,9 +78,9 @@ async function enumerateYouTubeShorts(creator) {
   try {
     const out = await execFileP('yt-dlp', [
       '--flat-playlist', '--dump-json', '--no-warnings', '--ignore-errors',
-      '--playlist-end', String(YT_MAX_POSTS),
+      ...(YT_MAX_POSTS > 0 ? ['--playlist-end', String(YT_MAX_POSTS)] : []), // 0=무제한(채널 쇼츠 전부)
       shortsUrl,
-    ], { timeout: 120000, maxBuffer: 1024 * 1024 * 128 })
+    ], { timeout: 300000, maxBuffer: 1024 * 1024 * 256 })
     stdout = out.stdout || ''
   } catch (e) {
     stdout = (e && e.stdout) || ''
