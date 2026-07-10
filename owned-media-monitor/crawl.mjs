@@ -61,6 +61,24 @@ const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, { auth: { persistSes
 const log = (...a) => console.log('[om-crawl]', ...a)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+// 간단 동시성 풀: items 를 최대 n개씩 동시에 fn(item, index) 처리. 결과 배열(입력 순서) 반환.
+async function pool(items, n, fn) {
+  const out = new Array(items.length)
+  let next = 0
+  await Promise.all(
+    Array.from({ length: Math.min(n, items.length) }, async () => {
+      while (next < items.length) {
+        const i = next++
+        out[i] = await fn(items[i], i)
+      }
+    })
+  )
+  return out
+}
+
+// 인스타 Apify 실행 동시 개수(계정별 개별 실행을 몇 개씩 병렬로). 계정 한도 초과분은 Apify가 알아서 대기.
+const IG_CONCURRENCY = Math.max(1, Math.min(8, Number(process.env.IG_CONCURRENCY ?? '4') || 4))
+
 // 만료되는 CDN URL(인스타) → Supabase 스토리지에 받아 영구 공개 URL 반환. 실패 시 null.
 // 일시적 네트워크 순단으로 놓치지 않도록 3회 재시도(+타임아웃). 4xx(만료/삭제)는 즉시 포기.
 async function downloadToStorage(url, path, contentType) {
@@ -194,14 +212,19 @@ async function saveYouTube(creator, results, profile) {
   const { data: existingRows } = await sb.from('om_posts').select('post_id').eq('creator_id', creator.id)
   const existing = new Set((existingRows || []).map((x) => x.post_id))
 
-  const seen = new Set()
-  const newRows = []
-  for (const r of results) {
-    seen.add(r.post_id)
-    if (existing.has(r.post_id)) {
-      try { await sb.from('om_posts').update({ views: r.views, last_seen_at: now, status: 'active' }).eq('post_id', r.post_id) } catch {}
-      continue
-    }
+  const seen = new Set(results.map((r) => r.post_id))
+  // 같은 배치 내 중복 id 제거(upsert 가 같은 행 2번 만나면 오류)
+  const uniq = [...new Map(results.map((r) => [r.post_id, r])).values()]
+  const olds = uniq.filter((r) => existing.has(r.post_id))
+  const fresh = uniq.filter((r) => !existing.has(r.post_id))
+
+  // 기존: 조회수만 갱신 — 수천 개를 1건씩 순차로 하면 수 분 걸림 → 12개씩 병렬
+  await pool(olds, 12, async (r) => {
+    try { await sb.from('om_posts').update({ views: r.views, last_seen_at: now, status: 'active' }).eq('post_id', r.post_id) } catch {}
+  })
+
+  // 신규: 임베드 확인(oEmbed)·(옵션)다운로드 — 다운로드 모드면 3개, 아니면 12개씩 병렬
+  const newRows = (await pool(fresh, YT_DOWNLOAD ? 3 : 12, async (r) => {
     const videoId = r.post_id.replace(/^yt_/, '')
     let mediaUrl = r.media_url // 기본: watch URL(임베드)
     let postedAt = r.posted_at
@@ -216,7 +239,7 @@ async function saveYouTube(creator, results, profile) {
       // 임베드 차단 → null 로 표시. 페이지에서 재생 버튼 누르면 온디맨드(로컬 서버)로 받아 재생.
       mediaUrl = null
     }
-    newRows.push({
+    return {
       ...r,
       media_url: mediaUrl,
       posted_at: postedAt,
@@ -225,8 +248,8 @@ async function saveYouTube(creator, results, profile) {
       creator_name: profile.name || creator.label,
       last_seen_at: now,
       status: 'active',
-    })
-  }
+    }
+  })).filter(Boolean)
   if (newRows.length) {
     try { const { error } = await sb.from('om_posts').upsert(newRows, { onConflict: 'post_id' }); if (error) log('yt upsert 오류', error.message) }
     catch (e) { log('yt upsert 예외', e.message) }
@@ -286,29 +309,31 @@ async function saveInstagram(creator, items) {
   const { data: existingRows } = await sb.from('om_posts').select('post_id,poster_url').eq('creator_id', creator.id)
   const existing = new Map((existingRows || []).map((x) => [x.post_id, x.poster_url]))
 
-  const seen = new Set()
-  const newRows = []
-  for (const it of reels) {
+  const seen = new Set(reels.map((it) => `ig_${it.shortCode}`))
+  // 같은 배치 내 중복 shortCode 제거(upsert 가 같은 행 2번 만나면 오류)
+  const uniq = [...new Map(reels.map((it) => [it.shortCode, it])).values()]
+  const olds = uniq.filter((it) => existing.has(`ig_${it.shortCode}`))
+  const fresh = uniq.filter((it) => !existing.has(`ig_${it.shortCode}`))
+
+  // 기존: 조회수 갱신 + 포스터 자가치유(이전에 저장 실패해 핫링크로 남은 것 재저장) — 8개씩 병렬
+  await pool(olds, 8, async (it) => {
     const postId = `ig_${it.shortCode}`
-    seen.add(postId)
-    const views = it.videoViewCount ?? it.videoPlayCount ?? null
-    if (existing.has(postId)) {
-      const patch = { views, last_seen_at: now, status: 'active' }
-      // 이전 실행에서 포스터 저장이 실패해 만료되는 핫링크로 남은 경우 → 이번에 재저장(자가치유)
-      const oldPoster = existing.get(postId)
-      if (it.displayUrl && (!oldPoster || !oldPoster.includes('/storage/v1/'))) {
-        const healed = await downloadToStorage(it.displayUrl, `posters/${it.shortCode}.jpg`, 'image/jpeg')
-        if (healed) patch.poster_url = healed
-      }
-      try { await sb.from('om_posts').update(patch).eq('post_id', postId) } catch {}
-      continue
+    const patch = { views: it.videoViewCount ?? it.videoPlayCount ?? null, last_seen_at: now, status: 'active' }
+    const oldPoster = existing.get(postId)
+    if (it.displayUrl && (!oldPoster || !oldPoster.includes('/storage/v1/'))) {
+      const healed = await downloadToStorage(it.displayUrl, `posters/${it.shortCode}.jpg`, 'image/jpeg')
+      if (healed) patch.poster_url = healed
     }
-    // 기본: 영상 다운로드 안 함 → 페이지에서 인스타 임베드(/reel/<code>/embed)로 재생(빠름·저장공간 0).
-    //   카드 썸네일용 poster(작은 이미지)만 저장. IG_DOWNLOAD=1 이면 예전처럼 mp4도 저장.
+    try { await sb.from('om_posts').update(patch).eq('post_id', postId) } catch {}
+  })
+
+  // 신규: 포스터(+옵션 mp4) 저장 — 1개씩 순차가 큰 계정에서 느리던 구간 → 8개씩 병렬.
+  //   기본은 영상 다운로드 안 함(페이지에서 인스타 임베드 /reel/<code>/embed 로 재생). IG_DOWNLOAD=1 이면 mp4도 저장.
+  const newRows = (await pool(fresh, 8, async (it) => {
     const storedVideo = IG_DOWNLOAD ? await downloadToStorage(it.videoUrl, `reels/${it.shortCode}.mp4`, 'video/mp4') : null
     const storedPoster = await downloadToStorage(it.displayUrl, `posters/${it.shortCode}.jpg`, 'image/jpeg')
-    newRows.push({
-      post_id: postId,
+    return {
+      post_id: `ig_${it.shortCode}`,
       creator_id: creator.id,
       creator_name: creator.label,
       platform: 'instagram',
@@ -318,13 +343,13 @@ async function saveInstagram(creator, items) {
       media_url: storedVideo || null, // null = 임베드로 재생(다운로드 안 함)
       poster_url: storedPoster || it.displayUrl || null,
       posted_at: it.timestamp ? String(it.timestamp).slice(0, 10) : null,
-      views,
+      views: it.videoViewCount ?? it.videoPlayCount ?? null,
       likes: it.likesCount ?? null,
       comments: it.commentsCount ?? null,
       last_seen_at: now,
       status: 'active',
-    })
-  }
+    }
+  })).filter(Boolean)
   if (newRows.length) {
     try { const { error } = await sb.from('om_posts').upsert(newRows, { onConflict: 'post_id' }); if (error) log('instagram upsert 오류', error.message) }
     catch (e) { log('instagram upsert 예외', e.message) }
@@ -356,9 +381,9 @@ async function main() {
   const instagram = list.filter((c) => c.platform === 'instagram')
   log(`━━━ 온드미디어 크롤 시작: 크리에이터 ${list.length}명 (유튜브 ${youtube.length} · 인스타 ${instagram.length}) ━━━`)
 
-  // ── 유튜브 쇼츠: yt-dlp ──
-  for (let i = 0; i < youtube.length; i++) {
-    const c = youtube[i]
+  // ── 유튜브 쇼츠: yt-dlp (채널 3개씩 병렬) ──
+  let ytDone = 0
+  await pool(youtube, 3, async (c, i) => {
     log(`[유튜브 ${i + 1}/${youtube.length}] ${c.label} 크롤 시작…`)
     try {
       const { results, profile } = await enumerateYouTubeShorts(c)
@@ -367,19 +392,21 @@ async function main() {
     } catch (e) {
       log('유튜브 처리 실패', c.id, String((e && e.message) || e).slice(0, 120))
     }
-  }
+    ytDone++
+    log(`(유튜브 진행: ${ytDone}/${youtube.length} 채널 완료)`)
+  })
 
-  // ── 인스타 릴스: Apify(크리에이터별 개별 실행) ──
-  //   한 번에 몰면 실행이 오래 걸려 타임아웃 → 계정마다 따로 돌린다(각 실행이 작아 빨리 끝나고 안 끊김,
-  //   하나 실패해도 나머지는 저장, 저장도 즉시). 메타·구글 크롤러가 브랜드/광고주별로 도는 것과 동일.
+  // ── 인스타 릴스: Apify(크리에이터별 개별 실행, IG_CONCURRENCY개씩 병렬) ──
+  //   계정마다 따로 돌리되(하나 실패해도 나머지는 저장, 저장도 즉시) 여러 개를 동시에 실행해 대기시간 단축.
+  //   Apify 계정 동시실행 한도를 넘으면 초과분은 Apify 쪽에서 자동 대기 후 실행되므로 안전.
   if (instagram.length) {
     if (!APIFY_TOKEN) {
       log('⚠️ APIFY_TOKEN 미설정 → 인스타 수집 건너뜀. (GitHub 시크릿 APIFY_TOKEN 등록 필요)')
     } else {
-      for (let i = 0; i < instagram.length; i++) {
-        const c = instagram[i]
+      let igDone = 0
+      await pool(instagram, IG_CONCURRENCY, async (c, i) => {
         const h = normHandle(c)
-        if (!h) { log('인스타 핸들 없음, 스킵', c.label); continue }
+        if (!h) { log('인스타 핸들 없음, 스킵', c.label); return }
         log(`[인스타 ${i + 1}/${instagram.length}] @${h} 크롤 시작… (Apify)`)
         try {
           const items = await runApifyInstagram([`https://www.instagram.com/${h}/`], IG_RESULTS_LIMIT)
@@ -387,7 +414,9 @@ async function main() {
         } catch (e) {
           log('인스타 처리 실패', c.label, String((e && e.message) || e).slice(0, 120))
         }
-      }
+        igDone++
+        log(`(인스타 진행: ${igDone}/${instagram.length} 계정 완료)`)
+      })
     }
   }
 
