@@ -255,7 +255,7 @@ function DetailModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
       <div
-        className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900"
+        className="flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900"
         onClick={(e) => e.stopPropagation()}
       >
         {/* 헤더 */}
@@ -287,7 +287,8 @@ function DetailModal({
           </div>
         </div>
 
-        <div className="grid flex-1 overflow-hidden md:grid-cols-2">
+        {/* 좌: 소재(고정폭) / 우: 제작 관리(넓게) */}
+        <div className="grid flex-1 overflow-hidden md:grid-cols-[360px_1fr]">
           {/* 좌: 소재(크롤러 상세처럼) */}
           <div className="space-y-3 overflow-y-auto border-b p-4 dark:border-gray-800 md:border-b-0 md:border-r">
             <div className="relative mx-auto aspect-[9/16] w-full max-w-[300px] overflow-hidden rounded-xl bg-black">
@@ -520,7 +521,8 @@ export default function ProductionListPage() {
               onClick={() => setOpenId(it.id)}
               className="group overflow-hidden rounded-xl border border-gray-200 bg-white text-left shadow-sm transition hover:shadow-md dark:border-gray-800 dark:bg-gray-900"
             >
-              <div className="relative aspect-[9/16] w-full overflow-hidden bg-gray-100 dark:bg-gray-800">
+              {/* 1:1 프리뷰(세로/가로 소재는 중앙 기준 크롭 — 클릭하면 상세에서 원본 비율로) */}
+              <div className="relative aspect-square w-full overflow-hidden bg-gray-100 dark:bg-gray-800">
                 {it.thumb ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={it.thumb} alt="" loading="lazy" className="h-full w-full object-cover transition group-hover:scale-[1.03]" />

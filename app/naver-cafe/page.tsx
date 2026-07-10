@@ -246,6 +246,7 @@ export default function NaverCafePage() {
   const [postModal, setPostModal] = useState<Post | null>(null);
   const [compose, setCompose] = useState<null | { fixed: string | null }>(null);
   const [addingCafe, setAddingCafe] = useState(false); // 카페 추가 플로팅 창
+  const [settingsOpen, setSettingsOpen] = useState(false); // 카페 운영설정 플로팅 창
   const [newCafe, setNewCafe] = useState<Record<string, string>>({ name: "", cafe_url: "", tone: "", selling_point: "", topics: "", publish_slot: "", daily_drafts: "3" });
   const [cafeForm, setCafeForm] = useState<Partial<Cafe>>({});
   const [savingCafe, setSavingCafe] = useState(false);
@@ -330,6 +331,21 @@ export default function NaverCafePage() {
   }, [posts]);
   const trackQueue = useMemo(() => posts.filter((p) => p.published_url && !p.tracked_at && p.track_due_at && new Date(p.track_due_at) <= new Date()), [posts]);
   const cafePosts = useMemo(() => (cafe ? posts.filter((p) => p.cafe_id === cafe.id) : []), [posts, cafe]);
+  // 선택한 카페의 대시보드 지표
+  const cafeStats = useMemo(() => {
+    const s = { drafts: 0, queued: 0, published: 0, trackWait: 0, views: 0, likes: 0, comments: 0 };
+    const now = Date.now();
+    for (const p of cafePosts) {
+      if (p.status === "draft") s.drafts++;
+      if (p.status === "queued" || p.status === "publishing") s.queued++;
+      if (p.status === "published") s.published++;
+      if (p.published_url && !p.tracked_at && p.track_due_at && new Date(p.track_due_at).getTime() <= now) s.trackWait++;
+      s.views += p.views || 0;
+      s.likes += p.likes || 0;
+      s.comments += p.comments || 0;
+    }
+    return s;
+  }, [cafePosts]);
 
   // 관리자 전용(사이드바에도 잠금 표시 + 직접 URL 진입 차단)
   if (!authLoading && !isAdmin) {
@@ -465,13 +481,37 @@ export default function NaverCafePage() {
               </div>
               <div className="flex items-center gap-2">
                 {agentBadge}
+                <button onClick={() => setSettingsOpen(true)} className="flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"><PenLine className="h-3.5 w-3.5" /> 운영설정</button>
                 <button onClick={removeCafe} className="flex items-center gap-1 rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-medium text-red-500 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-950/40"><Trash2 className="h-3.5 w-3.5" /> 카페 삭제</button>
               </div>
             </div>
 
-            {/* 카페 운영 설정(페르소나/주제/일정) */}
-            <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
-              <h2 className="mb-3 text-sm font-bold dark:text-gray-100">운영 설정 <span className="ml-1 text-[11px] font-normal text-gray-400">— AI 초안이 이 설정(특히 페르소나)에 맞춰 작성돼요</span></h2>
+            {/* 카페 대시보드(이 카페의 현황) */}
+            <div className="mb-5 grid grid-cols-3 gap-3 md:grid-cols-6">
+              {[
+                { label: "초안", value: cafeStats.drafts },
+                { label: "발행 대기·중", value: cafeStats.queued },
+                { label: "발행 완료", value: cafeStats.published },
+                { label: "측정 대기", value: cafeStats.trackWait, warn: cafeStats.trackWait > 0 },
+                { label: "누적 조회", value: cafeStats.views.toLocaleString() },
+                { label: "좋아요·댓글", value: `${cafeStats.likes.toLocaleString()}·${cafeStats.comments.toLocaleString()}` },
+              ].map((s) => (
+                <div key={s.label} className={`rounded-2xl border p-3 ${s.warn ? "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30" : "border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900"}`}>
+                  <p className="text-[11px] text-gray-500 dark:text-gray-400">{s.label}</p>
+                  <p className="mt-0.5 text-lg font-bold dark:text-gray-100">{s.value}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* 운영설정 플로팅 */}
+            {settingsOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setSettingsOpen(false)}>
+            <div className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between border-b p-4 dark:border-gray-800">
+                <h2 className="text-sm font-bold dark:text-gray-100">운영 설정 <span className="ml-1 text-[11px] font-normal text-gray-400">— AI 원고가 이 설정(활동 컨셉·소구점)에 맞춰 작성돼요</span></h2>
+                <button onClick={() => setSettingsOpen(false)} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"><X className="h-5 w-5" /></button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-4">
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="md:col-span-2">
                   <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">게시판 URL</label>
@@ -502,13 +542,18 @@ export default function NaverCafePage() {
                   <input type="number" min={0} max={10} value={cafeForm.daily_drafts ?? 3} onChange={(e) => setCafeForm({ ...cafeForm, daily_drafts: Number(e.target.value) })} className={inputCls} />
                 </div>
               </div>
-              <div className="mt-3 flex justify-end">
+              </div>
+              <div className="flex justify-end border-t p-4 dark:border-gray-800">
                 <button onClick={saveCafeForm} disabled={savingCafe} className="rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50">{savingCafe ? "저장 중…" : "설정 저장"}</button>
               </div>
             </div>
+            </div>
+            )}
 
+            {/* 원고 | 발행된 글 — 1열 2섹션 */}
+            <div className="grid items-start gap-4 xl:grid-cols-2">
             {/* 원고(초안/대기/실패) */}
-            <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+            <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-sm font-bold dark:text-gray-100">원고 <span className="ml-1 text-[11px] font-normal text-gray-400">— 매일 아침 AI가 {cafe.daily_drafts ?? 3}개씩 자동 작성(활동 컨셉·소구점 반영)</span></h2>
                 <div className="flex gap-2">
@@ -529,7 +574,7 @@ export default function NaverCafePage() {
               )}
             </div>
 
-            {/* 발행된 글 + 24h 반응 */}
+            {/* 발행된 글 + 24h 반응(원고 옆 나란히) */}
             <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
               <h2 className="mb-2 text-sm font-bold dark:text-gray-100">발행된 글 <span className="ml-1 text-[11px] font-normal text-gray-400">— 발행 24시간 후 조회/좋아요/댓글 자동 측정</span></h2>
               {cafePosts.filter((p) => p.status === "published").length === 0 ? (
@@ -560,6 +605,7 @@ export default function NaverCafePage() {
                   ))}
                 </div>
               )}
+            </div>
             </div>
           </>
         ) : null}
