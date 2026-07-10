@@ -21,7 +21,9 @@ const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
 const APIFY_TOKEN = (process.env.APIFY_TOKEN || '').trim()
 const CRAWL_CREATOR_ID = (process.env.CRAWL_CREATOR_ID || '').trim()
-const IG_RESULTS_LIMIT = Number(process.env.IG_RESULTS_LIMIT) || 5
+// 인스타 프로필당 최신 게시물 수. 0=무제한(전량). 미지정 시 5(주간 크롤 비용 통제).
+const IG_RESULTS_LIMIT = process.env.IG_RESULTS_LIMIT === undefined || process.env.IG_RESULTS_LIMIT === ''
+  ? 5 : Math.max(0, Number(process.env.IG_RESULTS_LIMIT) || 0)
 // 채널당 쇼츠 나열 상한. 기본 0=무제한(임베드 방식이라 다운로드가 없어 전부 나열해도 부담 없음).
 const YT_MAX_POSTS = Number(process.env.YT_MAX_POSTS ?? '0') || 0
 // 유튜브는 기본 "임베드"로 가져온다(다운로드 X — 저장공간·봇차단 리스크 없음).
@@ -207,7 +209,8 @@ async function saveYouTube(creator, results, profile) {
 
 // ─────────────────────────── 인스타 릴스 (Apify) ───────────────────────────
 async function runApifyInstagram(directUrls, limit) {
-  const input = { directUrls, resultsType: 'posts', resultsLimit: limit, addParentData: false }
+  // limit 0 = 무제한(프로필 게시물 전부). Apify 는 미지정 시 소량만 줄 수 있어 큰 값으로 명시.
+  const input = { directUrls, resultsType: 'posts', resultsLimit: limit > 0 ? limit : 100000, addParentData: false }
   const startRes = await fetch(`https://api.apify.com/v2/acts/apify~instagram-scraper/runs?token=${APIFY_TOKEN}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

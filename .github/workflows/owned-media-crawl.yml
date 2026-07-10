@@ -15,7 +15,7 @@ on:
         required: false
         default: "0"
       ig_limit:
-        description: "인스타 프로필당 최신 게시물 수(Apify 결과당 과금). 기본 5, 전량 백필은 200 등."
+        description: "인스타 프로필당 최신 게시물 수(Apify 결과당 과금). 기본 5, 0=무제한(전량 백필)."
         required: false
         default: "5"
 
