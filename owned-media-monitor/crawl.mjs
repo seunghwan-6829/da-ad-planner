@@ -15,7 +15,24 @@ import { createClient } from '@supabase/supabase-js'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { readFile, unlink } from 'fs/promises'
+import { readFileSync, existsSync } from 'fs'
+import { fileURLToPath } from 'url'
+import { dirname, join } from 'path'
 const execFileP = promisify(execFile)
+
+// 로컬 실행 대비: env 없으면 .env(이 폴더 → ../meta-ad-monitor)에서 채운다. GitHub 에선 이미 secrets 로 채워져 있어 무시.
+const HERE = dirname(fileURLToPath(import.meta.url))
+for (const p of [join(HERE, '.env'), join(HERE, '..', 'meta-ad-monitor', '.env')]) {
+  if (!existsSync(p)) continue
+  try {
+    for (const line of readFileSync(p, 'utf8').split(/\r?\n/)) {
+      const s = line.trim(); if (!s || s.startsWith('#')) continue
+      const i = s.indexOf('='); if (i < 0) continue
+      const k = s.slice(0, i).trim(), v = s.slice(i + 1).trim().replace(/^["']|["']$/g, '')
+      if (!process.env[k]) process.env[k] = v
+    }
+  } catch {}
+}
 
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
@@ -354,7 +371,10 @@ async function main() {
     }
   }
 
-  log('완료')
+  try {
+    const { count } = await sb.from('om_posts').select('*', { count: 'exact', head: true })
+    log(`━━━ 전체 완료! 크리에이터 ${list.length}명 처리 · 저장된 콘텐츠 총 ${count ?? '?'}개 ━━━`)
+  } catch { log('━━━ 전체 완료! ━━━') }
 }
 
 main().catch((e) => { console.error(e); process.exit(1) })
