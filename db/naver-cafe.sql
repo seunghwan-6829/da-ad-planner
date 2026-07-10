@@ -51,13 +51,13 @@ alter table nc_cafes enable row level security;
 alter table nc_posts enable row level security;
 alter table nc_agent enable row level security;
 
--- ── [v1→v2 마이그레이션] v1 테이블을 이미 만든 경우 아래만 실행 ──
--- alter table nc_cafes add column if not exists plan_schedule text not null default '';
--- alter table nc_cafes add column if not exists publish_slot text not null default '';
--- alter table nc_posts add column if not exists origin text not null default 'manual';
--- alter table nc_posts add column if not exists track_due_at timestamptz;
--- alter table nc_posts add column if not exists tracked_at timestamptz;
--- alter table nc_posts add column if not exists views int;
--- alter table nc_posts add column if not exists likes int;
--- alter table nc_posts add column if not exists comments int;
--- create index if not exists idx_nc_posts_track on nc_posts (track_due_at) where tracked_at is null;
+-- ── v1→v2 보강(멱등): v1 때 만든 테이블에도 새 컬럼을 채움. 처음 실행이든 재실행이든 안전. ──
+alter table nc_cafes add column if not exists plan_schedule text not null default '';
+alter table nc_cafes add column if not exists publish_slot text not null default '';
+alter table nc_posts add column if not exists origin text not null default 'manual';
+alter table nc_posts add column if not exists track_due_at timestamptz;
+alter table nc_posts add column if not exists tracked_at timestamptz;
+alter table nc_posts add column if not exists views int;
+alter table nc_posts add column if not exists likes int;
+alter table nc_posts add column if not exists comments int;
+create index if not exists idx_nc_posts_track on nc_posts (track_due_at) where tracked_at is null;

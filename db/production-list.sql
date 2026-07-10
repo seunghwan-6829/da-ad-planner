@@ -16,8 +16,8 @@ create table if not exists production_list (
   unique (source, ref_id)               -- 같은 소재 중복 담기 방지
 );
 
--- 이미 테이블을 만든 뒤라면 아래 한 줄만 실행
--- alter table production_list add column if not exists client_id uuid references clients(id) on delete set null;
+-- 보강(멱등): 이미 테이블을 만든 경우에도 새 컬럼을 채움. 처음 실행이든 재실행이든 안전.
+alter table production_list add column if not exists client_id uuid references clients(id) on delete set null;
 
 create index if not exists idx_prodlist_created on production_list (created_at desc);
 create index if not exists idx_prodlist_status on production_list (status);
