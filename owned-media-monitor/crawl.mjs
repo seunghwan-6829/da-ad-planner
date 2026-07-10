@@ -62,20 +62,29 @@ const log = (...a) => console.log('[om-crawl]', ...a)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 // 만료되는 CDN URL(인스타) → Supabase 스토리지에 받아 영구 공개 URL 반환. 실패 시 null.
+// 일시적 네트워크 순단으로 놓치지 않도록 3회 재시도(+타임아웃). 4xx(만료/삭제)는 즉시 포기.
 async function downloadToStorage(url, path, contentType) {
   if (!url) return null
-  try {
-    const r = await fetch(url)
-    if (!r.ok) return null
-    const buf = Buffer.from(await r.arrayBuffer())
-    if (!buf.length || buf.length > 80 * 1024 * 1024) return null
-    const { error } = await sb.storage.from(STORAGE_BUCKET).upload(path, buf, { contentType, upsert: true })
-    if (error) { log('storage 업로드 실패', error.message); return null }
-    return sb.storage.from(STORAGE_BUCKET).getPublicUrl(path).data.publicUrl
-  } catch (e) {
-    log('다운로드 실패', String(e.message || e).slice(0, 120))
-    return null
+  const timeoutMs = contentType.startsWith('video') ? 180_000 : 30_000
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const r = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) })
+      if (!r.ok) return null
+      const buf = Buffer.from(await r.arrayBuffer())
+      if (!buf.length || buf.length > 80 * 1024 * 1024) return null
+      const { error } = await sb.storage.from(STORAGE_BUCKET).upload(path, buf, { contentType, upsert: true })
+      if (error) { log('storage 업로드 실패', error.message); return null }
+      return sb.storage.from(STORAGE_BUCKET).getPublicUrl(path).data.publicUrl
+    } catch (e) {
+      if (attempt >= 3) {
+        let host = ''; try { host = new URL(url).hostname } catch {}
+        log('다운로드 실패(3회)', String(e?.cause?.code || e.message || e).slice(0, 80), host)
+        return null
+      }
+      await sleep(1500 * attempt)
+    }
   }
+  return null
 }
 
 // 이번 실행에서 안 보인 기존 active 콘텐츠 → ended 표기(best-effort).
@@ -274,8 +283,8 @@ async function saveInstagram(creator, items) {
   const now = new Date().toISOString()
   const reels = (items || []).filter(isReel)
 
-  const { data: existingRows } = await sb.from('om_posts').select('post_id').eq('creator_id', creator.id)
-  const existing = new Set((existingRows || []).map((x) => x.post_id))
+  const { data: existingRows } = await sb.from('om_posts').select('post_id,poster_url').eq('creator_id', creator.id)
+  const existing = new Map((existingRows || []).map((x) => [x.post_id, x.poster_url]))
 
   const seen = new Set()
   const newRows = []
@@ -284,7 +293,14 @@ async function saveInstagram(creator, items) {
     seen.add(postId)
     const views = it.videoViewCount ?? it.videoPlayCount ?? null
     if (existing.has(postId)) {
-      try { await sb.from('om_posts').update({ views, last_seen_at: now, status: 'active' }).eq('post_id', postId) } catch {}
+      const patch = { views, last_seen_at: now, status: 'active' }
+      // 이전 실행에서 포스터 저장이 실패해 만료되는 핫링크로 남은 경우 → 이번에 재저장(자가치유)
+      const oldPoster = existing.get(postId)
+      if (it.displayUrl && (!oldPoster || !oldPoster.includes('/storage/v1/'))) {
+        const healed = await downloadToStorage(it.displayUrl, `posters/${it.shortCode}.jpg`, 'image/jpeg')
+        if (healed) patch.poster_url = healed
+      }
+      try { await sb.from('om_posts').update(patch).eq('post_id', postId) } catch {}
       continue
     }
     // 기본: 영상 다운로드 안 함 → 페이지에서 인스타 임베드(/reel/<code>/embed)로 재생(빠름·저장공간 0).
