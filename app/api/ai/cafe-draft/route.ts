@@ -9,10 +9,11 @@ const MODEL = 'claude-sonnet-4-6'
 // POST { cafe:{name,tone,topics,notes}, topic, extra } → 카페 성질(말투/주제)에 맞춘 글 초안 {title, body}.
 // ⚠️ 사용자 본인 Anthropic 키(x-user-api-key)로만 동작(다른 AI 기능과 동일).
 export async function POST(req: Request) {
-  const apiKey = req.headers.get('x-user-api-key')
+  // 카페 자동화는 회사 공용 키(서버 env) 우선 — 없으면 사용자 키(x-user-api-key)로.
+  const apiKey = process.env.ANTHROPIC_API_KEY || req.headers.get('x-user-api-key')
   if (!apiKey) {
     return NextResponse.json(
-      { error: '마이페이지에서 Anthropic API 키를 입력해야 초안을 생성할 수 있어요.' },
+      { error: 'Vercel 환경변수 ANTHROPIC_API_KEY 를 등록하거나, 마이페이지에서 Anthropic 키를 입력해 주세요.' },
       { status: 401 }
     )
   }

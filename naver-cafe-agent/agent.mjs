@@ -69,6 +69,15 @@ async function getPage() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+// 사람 타이핑 시뮬레이션: 글자당 25~90ms 랜덤 + 가끔 짧은 멈춤(단어 사이) — 자동입력 감지/티 방지.
+async function humanType(page, text) {
+  for (const ch of String(text)) {
+    await page.keyboard.type(ch, { delay: 0 })
+    await sleep(25 + Math.random() * 65)
+    if (ch === ' ' && Math.random() < 0.12) await sleep(200 + Math.random() * 400) // 단어 사이 숨 고르기
+  }
+}
+
 // ── 카페 글 등록(핵심) ──
 async function publishPost(post, cafe) {
   const page = await getPage()
@@ -108,18 +117,18 @@ async function publishPost(post, cafe) {
     }
   }
 
-  // 4) 제목
+  // 4) 제목 — 사람이 타이핑하는 것처럼(자동입력 티 안 나게 랜덤 딜레이)
   const titleBox = page.locator('textarea[placeholder*="제목"], .textarea_input').first()
   await titleBox.click({ timeout: 8000 })
-  await titleBox.fill(post.title)
+  await humanType(page, post.title)
 
-  // 5) 본문(스마트에디터 본문 영역 클릭 후 줄 단위 입력 — 문단 유지)
+  // 5) 본문(스마트에디터 본문 영역 클릭 후 실제 타이핑 — 문단 유지)
   const bodyBox = page.locator('.se-component-content [contenteditable="true"], .se-content [contenteditable="true"], [contenteditable="true"]').first()
   await bodyBox.click({ timeout: 8000 })
   const lines = String(post.body || '').replace(/\r\n/g, '\n').split('\n')
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i]) await page.keyboard.insertText(lines[i])
-    if (i < lines.length - 1) await page.keyboard.press('Enter')
+    if (lines[i]) await humanType(page, lines[i])
+    if (i < lines.length - 1) { await page.keyboard.press('Enter'); await sleep(120 + Math.random() * 240) }
   }
   await sleep(500)
 
@@ -159,12 +168,15 @@ async function tick() {
   log(`발행 시작: [${cafe?.name}] ${post.title}`)
   try {
     const url = await publishPost(post, cafe || {})
+    const now = new Date()
     await sb.from('nc_posts').update({
       status: 'published',
-      published_at: new Date().toISOString(),
+      published_at: now.toISOString(),
       published_url: url,
+      // 24시간 뒤 반응(조회/좋아요/댓글) 측정 예약 — PC 꺼져 있었으면 다음에 켜질 때 밀린 것까지 한번에.
+      track_due_at: new Date(now.getTime() + 24 * 3600 * 1000).toISOString(),
       error: null,
-      updated_at: new Date().toISOString(),
+      updated_at: now.toISOString(),
     }).eq('id', post.id)
     log(`✅ 발행 완료: ${url}`)
   } catch (e) {
@@ -175,14 +187,55 @@ async function tick() {
   }
 }
 
+// ── 24시간 후 반응 추적: 카페 가입자만 열람 가능 → 로그인된 이 브라우저로 직접 방문해 측정.
+//    PC가 꺼져 있어 놓친 것들도 track_due_at 지난 순서로 밀린 만큼 전부 처리(대시보드의 '측정 대기' 소진).
+async function trackReactions() {
+  const { data: due } = await sb
+    .from('nc_posts')
+    .select('id, published_url, title')
+    .not('published_url', 'is', null)
+    .is('tracked_at', null)
+    .lte('track_due_at', new Date().toISOString())
+    .order('track_due_at', { ascending: true })
+    .limit(5) // 틱당 5개씩(밀린 건 다음 틱에 이어서)
+  if (!due?.length) return
+  const page = await getPage()
+  for (const post of due) {
+    try {
+      log(`반응 측정: ${post.title}`)
+      await page.goto(post.published_url, { waitUntil: 'domcontentloaded', timeout: 30000 })
+      await sleep(2500)
+      // iframe 구조(구형 카페)면 본문 프레임에서, 아니면 페이지에서 텍스트 수집
+      let text = ''
+      try {
+        for (const f of page.frames()) { try { text += ' ' + (await f.evaluate(() => document.body?.innerText || '')) } catch {} }
+      } catch { text = await page.evaluate(() => document.body?.innerText || '') }
+      const num = (re) => { const m = text.match(re); return m ? Number(String(m[1]).replace(/,/g, '')) : null }
+      const views = num(/조회\s*([\d,]+)/)
+      const comments = num(/댓글\s*([\d,]+)/)
+      const likes = num(/(?:좋아요|공감)\s*([\d,]+)/)
+      await sb.from('nc_posts').update({
+        views, likes, comments,
+        tracked_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }).eq('id', post.id)
+      log(`  → 조회 ${views ?? '?'} · 좋아요 ${likes ?? '?'} · 댓글 ${comments ?? '?'}`)
+      await sleep(1500 + Math.random() * 2000)
+    } catch (e) {
+      log(`  반응 측정 실패(다음 틱에 재시도): ${String((e && e.message) || e).slice(0, 100)}`)
+    }
+  }
+}
+
 log('네이버 카페 발행 에이전트 시작')
 log(`  프로필: ${PROFILE_DIR}`)
 log(`  브라우저: ${WHALE || '(웨일 못 찾음 — 발행 시 오류로 안내)'}`)
 log('  웹의 [발행 대기] 글을 20초 간격으로 확인합니다. 이 창을 닫으면 멈춥니다.')
 await heartbeat()
 setInterval(heartbeat, 30_000)
-// 순차 루프(브라우저 1개로 하나씩)
+// 순차 루프(브라우저 1개로 하나씩): 발행 → 밀린 반응 측정
 for (;;) {
   try { await tick() } catch (e) { log('루프 오류:', String((e && e.message) || e).slice(0, 200)) }
+  try { await trackReactions() } catch (e) { log('추적 오류:', String((e && e.message) || e).slice(0, 200)) }
   await sleep(20_000)
 }

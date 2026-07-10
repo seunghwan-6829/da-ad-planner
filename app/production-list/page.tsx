@@ -4,18 +4,25 @@
    한 곳에 모아 보고(필터), 항목을 열면 해당 광고 소재가 크롤러 상세처럼 플로팅으로 뜬다. */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Check,
   ChevronLeft,
   ChevronRight,
   ExternalLink,
+  Film,
   ImageOff,
   ListChecks,
   Loader2,
+  Network,
   Trash2,
   X,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
+import { aiFetch } from "@/lib/ai-fetch";
+import { getClients, type Client } from "@/lib/api/clients";
+import { createMindmap } from "@/lib/api/mindmaps";
+import { createContentGuide } from "@/lib/api/content-guides";
 
 type Source = "meta" | "google" | "owned";
 
@@ -28,9 +35,13 @@ type PLItem = {
   media_type: string | null;
   note: string;
   status: "todo" | "doing" | "done";
+  client_id: string | null;
   created_by: string | null;
   created_at: string;
 };
+
+// AI 라우트(loadCreative)의 source 파라미터 매핑: 메타=기본(am), 구글=ga, 온드=om
+const AI_SOURCE: Record<Source, string | undefined> = { meta: undefined, google: "ga", owned: "om" };
 
 type Detail = {
   source: Source;
@@ -146,20 +157,54 @@ function DetailMedia({ d }: { d: Detail }) {
 /* ── 상세 플로팅 모달 ── */
 function DetailModal({
   item,
+  clients,
   onClose,
   onPatched,
   onDeleted,
 }: {
   item: PLItem;
+  clients: Client[];
   onClose: () => void;
   onPatched: (patch: Partial<PLItem>) => void;
   onDeleted: () => void;
 }) {
+  const router = useRouter();
   const [detail, setDetail] = useState<Detail | null>(null);
   const [detailErr, setDetailErr] = useState<string>("");
   const [note, setNote] = useState(item.note || "");
   const [noteSaved, setNoteSaved] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [genMM, setGenMM] = useState(false); // 기획 마인드맵 생성 중
+  const [genCG, setGenCG] = useState(false); // 컨텐츠 가이드 생성 중
+
+  // 크롤러 상세와 동일: 이 소재로 기획 마인드맵 생성(선택된 클라이언트 폴더로) 후 캔버스 이동.
+  async function generateMindmap() {
+    if (!item.client_id) { alert("먼저 아래에서 클라이언트를 지정해 주세요."); return; }
+    setGenMM(true);
+    try {
+      const res = await aiFetch("/api/ai/mindmap", { method: "POST", body: JSON.stringify({ library_id: item.ref_id, source: AI_SOURCE[item.source] }) });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) { alert(j.error || "마인드맵 생성에 실패했어요."); return; }
+      const mm = await createMindmap({ client_id: item.client_id, library_id: item.ref_id, title: item.brand || item.ref_id, source_brand: item.brand || null, source_thumb: item.thumb || null, data: j.data });
+      router.push(`/plan-mindmap/${mm.id}`);
+    } catch { alert("마인드맵 생성 중 오류가 발생했어요."); }
+    finally { setGenMM(false); }
+  }
+
+  async function generateContentGuide() {
+    if (!item.client_id) { alert("먼저 아래에서 클라이언트를 지정해 주세요."); return; }
+    setGenCG(true);
+    try {
+      const res = await aiFetch("/api/ai/content-guide", { method: "POST", body: JSON.stringify({ library_id: item.ref_id, source: AI_SOURCE[item.source] }) });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) { alert(j.error || "컨텐츠 가이드 생성에 실패했어요."); return; }
+      const scenes = j.scenes || [];
+      if (!scenes.length) { alert("장면을 만들지 못했어요. 다시 시도해 주세요."); return; }
+      const cg = await createContentGuide({ client_id: item.client_id, library_id: item.ref_id, title: item.brand || item.ref_id, source_brand: item.brand || null, source_thumb: item.thumb || null, data: { scenes, brand: j.brand || item.brand || "" } });
+      router.push(`/content-guide/${cg.id}`);
+    } catch { alert("컨텐츠 가이드 생성 중 오류가 발생했어요."); }
+    finally { setGenCG(false); }
+  }
 
   useEffect(() => {
     let alive = true;
@@ -178,7 +223,7 @@ function DetailModal({
     };
   }, [item.source, item.ref_id]);
 
-  async function patch(p: { status?: PLItem["status"]; note?: string }) {
+  async function patch(p: { status?: PLItem["status"]; note?: string; client_id?: string | null }) {
     setSaving(true);
     try {
       const r = await fetch("/api/production-list", {
@@ -263,6 +308,41 @@ function DetailModal({
 
           {/* 우: 제작 관리 */}
           <div className="space-y-4 overflow-y-auto p-4">
+            {/* 크롤러 상세와 동일한 제작 도구 — 담아온 뒤에도 그대로 사용 가능 */}
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={generateMindmap}
+                disabled={genMM || genCG}
+                title="이 소재로 기획 마인드맵 생성 (본인 Anthropic 키 필요)"
+                className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/10 disabled:opacity-50"
+              >
+                {genMM ? <Loader2 className="h-4 w-4 animate-spin" /> : <Network className="h-4 w-4" />} 기획 마인드맵
+              </button>
+              <button
+                onClick={generateContentGuide}
+                disabled={genMM || genCG}
+                title="이 소재로 장면별 컨텐츠 가이드 생성 (본인 Anthropic 키 필요)"
+                className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/10 disabled:opacity-50"
+              >
+                {genCG ? <Loader2 className="h-4 w-4 animate-spin" /> : <Film className="h-4 w-4" />} 컨텐츠 가이드
+              </button>
+            </div>
+
+            <div>
+              <p className="mb-1.5 text-xs font-medium text-gray-500 dark:text-gray-400">클라이언트</p>
+              <select
+                value={item.client_id || ""}
+                onChange={(e) => patch({ client_id: e.target.value || null } as Partial<PLItem>)}
+                disabled={saving}
+                className="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
+              >
+                <option value="">미지정</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+
             <div>
               <p className="mb-1.5 text-xs font-medium text-gray-500 dark:text-gray-400">제작 상태</p>
               <div className="flex gap-1.5">
@@ -331,12 +411,19 @@ function DetailModal({
 export default function ProductionListPage() {
   useAuth(); // 로그인 컨텍스트 초기화(다른 도구 페이지와 동일 패턴)
   const [items, setItems] = useState<PLItem[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadErr, setLoadErr] = useState("");
   const [fSource, setFSource] = useState<"all" | Source>("all");
   const [fStatus, setFStatus] = useState<"all" | PLItem["status"]>("all");
+  const [fClient, setFClient] = useState<string>("all"); // 클라이언트 필터('all' | 'none' | client_id)
   const [search, setSearch] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
+
+  useEffect(() => {
+    getClients().then((cs) => setClients(cs || [])).catch(() => {});
+  }, []);
+  const clientMap = useMemo(() => new Map(clients.map((c) => [c.id, c])), [clients]);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -361,9 +448,10 @@ export default function ProductionListPage() {
       (it) =>
         (fSource === "all" || it.source === fSource) &&
         (fStatus === "all" || it.status === fStatus) &&
+        (fClient === "all" || (fClient === "none" ? !it.client_id : it.client_id === fClient)) &&
         (!s || (it.brand || "").toLowerCase().includes(s))
     );
-  }, [items, fSource, fStatus, search]);
+  }, [items, fSource, fStatus, fClient, search]);
 
   const open = openId ? items.find((i) => i.id === openId) || null : null;
   const counts = useMemo(() => {
@@ -395,6 +483,13 @@ export default function ProductionListPage() {
             <option value="todo">대기</option>
             <option value="doing">제작 중</option>
             <option value="done">완료</option>
+          </select>
+          <select value={fClient} onChange={(e) => setFClient(e.target.value)} className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200">
+            <option value="all">클라이언트 전체</option>
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+            <option value="none">미지정</option>
           </select>
           <input
             value={search}
@@ -443,7 +538,16 @@ export default function ProductionListPage() {
               </div>
               <div className="p-2.5">
                 <p className="truncate text-xs font-semibold dark:text-gray-200">{it.brand || it.ref_id}</p>
-                <p className="mt-0.5 text-[11px] text-gray-400">{new Date(it.created_at).toLocaleDateString("ko-KR")}</p>
+                <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-gray-400">
+                  {it.client_id && clientMap.get(it.client_id) ? (
+                    <>
+                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: clientMap.get(it.client_id)!.color || "#94a3b8" }} />
+                      <span className="truncate">{clientMap.get(it.client_id)!.name}</span>
+                      <span className="shrink-0">·</span>
+                    </>
+                  ) : null}
+                  <span className="shrink-0">{new Date(it.created_at).toLocaleDateString("ko-KR")}</span>
+                </p>
               </div>
             </button>
           ))}
@@ -453,6 +557,7 @@ export default function ProductionListPage() {
       {open && (
         <DetailModal
           item={open}
+          clients={clients}
           onClose={() => setOpenId(null)}
           onPatched={(p) => setItems((prev) => prev.map((i) => (i.id === open.id ? { ...i, ...p } : i)))}
           onDeleted={() => {

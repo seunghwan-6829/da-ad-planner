@@ -18,6 +18,7 @@ import {
   LayoutDashboard,
   Lightbulb,
   ListChecks,
+  Lock,
   LogOut,
   Megaphone,
   Network,
@@ -77,9 +78,11 @@ export function Sidebar() {
     setActivePath(window.location.pathname)
   }, [pathname])
 
-  // '메타 광고 크롤러' · '온드미디어 크롤러' 등 수집/자동화 도구는 권한(can_meta_ad) 또는 관리자만 노출
-  const restrictedHrefs = ['/meta-ad-crawler', '/owned-media', '/google-ads', '/naver-cafe']
-  const topItems = navigationTop.filter((item) => !restrictedHrefs.includes(item.href) || canMetaAd)
+  // 크롤러 권한 통일: can_meta_ad(또는 관리자)면 메타·구글·온드 3종 모두 노출.
+  const crawlerHrefs = ['/meta-ad-crawler', '/owned-media', '/google-ads']
+  // 네이버 카페 자동화: 모두에게 보이되 관리자 외에는 잠금(락 아이콘, 클릭 불가).
+  const lockedHrefs = isAdmin ? [] : ['/naver-cafe']
+  const topItems = navigationTop.filter((item) => !crawlerHrefs.includes(item.href) || canMetaAd)
 
   // #6 메타 광고 5일 알림: 신규/종료 변화가 있으면 하단 배지. 닫으면 그 시그니처는 다시 안 뜸(새 변화 시 재등장).
   const [change, setChange] = useState<MetaChange | null>(null)
@@ -125,6 +128,20 @@ export function Sidebar() {
 
       <nav className="flex-1 space-y-1 overflow-y-auto p-4">
         {topItems.map((item) => {
+          // 잠금 메뉴(예: 네이버 카페 자동화 — 관리자 전용): 보이긴 하지만 클릭 불가 + 락 아이콘.
+          if (lockedHrefs.includes(item.href)) {
+            return (
+              <div
+                key={item.name}
+                title="관리자 전용 기능이에요"
+                className="flex cursor-not-allowed items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-gray-400 dark:text-gray-600"
+              >
+                <item.icon className="h-5 w-5" />
+                {item.name}
+                <Lock className="ml-auto h-3.5 w-3.5" />
+              </div>
+            )
+          }
           const isActive = isNavActive(activePath, item.href)
           const className = cn(
             'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',

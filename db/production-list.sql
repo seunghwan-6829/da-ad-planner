@@ -10,10 +10,14 @@ create table if not exists production_list (
   media_type text,                      -- video / image / carousel (배지용)
   note text not null default '',        -- 제작 메모
   status text not null default 'todo' check (status in ('todo','doing','done')),
+  client_id uuid references clients(id) on delete set null, -- 어느 클라이언트용 제작인지(담을 때 선택)
   created_by text,                      -- 담은 사람(email)
   created_at timestamptz not null default now(),
   unique (source, ref_id)               -- 같은 소재 중복 담기 방지
 );
+
+-- 이미 테이블을 만든 뒤라면 아래 한 줄만 실행
+-- alter table production_list add column if not exists client_id uuid references clients(id) on delete set null;
 
 create index if not exists idx_prodlist_created on production_list (created_at desc);
 create index if not exists idx_prodlist_status on production_list (status);

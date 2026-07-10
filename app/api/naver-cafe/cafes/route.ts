@@ -40,7 +40,7 @@ export async function PATCH(req: Request) {
   const id = (b.id || '').toString()
   if (!id) return NextResponse.json({ error: 'id 필요' }, { status: 400 })
   const patch: Record<string, unknown> = {}
-  for (const k of ['name', 'cafe_url', 'board_name', 'tone', 'topics', 'notes'] as const) {
+  for (const k of ['name', 'cafe_url', 'board_name', 'tone', 'topics', 'notes', 'plan_schedule', 'publish_slot'] as const) {
     if (typeof b[k] === 'string') patch[k] = b[k]
   }
   if (typeof b.enabled === 'boolean') patch.enabled = b.enabled

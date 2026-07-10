@@ -1,15 +1,24 @@
 "use client";
 
-/* 네이버 카페 자동화 — 카페별 성질(말투/주제)에 맞춘 AI 초안 → 내가 수정 → [발행 대기]
-   → 내 PC 발행 에이전트(publish-agent.bat)가 로그인된 웨일 프로필로 실제 카페에 자동 등록. */
+/* 네이버 카페 자동화 v2
+   [레이아웃] 페이지 안 좌측 = 카페 패널(대시보드/가입 카페 목록/카페 추가) · 우측 = 대시보드 또는 카페 워크스페이스
+   [대시보드] 현황 통계 + 발행 에이전트 상태 + "놓친 반응 측정" 큐 + 카페 선택형 기획 섹션 + 전체 원고
+   [카페 워크스페이스] 페르소나/주제/기획 일정/발행 예약 설정 + AI 초안(하루 3개, 공용 Claude 키) +
+     원고(클릭 → 수정 후 저장/수정 후 발행/저장/발행 4버튼 플로팅) + 발행 글 목록(24h 반응: 조회/좋아요/댓글)
+   [발행/측정] 내 PC 에이전트가 디버깅(CDP) 브라우저로 사람처럼 실제 타이핑해 등록 + 24h 후 반응 측정(놓친 건 몰아서) */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  BarChart3,
   Bot,
   Coffee,
   ExternalLink,
+  Eye,
+  Heart,
+  LayoutDashboard,
   Loader2,
-  Pencil,
+  MessageCircle,
+  PenLine,
   Plus,
   RefreshCw,
   Save,
@@ -19,16 +28,17 @@ import {
   X,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
-import { aiFetch } from "@/lib/ai-fetch";
 
 type Cafe = {
   id: string;
   name: string;
   cafe_url: string;
   board_name: string;
-  tone: string;
+  tone: string; // 페르소나
   topics: string;
   notes: string;
+  plan_schedule: string;
+  publish_slot: string;
   enabled: boolean;
 };
 
@@ -38,20 +48,20 @@ type Post = {
   title: string;
   body: string;
   status: "draft" | "queued" | "publishing" | "published" | "failed";
+  origin: "manual" | "auto";
   published_at: string | null;
   published_url: string | null;
   error: string | null;
+  track_due_at: string | null;
+  tracked_at: string | null;
+  views: number | null;
+  likes: number | null;
+  comments: number | null;
   created_at: string;
   nc_cafes?: { id: string; name: string } | null;
 };
 
-const STATUS_LABEL: Record<Post["status"], string> = {
-  draft: "초안",
-  queued: "발행 대기",
-  publishing: "발행 중",
-  published: "발행 완료",
-  failed: "실패",
-};
+const STATUS_LABEL: Record<Post["status"], string> = { draft: "초안", queued: "발행 대기", publishing: "발행 중", published: "발행 완료", failed: "실패" };
 const STATUS_CHIP: Record<Post["status"], string> = {
   draft: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300",
   queued: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300",
@@ -59,153 +69,28 @@ const STATUS_CHIP: Record<Post["status"], string> = {
   published: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
   failed: "bg-red-100 text-red-600 dark:bg-red-900/40 dark:text-red-300",
 };
+const inputCls = "w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200";
 
-const inputCls =
-  "w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200";
+const fmtN = (n: number | null | undefined) => (n == null ? "—" : n.toLocaleString());
 
-/* ── 카페 추가/수정 모달 ── */
-function CafeModal({
-  cafe,
-  onClose,
-  onSaved,
-  onDeleted,
-}: {
-  cafe: Cafe | null; // null = 신규
-  onClose: () => void;
-  onSaved: () => void;
-  onDeleted: () => void;
-}) {
-  const [f, setF] = useState({
-    name: cafe?.name || "",
-    cafe_url: cafe?.cafe_url || "",
-    board_name: cafe?.board_name || "",
-    tone: cafe?.tone || "",
-    topics: cafe?.topics || "",
-    notes: cafe?.notes || "",
-  });
-  const [saving, setSaving] = useState(false);
-
-  async function save() {
-    if (!f.name.trim() || !/cafe\.naver\.com\//i.test(f.cafe_url)) {
-      alert("카페 이름과 cafe.naver.com 주소를 입력해 주세요.");
-      return;
-    }
-    setSaving(true);
-    try {
-      const r = await fetch("/api/naver-cafe/cafes", {
-        method: cafe ? "PATCH" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(cafe ? { id: cafe.id, ...f } : f),
-      });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        alert(j.error || "저장 실패 (nc_cafes 테이블 생성 여부 확인)");
-        return;
-      }
-      onSaved();
-      onClose();
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function remove() {
-    if (!cafe) return;
-    if (!confirm(`"${cafe.name}" 카페와 그 글 기록을 모두 삭제할까요?`)) return;
-    const r = await fetch(`/api/naver-cafe/cafes?id=${cafe.id}`, { method: "DELETE" });
-    if (r.ok) {
-      onDeleted();
-      onClose();
-    } else alert("삭제 실패");
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
-      <div className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b p-4 dark:border-gray-800">
-          <h3 className="text-sm font-bold dark:text-gray-100">{cafe ? "카페 설정 수정" : "카페 추가"}</h3>
-          <button onClick={onClose} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-        <div className="space-y-3 p-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">카페 이름 *</label>
-              <input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="예: 강남맘 카페" className={inputCls} />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">게시판 이름</label>
-              <input value={f.board_name} onChange={(e) => setF({ ...f, board_name: e.target.value })} placeholder="비우면 기본 게시판" className={inputCls} />
-            </div>
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">카페 주소 *</label>
-            <input value={f.cafe_url} onChange={(e) => setF({ ...f, cafe_url: e.target.value })} placeholder="https://cafe.naver.com/..." className={inputCls} />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">카페 성질 / 말투</label>
-            <textarea value={f.tone} onChange={(e) => setF({ ...f, tone: e.target.value })} rows={2} placeholder="예: 3040 육아맘 커뮤니티. 존댓말, 이모지 적당히, 솔직 후기 톤 선호" className={inputCls} />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">주로 다룰 주제</label>
-            <textarea value={f.topics} onChange={(e) => setF({ ...f, topics: e.target.value })} rows={2} placeholder="예: 초등 학습지 비교, 공부 습관, 학원 정보" className={inputCls} />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">주의사항</label>
-            <textarea value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} rows={2} placeholder="예: 직접 링크 금지, 브랜드명 직접 언급 금지" className={inputCls} />
-          </div>
-        </div>
-        <div className="flex items-center justify-between border-t p-4 dark:border-gray-800">
-          {cafe ? (
-            <button onClick={remove} className="flex items-center gap-1 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-500 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-950/40">
-              <Trash2 className="h-3.5 w-3.5" /> 삭제
-            </button>
-          ) : (
-            <span />
-          )}
-          <button onClick={save} disabled={saving} className="rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50">
-            {saving ? "저장 중…" : "저장"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ── 글 수정 모달 ── */
-function PostModal({
-  post,
-  onClose,
-  onChanged,
-}: {
-  post: Post;
-  onClose: () => void;
-  onChanged: () => void;
-}) {
+/* ── 원고 플로팅: 제목/본문 + [수정 후 저장][수정 후 발행][저장][발행] + 발행글이면 반응 표시 ── */
+function PostModal({ post, onClose, onChanged }: { post: Post; onClose: () => void; onChanged: () => void }) {
   const [title, setTitle] = useState(post.title);
   const [body, setBody] = useState(post.body);
   const [busy, setBusy] = useState(false);
   const editable = post.status === "draft" || post.status === "failed" || post.status === "queued";
+  const edited = title !== post.title || body !== post.body;
 
-  async function patch(p: { title?: string; body?: string; status?: "draft" | "queued" }) {
+  async function act(withEdit: boolean, status: "draft" | "queued") {
     setBusy(true);
     try {
-      const r = await fetch("/api/naver-cafe/posts", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: post.id, ...p }),
-      });
-      if (!r.ok) {
-        const j = await r.json().catch(() => ({}));
-        alert(j.error || "저장 실패");
-        return false;
-      }
+      const payload: Record<string, unknown> = { id: post.id, status };
+      if (withEdit) { payload.title = title; payload.body = body; }
+      const r = await fetch("/api/naver-cafe/posts", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); alert(j.error || "처리 실패"); return; }
       onChanged();
-      return true;
-    } finally {
-      setBusy(false);
-    }
+      onClose();
+    } finally { setBusy(false); }
   }
 
   return (
@@ -214,48 +99,126 @@ function PostModal({
         <div className="flex items-center justify-between border-b p-4 dark:border-gray-800">
           <div className="flex items-center gap-2">
             <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${STATUS_CHIP[post.status]}`}>{STATUS_LABEL[post.status]}</span>
+            {post.origin === "auto" && <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">AI 초안</span>}
             <span className="text-sm font-bold dark:text-gray-100">{post.nc_cafes?.name}</span>
           </div>
-          <button onClick={onClose} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800">
-            <X className="h-5 w-5" />
-          </button>
+          <button onClick={onClose} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"><X className="h-5 w-5" /></button>
         </div>
         <div className="flex-1 space-y-3 overflow-y-auto p-4">
           {post.status === "failed" && post.error ? (
             <p className="rounded-lg bg-red-50 p-2.5 text-xs text-red-600 dark:bg-red-950/40 dark:text-red-300">실패 원인: {post.error}</p>
           ) : null}
+          {post.status === "published" && (
+            <div className="flex flex-wrap items-center gap-3 rounded-lg bg-emerald-50 p-3 text-xs dark:bg-emerald-950/30">
+              <span className="font-bold text-emerald-700 dark:text-emerald-300">24시간 반응</span>
+              {post.tracked_at ? (
+                <>
+                  <span className="flex items-center gap-1 font-semibold text-gray-700 dark:text-gray-200"><Eye className="h-3.5 w-3.5 text-sky-500" /> {fmtN(post.views)}</span>
+                  <span className="flex items-center gap-1 font-semibold text-gray-700 dark:text-gray-200"><Heart className="h-3.5 w-3.5 text-rose-500" /> {fmtN(post.likes)}</span>
+                  <span className="flex items-center gap-1 font-semibold text-gray-700 dark:text-gray-200"><MessageCircle className="h-3.5 w-3.5 text-amber-500" /> {fmtN(post.comments)}</span>
+                  <span className="text-gray-400">측정 {new Date(post.tracked_at).toLocaleString("ko-KR")}</span>
+                </>
+              ) : post.track_due_at && new Date(post.track_due_at) <= new Date() ? (
+                <span className="text-amber-600 dark:text-amber-300">측정 대기 — 에이전트가 켜지면 자동 측정돼요</span>
+              ) : (
+                <span className="text-gray-500">발행 24시간 후({post.track_due_at ? new Date(post.track_due_at).toLocaleString("ko-KR") : "—"}) 자동 측정</span>
+              )}
+              {post.published_url && (
+                <a href={post.published_url} target="_blank" rel="noopener noreferrer" className="ml-auto flex items-center gap-1 text-emerald-700 hover:underline dark:text-emerald-300"><ExternalLink className="h-3.5 w-3.5" /> 글 보기</a>
+              )}
+            </div>
+          )}
           <input value={title} onChange={(e) => setTitle(e.target.value)} disabled={!editable} placeholder="제목" className={inputCls} />
-          <textarea value={body} onChange={(e) => setBody(e.target.value)} disabled={!editable} rows={14} placeholder="본문" className={inputCls} />
+          <textarea value={body} onChange={(e) => setBody(e.target.value)} disabled={!editable} rows={13} placeholder="본문" className={inputCls} />
+        </div>
+        {editable && (
+          <div className="flex flex-wrap items-center justify-end gap-2 border-t p-4 dark:border-gray-800">
+            <button onClick={() => act(true, "draft")} disabled={busy || !edited} title={edited ? "수정한 내용으로 저장" : "수정된 내용이 없어요"} className="flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-40 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+              <PenLine className="h-3.5 w-3.5" /> 수정 후 저장
+            </button>
+            <button onClick={() => act(true, "queued")} disabled={busy || !edited} title={edited ? "수정한 내용으로 발행 대기" : "수정된 내용이 없어요"} className="flex items-center gap-1 rounded-lg border border-primary/50 bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/10 disabled:opacity-40">
+              <PenLine className="h-3.5 w-3.5" /> 수정 후 발행
+            </button>
+            <button onClick={() => act(false, "draft")} disabled={busy} className="flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+              <Save className="h-3.5 w-3.5" /> 저장
+            </button>
+            <button onClick={() => act(false, "queued")} disabled={busy} title="에이전트가 로그인된 브라우저로 실제 타이핑해 등록해요" className="flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50">
+              <Send className="h-3.5 w-3.5" /> 발행
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── 기획(수동 작성) 플로팅: 제목/원고 (+대시보드에선 카페 선택) ── */
+function ComposeModal({ cafes, fixedCafeId, onClose, onSaved }: { cafes: Cafe[]; fixedCafeId: string | null; onClose: () => void; onSaved: () => void }) {
+  const [cafeId, setCafeId] = useState(fixedCafeId || cafes[0]?.id || "");
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function save(status: "draft" | "queued") {
+    if (!cafeId) { alert("카페를 선택해 주세요."); return; }
+    if (!title.trim()) { alert("제목을 입력해 주세요."); return; }
+    setBusy(true);
+    try {
+      const r = await fetch("/api/naver-cafe/posts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cafe_id: cafeId, title, body, status }) });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); alert(j.error || "저장 실패"); return; }
+      onSaved();
+      onClose();
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b p-4 dark:border-gray-800">
+          <h3 className="text-sm font-bold dark:text-gray-100">직접 기획하기</h3>
+          <button onClick={onClose} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"><X className="h-5 w-5" /></button>
+        </div>
+        <div className="flex-1 space-y-3 overflow-y-auto p-4">
+          {fixedCafeId ? (
+            <p className="text-xs text-gray-500 dark:text-gray-400">카페: <b className="dark:text-gray-200">{cafes.find((c) => c.id === fixedCafeId)?.name}</b></p>
+          ) : (
+            <select value={cafeId} onChange={(e) => setCafeId(e.target.value)} className={inputCls}>
+              {cafes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          )}
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="제목" className={inputCls} />
+          <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={12} placeholder="원고(본문)" className={inputCls} />
         </div>
         <div className="flex items-center justify-end gap-2 border-t p-4 dark:border-gray-800">
-          {post.published_url && (
-            <a href={post.published_url} target="_blank" rel="noopener noreferrer" className="mr-auto flex items-center gap-1 text-xs text-blue-500 hover:underline">
-              <ExternalLink className="h-3.5 w-3.5" /> 발행된 글 보기
-            </a>
-          )}
-          {editable && (
-            <>
-              <button
-                onClick={async () => {
-                  if (await patch({ title, body, status: "draft" })) onClose();
-                }}
-                disabled={busy}
-                className="flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
-              >
-                <Save className="h-3.5 w-3.5" /> 초안으로 저장
-              </button>
-              <button
-                onClick={async () => {
-                  if (await patch({ title, body, status: "queued" })) onClose();
-                }}
-                disabled={busy}
-                className="flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-              >
-                <Send className="h-3.5 w-3.5" /> 발행 대기로
-              </button>
-            </>
-          )}
+          <button onClick={() => save("draft")} disabled={busy} className="flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"><Save className="h-3.5 w-3.5" /> 저장</button>
+          <button onClick={() => save("queued")} disabled={busy} className="flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"><Send className="h-3.5 w-3.5" /> 발행 대기</button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── 원고 한 줄(리스트 공용) ── */
+function PostRow({ p, showCafe, onOpen, onQuick, onDelete }: { p: Post; showCafe?: boolean; onOpen: () => void; onQuick: (status: "draft" | "queued") => void; onDelete: () => void }) {
+  return (
+    <div className="flex items-center gap-3 py-2">
+      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${STATUS_CHIP[p.status]}`}>{STATUS_LABEL[p.status]}</span>
+      {p.origin === "auto" && <Sparkles className="h-3.5 w-3.5 shrink-0 text-violet-500" aria-label="AI 초안" />}
+      <button onClick={onOpen} className="min-w-0 flex-1 text-left">
+        <p className="truncate text-sm font-medium hover:text-primary dark:text-gray-200">{p.title}</p>
+        <p className="truncate text-[11px] text-gray-400">
+          {showCafe ? `${p.nc_cafes?.name || ""} · ` : ""}{new Date(p.created_at).toLocaleString("ko-KR")}
+          {p.status === "published" && p.tracked_at ? ` · 조회 ${fmtN(p.views)} · 좋아요 ${fmtN(p.likes)} · 댓글 ${fmtN(p.comments)}` : ""}
+          {p.status === "failed" && p.error ? ` · ${p.error.slice(0, 50)}` : ""}
+        </p>
+      </button>
+      <div className="flex shrink-0 items-center gap-1.5">
+        {p.status === "draft" && <button onClick={() => onQuick("queued")} className="rounded-lg bg-primary px-2.5 py-1 text-[11px] font-medium text-white">발행 대기</button>}
+        {p.status === "queued" && <button onClick={() => onQuick("draft")} className="rounded-lg border border-gray-200 px-2.5 py-1 text-[11px] font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">대기 취소</button>}
+        {p.status === "publishing" && <Loader2 className="h-4 w-4 animate-spin text-amber-500" />}
+        {p.status === "failed" && <button onClick={() => onQuick("queued")} className="flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1 text-[11px] font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"><RefreshCw className="h-3 w-3" /> 재시도</button>}
+        {p.published_url && <a href={p.published_url} target="_blank" rel="noopener noreferrer" className="rounded-lg border border-gray-200 px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"><ExternalLink className="h-3 w-3" /></a>}
+        {p.status !== "publishing" && <button onClick={onDelete} className="rounded-lg p-1 text-gray-300 hover:text-red-500"><Trash2 className="h-3.5 w-3.5" /></button>}
       </div>
     </div>
   );
@@ -263,315 +226,340 @@ function PostModal({
 
 /* ── 메인 ── */
 export default function NaverCafePage() {
-  const { profile } = useAuth();
+  const { isAdmin, loading: authLoading } = useAuth();
   const [cafes, setCafes] = useState<Cafe[]>([]);
   const [posts, setPosts] = useState<Post[]>([]);
   const [agentOnline, setAgentOnline] = useState<boolean | null>(null);
   const [loadErr, setLoadErr] = useState("");
-
-  // 작성 폼
-  const [selCafe, setSelCafe] = useState("");
-  const [topic, setTopic] = useState("");
-  const [extra, setExtra] = useState("");
-  const [genBusy, setGenBusy] = useState(false);
-  const [draftTitle, setDraftTitle] = useState("");
-  const [draftBody, setDraftBody] = useState("");
-  const [saveBusy, setSaveBusy] = useState(false);
-
-  const [cafeModal, setCafeModal] = useState<Cafe | null | "new">(null);
+  const [sel, setSel] = useState<string | "dash">("dash"); // 좌측 패널 선택(대시보드 또는 카페 id)
   const [postModal, setPostModal] = useState<Post | null>(null);
-  const [fStatus, setFStatus] = useState<"all" | Post["status"]>("all");
+  const [compose, setCompose] = useState<null | { fixed: string | null }>(null);
+  const [addingCafe, setAddingCafe] = useState(false);
+  const [newCafe, setNewCafe] = useState({ name: "", cafe_url: "", board_name: "" });
+  const [cafeForm, setCafeForm] = useState<Partial<Cafe>>({});
+  const [savingCafe, setSavingCafe] = useState(false);
+  const [genBusy, setGenBusy] = useState(false);
 
   const loadAll = useCallback(() => {
     fetch("/api/naver-cafe/cafes")
-      .then(async (r) => {
-        const j = await r.json().catch(() => []);
-        if (!r.ok) throw new Error((j as { error?: string }).error);
-        setCafes(j as Cafe[]);
-        setLoadErr("");
-      })
-      .catch(() => setLoadErr("데이터를 불러오지 못했어요. nc_cafes / nc_posts 테이블이 생성됐는지 확인해 주세요."));
-    fetch("/api/naver-cafe/posts")
-      .then((r) => (r.ok ? r.json() : []))
-      .then((j) => setPosts(j as Post[]))
-      .catch(() => {});
-    fetch("/api/naver-cafe/agent")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => j && setAgentOnline(!!j.online))
-      .catch(() => {});
+      .then(async (r) => { const j = await r.json().catch(() => []); if (!r.ok) throw new Error(); setCafes(j as Cafe[]); setLoadErr(""); })
+      .catch(() => setLoadErr("데이터를 불러오지 못했어요. db/naver-cafe.sql(v2 마이그레이션 포함)이 실행됐는지 확인해 주세요."));
+    fetch("/api/naver-cafe/posts").then((r) => (r.ok ? r.json() : [])).then((j) => setPosts(j as Post[])).catch(() => {});
+    fetch("/api/naver-cafe/agent").then((r) => (r.ok ? r.json() : null)).then((j) => j && setAgentOnline(!!j.online)).catch(() => {});
   }, []);
+  useEffect(() => { loadAll(); const t = setInterval(loadAll, 15_000); return () => clearInterval(t); }, [loadAll]);
 
+  const cafe = sel !== "dash" ? cafes.find((c) => c.id === sel) || null : null;
   useEffect(() => {
+    // 카페 선택 시 설정 폼 동기화
+    if (cafe) setCafeForm({ tone: cafe.tone, topics: cafe.topics, notes: cafe.notes, plan_schedule: cafe.plan_schedule, publish_slot: cafe.publish_slot, board_name: cafe.board_name });
+  }, [cafe?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function addCafe() {
+    if (!newCafe.name.trim() || !/cafe\.naver\.com\//i.test(newCafe.cafe_url)) { alert("카페 이름과 cafe.naver.com 주소를 입력해 주세요."); return; }
+    const r = await fetch("/api/naver-cafe/cafes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(newCafe) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { alert(j.error || "추가 실패"); return; }
+    setNewCafe({ name: "", cafe_url: "", board_name: "" });
+    setAddingCafe(false);
     loadAll();
-    const t = setInterval(loadAll, 15_000); // 발행 진행 상태 갱신
-    return () => clearInterval(t);
-  }, [loadAll]);
+    if (j.cafe?.id) setSel(j.cafe.id);
+  }
 
-  useEffect(() => {
-    if (!selCafe && cafes.length) setSelCafe(cafes[0].id);
-  }, [cafes, selCafe]);
+  async function saveCafeForm() {
+    if (!cafe) return;
+    setSavingCafe(true);
+    try {
+      const r = await fetch("/api/naver-cafe/cafes", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: cafe.id, ...cafeForm }) });
+      if (!r.ok) { alert("저장 실패"); return; }
+      loadAll();
+    } finally { setSavingCafe(false); }
+  }
 
-  const cafe = cafes.find((c) => c.id === selCafe) || null;
+  async function removeCafe() {
+    if (!cafe) return;
+    if (!confirm(`"${cafe.name}" 카페와 글 기록을 모두 삭제할까요?`)) return;
+    await fetch(`/api/naver-cafe/cafes?id=${cafe.id}`, { method: "DELETE" });
+    setSel("dash");
+    loadAll();
+  }
 
-  async function generate() {
-    if (!cafe) {
-      alert("먼저 카페를 추가/선택해 주세요.");
-      return;
-    }
-    if (!topic.trim()) {
-      alert("글 주제를 입력해 주세요.");
-      return;
-    }
+  async function genDrafts() {
+    if (!cafe) return;
     setGenBusy(true);
     try {
-      const r = await aiFetch("/api/ai/cafe-draft", {
-        method: "POST",
-        body: JSON.stringify({ cafe: { name: cafe.name, tone: cafe.tone, topics: cafe.topics, notes: cafe.notes }, topic, extra }),
-      });
+      const r = await fetch("/api/naver-cafe/auto-drafts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cafe_id: cafe.id }) });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        alert(j.error || "초안 생성 실패");
-        return;
-      }
-      setDraftTitle(j.title || "");
-      setDraftBody(j.body || "");
-    } finally {
-      setGenBusy(false);
-    }
-  }
-
-  async function saveDraft(status: "draft" | "queued") {
-    if (!cafe) return;
-    if (!draftTitle.trim()) {
-      alert("제목이 비어 있어요.");
-      return;
-    }
-    setSaveBusy(true);
-    try {
-      const r = await fetch("/api/naver-cafe/posts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cafe_id: cafe.id, title: draftTitle, body: draftBody, status, created_by: profile?.email ?? null }),
-      });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        alert(j.error || "저장 실패");
-        return;
-      }
-      setDraftTitle("");
-      setDraftBody("");
-      setTopic("");
-      setExtra("");
+      if (!r.ok) { alert(j.error || "초안 생성 실패"); return; }
+      if (!j.made) alert("오늘 분량(3개)이 이미 채워져 있어요. 내일 아침 자동으로 다시 생성돼요.");
       loadAll();
-    } finally {
-      setSaveBusy(false);
-    }
+    } finally { setGenBusy(false); }
   }
 
-  async function quickPatch(post: Post, p: { status?: "draft" | "queued" }) {
-    await fetch("/api/naver-cafe/posts", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: post.id, ...p }),
-    });
+  async function quickPatch(p: Post, status: "draft" | "queued") {
+    await fetch("/api/naver-cafe/posts", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: p.id, status }) });
     loadAll();
   }
-
-  async function removePost(post: Post) {
+  async function removePost(p: Post) {
     if (!confirm("이 글을 삭제할까요?")) return;
-    await fetch(`/api/naver-cafe/posts?id=${post.id}`, { method: "DELETE" });
+    await fetch(`/api/naver-cafe/posts?id=${p.id}`, { method: "DELETE" });
     loadAll();
   }
 
-  const counts = useMemo(() => {
-    const c: Record<string, number> = { all: posts.length, draft: 0, queued: 0, publishing: 0, published: 0, failed: 0 };
-    for (const p of posts) c[p.status]++;
-    return c;
+  const stats = useMemo(() => {
+    const s = { queued: 0, published: 0, failed: 0, trackWait: 0 };
+    const now = Date.now();
+    for (const p of posts) {
+      if (p.status === "queued" || p.status === "publishing") s.queued++;
+      if (p.status === "published") s.published++;
+      if (p.status === "failed") s.failed++;
+      if (p.published_url && !p.tracked_at && p.track_due_at && new Date(p.track_due_at).getTime() <= now) s.trackWait++;
+    }
+    return s;
   }, [posts]);
-  const shown = fStatus === "all" ? posts : posts.filter((p) => p.status === fStatus);
+  const trackQueue = useMemo(() => posts.filter((p) => p.published_url && !p.tracked_at && p.track_due_at && new Date(p.track_due_at) <= new Date()), [posts]);
+  const cafePosts = useMemo(() => (cafe ? posts.filter((p) => p.cafe_id === cafe.id) : []), [posts, cafe]);
+
+  // 관리자 전용(사이드바에도 잠금 표시 + 직접 URL 진입 차단)
+  if (!authLoading && !isAdmin) {
+    return (
+      <div className="flex h-[70vh] flex-col items-center justify-center gap-3 text-center">
+        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-gray-100 dark:bg-gray-800"><Bot className="h-7 w-7 text-gray-400" /></div>
+        <p className="text-sm font-semibold dark:text-gray-200">네이버 카페 자동화는 관리자 전용 기능이에요</p>
+        <p className="text-xs text-gray-400">필요하면 관리자에게 요청해 주세요.</p>
+      </div>
+    );
+  }
+
+  const agentBadge = (
+    <div
+      className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium ${agentOnline ? "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300" : "border-gray-200 bg-gray-50 text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400"}`}
+      title={agentOnline ? "발행 대기 글을 실제 타이핑으로 등록하고, 24시간 지난 발행 글 반응을 측정합니다" : "내 PC에서 naver-cafe-agent/publish-agent.bat 실행 시 발행·반응측정이 자동으로 돌아요"}
+    >
+      <Bot className="h-4 w-4" /> 발행 에이전트 {agentOnline == null ? "확인 중…" : agentOnline ? "온라인" : "오프라인"}
+    </div>
+  );
 
   return (
-    <div className="p-6">
-      {/* 헤더 + 에이전트 상태 */}
-      <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="flex items-center gap-2 text-xl font-bold dark:text-gray-100">
-            <Coffee className="h-6 w-6 text-primary" /> 네이버 카페 자동화
-          </h1>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            카페 성질에 맞춘 AI 초안 → 내가 수정 → 발행 대기 → 내 PC 에이전트가 자동 등록
-          </p>
+    <div className="flex h-[calc(100vh-0px)]">
+      {/* ── 페이지 내부 좌측: 카페 패널 ── */}
+      <div className="flex w-56 shrink-0 flex-col border-r bg-white dark:border-gray-800 dark:bg-gray-950">
+        <div className="border-b p-3 dark:border-gray-800">
+          <p className="flex items-center gap-1.5 text-sm font-bold dark:text-gray-100"><Coffee className="h-4 w-4 text-primary" /> 네이버 카페</p>
         </div>
-        <div
-          className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium ${
-            agentOnline
-              ? "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
-              : "border-gray-200 bg-gray-50 text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400"
-          }`}
-          title={agentOnline ? "발행 대기 글이 자동으로 등록됩니다" : "내 PC에서 naver-cafe-agent/publish-agent.bat 을 실행하면 자동 발행됩니다"}
-        >
-          <Bot className="h-4 w-4" />
-          발행 에이전트 {agentOnline == null ? "확인 중…" : agentOnline ? "온라인" : "오프라인 (publish-agent.bat 실행)"}
-        </div>
-      </div>
-
-      {loadErr && (
-        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{loadErr}</div>
-      )}
-
-      {/* 카페 관리 */}
-      <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-bold dark:text-gray-100">가입한 카페 ({cafes.length})</h2>
-          <button onClick={() => setCafeModal("new")} className="flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white">
-            <Plus className="h-3.5 w-3.5" /> 카페 추가
+        <div className="flex-1 space-y-1 overflow-y-auto p-2">
+          <button onClick={() => setSel("dash")} className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium ${sel === "dash" ? "bg-primary text-white" : "text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"}`}>
+            <LayoutDashboard className="h-4 w-4" /> 대시보드
           </button>
-        </div>
-        {cafes.length === 0 ? (
-          <p className="py-4 text-center text-sm text-gray-400">카페를 추가하고 성질(말투/주제)을 설정하면, AI 초안이 그 카페 톤에 맞게 생성돼요.</p>
-        ) : (
-          <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-            {cafes.map((c) => (
-              <button
-                key={c.id}
-                onClick={() => setCafeModal(c)}
-                className="group rounded-xl border border-gray-200 p-3 text-left transition hover:border-primary/50 hover:shadow-sm dark:border-gray-700"
-              >
-                <div className="flex items-center justify-between">
-                  <p className="truncate text-sm font-semibold dark:text-gray-200">{c.name}</p>
-                  <Pencil className="h-3.5 w-3.5 shrink-0 text-gray-300 group-hover:text-primary" />
-                </div>
-                <p className="mt-1 truncate text-[11px] text-gray-400">{c.cafe_url.replace(/^https?:\/\//, "")}{c.board_name ? ` · ${c.board_name}` : ""}</p>
-                <p className="mt-1.5 line-clamp-2 text-xs text-gray-500 dark:text-gray-400">{c.tone || "말투/성질 미설정"}</p>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* 글 작성 */}
-      <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
-        <h2 className="mb-3 text-sm font-bold dark:text-gray-100">글 작성</h2>
-        <div className="mb-3 grid gap-2 md:grid-cols-[200px_1fr_auto]">
-          <select value={selCafe} onChange={(e) => setSelCafe(e.target.value)} className={inputCls}>
-            {cafes.length === 0 && <option value="">카페를 먼저 추가하세요</option>}
-            {cafes.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-          <input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="글 주제 (예: 초등 수학 학습지 3개월 써본 솔직 후기)" className={inputCls} />
-          <button
-            onClick={generate}
-            disabled={genBusy}
-            className="flex items-center justify-center gap-1.5 rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50"
-          >
-            {genBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-            {genBusy ? "생성 중…" : "AI 초안 생성"}
-          </button>
-        </div>
-        <input value={extra} onChange={(e) => setExtra(e.target.value)} placeholder="추가 요청(선택) — 예: 가격 언급하지 말고, 아이 반응 위주로" className={`${inputCls} mb-3`} />
-        {(draftTitle || draftBody) && (
-          <div className="space-y-2 rounded-xl border border-dashed border-primary/40 bg-primary/[0.03] p-3 dark:bg-primary/[0.06]">
-            <input value={draftTitle} onChange={(e) => setDraftTitle(e.target.value)} placeholder="제목" className={inputCls} />
-            <textarea value={draftBody} onChange={(e) => setDraftBody(e.target.value)} rows={10} placeholder="본문 (수정해서 발행하세요)" className={inputCls} />
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => saveDraft("draft")}
-                disabled={saveBusy}
-                className="flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
-              >
-                <Save className="h-3.5 w-3.5" /> 초안 저장
-              </button>
-              <button
-                onClick={() => saveDraft("queued")}
-                disabled={saveBusy}
-                title={agentOnline ? "에이전트가 곧 자동 등록합니다" : "에이전트가 켜지면 자동 등록됩니다"}
-                className="flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-              >
-                <Send className="h-3.5 w-3.5" /> 발행 대기
-              </button>
+          <p className="px-2.5 pt-2 text-[10px] font-bold uppercase text-gray-400">가입한 카페</p>
+          {cafes.map((c) => (
+            <button key={c.id} onClick={() => setSel(c.id)} className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium ${sel === c.id ? "bg-primary text-white" : "text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"}`}>
+              <span className="truncate">{c.name}</span>
+            </button>
+          ))}
+          {addingCafe ? (
+            <div className="space-y-1.5 rounded-lg border border-dashed border-gray-300 p-2 dark:border-gray-700">
+              <input value={newCafe.name} onChange={(e) => setNewCafe({ ...newCafe, name: e.target.value })} placeholder="카페 이름" className={inputCls} />
+              <input value={newCafe.cafe_url} onChange={(e) => setNewCafe({ ...newCafe, cafe_url: e.target.value })} placeholder="https://cafe.naver.com/..." className={inputCls} />
+              <input value={newCafe.board_name} onChange={(e) => setNewCafe({ ...newCafe, board_name: e.target.value })} placeholder="게시판(선택)" className={inputCls} />
+              <div className="flex gap-1.5">
+                <button onClick={addCafe} className="flex-1 rounded-lg bg-primary px-2 py-1.5 text-xs font-medium text-white">추가</button>
+                <button onClick={() => setAddingCafe(false)} className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs dark:border-gray-700 dark:text-gray-300">취소</button>
+              </div>
             </div>
-          </div>
-        )}
+          ) : (
+            <button onClick={() => setAddingCafe(true)} className="flex w-full items-center gap-2 rounded-lg border border-dashed border-gray-300 px-2.5 py-2 text-sm text-gray-500 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-800">
+              <Plus className="h-4 w-4" /> 카페 추가
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* 글 목록 */}
-      <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-bold dark:text-gray-100">글 목록</h2>
-          <div className="flex flex-wrap gap-1">
-            {(["all", "draft", "queued", "publishing", "published", "failed"] as const).map((s) => (
-              <button
-                key={s}
-                onClick={() => setFStatus(s)}
-                className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-                  fStatus === s ? "bg-primary text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
-                }`}
-              >
-                {s === "all" ? "전체" : STATUS_LABEL[s]} {counts[s] ?? 0}
-              </button>
-            ))}
-          </div>
-        </div>
-        {shown.length === 0 ? (
-          <p className="py-6 text-center text-sm text-gray-400">글이 없어요. 위에서 AI 초안을 만들어 시작해 보세요.</p>
-        ) : (
-          <div className="divide-y dark:divide-gray-800">
-            {shown.map((p) => (
-              <div key={p.id} className="flex items-center gap-3 py-2.5">
-                <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${STATUS_CHIP[p.status]}`}>{STATUS_LABEL[p.status]}</span>
-                <button onClick={() => setPostModal(p)} className="min-w-0 flex-1 text-left">
-                  <p className="truncate text-sm font-medium hover:text-primary dark:text-gray-200">{p.title}</p>
-                  <p className="truncate text-[11px] text-gray-400">
-                    {p.nc_cafes?.name} · {new Date(p.created_at).toLocaleString("ko-KR")}
-                    {p.status === "failed" && p.error ? ` · ${p.error.slice(0, 60)}` : ""}
-                  </p>
+      {/* ── 우측: 대시보드 or 카페 워크스페이스 ── */}
+      <div className="flex-1 overflow-y-auto p-6">
+        {loadErr && <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{loadErr}</div>}
+
+        {sel === "dash" ? (
+          <>
+            <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h1 className="flex items-center gap-2 text-xl font-bold dark:text-gray-100"><BarChart3 className="h-6 w-6 text-primary" /> 카페 자동화 대시보드</h1>
+                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">카페별 페르소나 초안(매일 3개) → 검수 → 실제 타이핑 발행 → 24시간 반응 측정</p>
+              </div>
+              {agentBadge}
+            </div>
+
+            {/* 현황 통계 */}
+            <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+              {[
+                { label: "가입 카페", value: cafes.length },
+                { label: "발행 대기·중", value: stats.queued },
+                { label: "발행 완료", value: stats.published },
+                { label: "반응 측정 대기", value: stats.trackWait, warn: stats.trackWait > 0 },
+              ].map((s) => (
+                <div key={s.label} className={`rounded-2xl border p-4 ${s.warn ? "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30" : "border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900"}`}>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">{s.label}</p>
+                  <p className="mt-1 text-2xl font-bold dark:text-gray-100">{s.value}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* 놓친/대기 중 반응 측정 큐 */}
+            <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+              <div className="mb-2 flex items-center justify-between">
+                <h2 className="text-sm font-bold dark:text-gray-100">반응 측정 대기 ({trackQueue.length})</h2>
+                <p className="text-[11px] text-gray-400">PC가 꺼져 있어 놓친 것 포함 — 에이전트가 켜지면 순서대로 한 번에 측정돼요</p>
+              </div>
+              {trackQueue.length === 0 ? (
+                <p className="py-3 text-center text-xs text-gray-400">측정 대기 중인 글이 없어요.</p>
+              ) : (
+                <div className="divide-y dark:divide-gray-800">
+                  {trackQueue.map((p) => (
+                    <div key={p.id} className="flex items-center gap-3 py-2 text-sm">
+                      <span className="min-w-0 flex-1 truncate dark:text-gray-200">{p.title}</span>
+                      <span className="shrink-0 text-[11px] text-gray-400">{p.nc_cafes?.name} · 예정 {p.track_due_at ? new Date(p.track_due_at).toLocaleString("ko-KR") : "—"}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* 대시보드 기획 섹션(카페 선택형) */}
+            <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-sm font-bold dark:text-gray-100">기획하기</h2>
+                  <p className="mt-0.5 text-xs text-gray-400">직접 제목/원고를 쓰고 어느 카페에 저장할지 선택</p>
+                </div>
+                <button onClick={() => setCompose({ fixed: null })} disabled={!cafes.length} className="flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-sm font-medium text-white disabled:opacity-50">
+                  <PenLine className="h-4 w-4" /> 새 기획
                 </button>
-                <div className="flex shrink-0 items-center gap-1.5">
-                  {p.status === "draft" && (
-                    <button onClick={() => quickPatch(p, { status: "queued" })} className="flex items-center gap-1 rounded-lg bg-primary px-2.5 py-1 text-[11px] font-medium text-white">
-                      <Send className="h-3 w-3" /> 발행 대기
-                    </button>
-                  )}
-                  {p.status === "queued" && (
-                    <button onClick={() => quickPatch(p, { status: "draft" })} className="rounded-lg border border-gray-200 px-2.5 py-1 text-[11px] font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
-                      대기 취소
-                    </button>
-                  )}
-                  {p.status === "publishing" && <Loader2 className="h-4 w-4 animate-spin text-amber-500" />}
-                  {p.status === "failed" && (
-                    <button onClick={() => quickPatch(p, { status: "queued" })} className="flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1 text-[11px] font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
-                      <RefreshCw className="h-3 w-3" /> 재시도
-                    </button>
-                  )}
-                  {p.published_url && (
-                    <a href={p.published_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1 text-[11px] font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
-                      <ExternalLink className="h-3 w-3" /> 글 보기
-                    </a>
-                  )}
-                  {p.status !== "publishing" && (
-                    <button onClick={() => removePost(p)} className="rounded-lg p-1 text-gray-300 hover:text-red-500">
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  )}
+              </div>
+            </div>
+
+            {/* 전체 원고 최근순 */}
+            <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+              <h2 className="mb-2 text-sm font-bold dark:text-gray-100">전체 원고</h2>
+              {posts.length === 0 ? (
+                <p className="py-4 text-center text-xs text-gray-400">아직 원고가 없어요. 카페를 추가하고 AI 초안을 받아보세요.</p>
+              ) : (
+                <div className="divide-y dark:divide-gray-800">
+                  {posts.slice(0, 30).map((p) => (
+                    <PostRow key={p.id} p={p} showCafe onOpen={() => setPostModal(p)} onQuick={(s) => quickPatch(p, s)} onDelete={() => removePost(p)} />
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        ) : cafe ? (
+          <>
+            <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h1 className="text-xl font-bold dark:text-gray-100">{cafe.name}</h1>
+                <a href={cafe.cafe_url} target="_blank" rel="noopener noreferrer" className="mt-0.5 flex items-center gap-1 text-xs text-blue-500 hover:underline">
+                  {cafe.cafe_url.replace(/^https?:\/\//, "")} <ExternalLink className="h-3 w-3" />
+                </a>
+              </div>
+              <div className="flex items-center gap-2">
+                {agentBadge}
+                <button onClick={removeCafe} className="flex items-center gap-1 rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-medium text-red-500 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-950/40"><Trash2 className="h-3.5 w-3.5" /> 카페 삭제</button>
+              </div>
+            </div>
+
+            {/* 카페 운영 설정(페르소나/주제/일정) */}
+            <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+              <h2 className="mb-3 text-sm font-bold dark:text-gray-100">운영 설정 <span className="ml-1 text-[11px] font-normal text-gray-400">— AI 초안이 이 설정(특히 페르소나)에 맞춰 작성돼요</span></h2>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">활동 페르소나</label>
+                  <textarea value={cafeForm.tone || ""} onChange={(e) => setCafeForm({ ...cafeForm, tone: e.target.value })} rows={3} placeholder="예: 8살 아이 키우는 워킹맘. 존댓말, 담백한 후기톤, 이모지 가끔" className={inputCls} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">주제</label>
+                  <textarea value={cafeForm.topics || ""} onChange={(e) => setCafeForm({ ...cafeForm, topics: e.target.value })} rows={3} placeholder="예: 초등 학습지 비교, 공부습관, 학원 정보" className={inputCls} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">기획 일정</label>
+                  <input value={cafeForm.plan_schedule || ""} onChange={(e) => setCafeForm({ ...cafeForm, plan_schedule: e.target.value })} placeholder="예: 월·수·금 오전 기획" className={inputCls} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">발행 예약(시간대)</label>
+                  <input value={cafeForm.publish_slot || ""} onChange={(e) => setCafeForm({ ...cafeForm, publish_slot: e.target.value })} placeholder="예: 평일 19시 (에이전트 켜져 있을 때 발행)" className={inputCls} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">게시판</label>
+                  <input value={cafeForm.board_name || ""} onChange={(e) => setCafeForm({ ...cafeForm, board_name: e.target.value })} placeholder="비우면 기본 게시판" className={inputCls} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">주의사항</label>
+                  <input value={cafeForm.notes || ""} onChange={(e) => setCafeForm({ ...cafeForm, notes: e.target.value })} placeholder="예: 직접 링크 금지" className={inputCls} />
                 </div>
               </div>
-            ))}
-          </div>
-        )}
+              <div className="mt-3 flex justify-end">
+                <button onClick={saveCafeForm} disabled={savingCafe} className="rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50">{savingCafe ? "저장 중…" : "설정 저장"}</button>
+              </div>
+            </div>
+
+            {/* 원고(초안/대기/실패) */}
+            <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-sm font-bold dark:text-gray-100">원고 <span className="ml-1 text-[11px] font-normal text-gray-400">— 매일 아침 AI가 3개씩 자동 작성(페르소나 반영)</span></h2>
+                <div className="flex gap-2">
+                  <button onClick={() => setCompose({ fixed: cafe.id })} className="flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"><PenLine className="h-3.5 w-3.5" /> 직접 기획</button>
+                  <button onClick={genDrafts} disabled={genBusy} className="flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50">
+                    {genBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />} 오늘 초안 3개 생성
+                  </button>
+                </div>
+              </div>
+              {cafePosts.filter((p) => p.status !== "published").length === 0 ? (
+                <p className="py-4 text-center text-xs text-gray-400">대기 중인 원고가 없어요. [오늘 초안 3개 생성]을 눌러보세요.</p>
+              ) : (
+                <div className="divide-y dark:divide-gray-800">
+                  {cafePosts.filter((p) => p.status !== "published").map((p) => (
+                    <PostRow key={p.id} p={p} onOpen={() => setPostModal(p)} onQuick={(s) => quickPatch(p, s)} onDelete={() => removePost(p)} />
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* 발행된 글 + 24h 반응 */}
+            <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+              <h2 className="mb-2 text-sm font-bold dark:text-gray-100">발행된 글 <span className="ml-1 text-[11px] font-normal text-gray-400">— 발행 24시간 후 조회/좋아요/댓글 자동 측정</span></h2>
+              {cafePosts.filter((p) => p.status === "published").length === 0 ? (
+                <p className="py-4 text-center text-xs text-gray-400">아직 발행된 글이 없어요.</p>
+              ) : (
+                <div className="divide-y dark:divide-gray-800">
+                  {cafePosts.filter((p) => p.status === "published").map((p) => (
+                    <div key={p.id} className="flex items-center gap-3 py-2.5">
+                      <button onClick={() => setPostModal(p)} className="min-w-0 flex-1 text-left">
+                        <p className="truncate text-sm font-medium hover:text-primary dark:text-gray-200">{p.title}</p>
+                        <p className="text-[11px] text-gray-400">{p.published_at ? new Date(p.published_at).toLocaleString("ko-KR") : ""}</p>
+                      </button>
+                      <div className="flex shrink-0 items-center gap-3 text-xs font-semibold text-gray-700 dark:text-gray-200">
+                        {p.tracked_at ? (
+                          <>
+                            <span className="flex items-center gap-1"><Eye className="h-3.5 w-3.5 text-sky-500" /> {fmtN(p.views)}</span>
+                            <span className="flex items-center gap-1"><Heart className="h-3.5 w-3.5 text-rose-500" /> {fmtN(p.likes)}</span>
+                            <span className="flex items-center gap-1"><MessageCircle className="h-3.5 w-3.5 text-amber-500" /> {fmtN(p.comments)}</span>
+                          </>
+                        ) : p.track_due_at && new Date(p.track_due_at) <= new Date() ? (
+                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">측정 대기</span>
+                        ) : (
+                          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-500 dark:bg-gray-800 dark:text-gray-400">24h 후 측정</span>
+                        )}
+                        {p.published_url && <a href={p.published_url} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-primary"><ExternalLink className="h-3.5 w-3.5" /></a>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        ) : null}
       </div>
 
-      {cafeModal && (
-        <CafeModal
-          cafe={cafeModal === "new" ? null : cafeModal}
-          onClose={() => setCafeModal(null)}
-          onSaved={loadAll}
-          onDeleted={loadAll}
-        />
-      )}
       {postModal && <PostModal post={postModal} onClose={() => setPostModal(null)} onChanged={loadAll} />}
+      {compose && <ComposeModal cafes={cafes} fixedCafeId={compose.fixed} onClose={() => setCompose(null)} onSaved={loadAll} />}
     </div>
   );
 }

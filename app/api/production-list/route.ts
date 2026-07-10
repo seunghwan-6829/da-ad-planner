@@ -37,6 +37,7 @@ export async function POST(req: Request) {
     brand: body.brand ?? null,
     thumb: body.thumb ?? null,
     media_type: body.media_type ?? null,
+    client_id: body.client_id ?? null, // 어느 클라이언트 제작용인지(담을 때 선택)
     created_by: body.created_by ?? null,
   }
   const { data, error } = await supabaseAdmin.from('production_list').insert(row).select().single()
@@ -56,6 +57,7 @@ export async function PATCH(req: Request) {
   const patch: Record<string, unknown> = {}
   if (typeof body.status === 'string' && ['todo', 'doing', 'done'].includes(body.status)) patch.status = body.status
   if (typeof body.note === 'string') patch.note = body.note
+  if ('client_id' in body) patch.client_id = body.client_id ?? null // 클라이언트 변경/해제
   if (!Object.keys(patch).length) return NextResponse.json({ error: '변경 내용 없음' }, { status: 400 })
 
   const { error } = await supabaseAdmin.from('production_list').update(patch).eq('id', id)
