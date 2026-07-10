@@ -22,7 +22,7 @@ export async function POST(req: Request) {
   const brief = body.brief || {}
   const brandName: string = (body.brand_name || '우리 브랜드').toString()
   const section: string = (body.section || '').toString()
-  const refNarration: string = (body.reference_narration || '').toString().slice(0, 2500)
+  const refNarration: string = (body.reference_narration || '').toString().slice(0, 6000)
 
   // 섹션별 지시(각 섹션을 별도 요청으로 병렬 생성 → 동시 타이핑·시간 절감, 장황 X)
   const SECTIONS: Record<string, string> = {
@@ -63,7 +63,13 @@ export async function POST(req: Request) {
 - 똑같은 슬랭/유행어 톤: "직빵", "개빡세", "또르르", "리즈 시절", "땀 부자" 같은 날것의 표현·과장.
 - 똑같은 리듬: 짧고 펀치 있는 문장, 충격적 후킹 → 원인 폭로 → 비포애프터 → 구체 숫자 → 한정 CTA.
 - 광고 같은 정돈된 문어체·존댓말·미사여구 금지. 매끈하게 다듬지 말 것(원문처럼 거칠고 생생하게).
-- 단, "제품·소구점·수치·주장"은 우리 브랜드(${brandName})에 맞게 바꿀 것. 문장 구조·말투·전개는 원문을 그대로 모사.`
+
+[변환 방식 — "새로 쓰기"가 아니라 "문장 단위 1:1 치환 리메이크"다]
+- 원문을 처음부터 끝까지 문장 단위로 그대로 따라가라. 원문 문장 1개 = 대본 문장 1개.
+- 각 문장에서 바꾸는 건 오직 브랜드 특정 단어뿐: 제품명, 카테고리, 증상/고민, 전문가 직군(예: 약사→피부과), 성분, 수치·기간. 이 단어들만 우리 브랜드(${brandName})/브리프에 맞게 갈아끼워라.
+- 나머지 단어·어순·조사·비유·감탄사·종결어미는 원문 그대로 유지(치환 때문에 문장이 안 되는 경우에만 최소한으로 손질).
+- 문장을 새로 만들거나, 빼거나, 순서를 바꾸지 마라. 스토리라인·단락 구성 = 원문과 동일.
+- 전체 분량은 원문의 ±10% 이내. 원문보다 짧게 요약하는 것 금지.`
     : ''
 
   const ctx = `[경쟁 소재 마인드맵]
@@ -75,7 +81,7 @@ ${briefBlock || '(브리프 미입력 — 일반적인 베스트 프랙티스 �
 
   const isScript = section === 'script'
   const lenRule = isScript
-    ? '대본은 요약·압축하지 말고 레퍼런스 원문과 비슷한 분량·밀도로 길게, 원문 화법 그대로.'
+    ? '대본은 "창작"이 아니라 레퍼런스 원문의 문장 단위 1:1 치환 리메이크다. 원문 문장을 순서대로 따라가며 브랜드 특정 단어만 갈아끼워라(위 변환 방식 준수). 분량·밀도 = 원문과 동일 수준, 요약 금지.'
     : '짧고 간결하게(군더더기 없이). 단 말투는 위 레퍼런스 화법(반말 구어체)을 따를 것.'
 
   const prompt = section && SECTIONS[section]
