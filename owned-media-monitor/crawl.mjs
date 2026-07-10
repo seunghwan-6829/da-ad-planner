@@ -47,6 +47,8 @@ const YT_MAX_POSTS = Number(process.env.YT_MAX_POSTS ?? '0') || 0
 //   임베드 차단된 쇼츠만 media_url=null 로 표시 → 페이지에서 재생 버튼 누르면 온디맨드(로컬 서버)로 받는다.
 //   YT_DOWNLOAD=1 을 명시하면 예전처럼 mp4 다운로드(로컬 실행용).
 const YT_DOWNLOAD = (process.env.YT_DOWNLOAD || '0') === '1'
+// 인스타도 기본 임베드(다운로드 X). IG_DOWNLOAD=1 이면 예전처럼 mp4 저장(CDN 만료 영구보관용).
+const IG_DOWNLOAD = (process.env.IG_DOWNLOAD || '0') === '1'
 const YT_MAX_FILESIZE = process.env.YT_MAX_FILESIZE || '150M'
 const STORAGE_BUCKET = 'owned-media'
 
@@ -285,7 +287,9 @@ async function saveInstagram(creator, items) {
       try { await sb.from('om_posts').update({ views, last_seen_at: now, status: 'active' }).eq('post_id', postId) } catch {}
       continue
     }
-    const storedVideo = await downloadToStorage(it.videoUrl, `reels/${it.shortCode}.mp4`, 'video/mp4')
+    // 기본: 영상 다운로드 안 함 → 페이지에서 인스타 임베드(/reel/<code>/embed)로 재생(빠름·저장공간 0).
+    //   카드 썸네일용 poster(작은 이미지)만 저장. IG_DOWNLOAD=1 이면 예전처럼 mp4도 저장.
+    const storedVideo = IG_DOWNLOAD ? await downloadToStorage(it.videoUrl, `reels/${it.shortCode}.mp4`, 'video/mp4') : null
     const storedPoster = await downloadToStorage(it.displayUrl, `posters/${it.shortCode}.jpg`, 'image/jpeg')
     newRows.push({
       post_id: postId,
@@ -295,7 +299,7 @@ async function saveInstagram(creator, items) {
       post_url: it.url || `https://www.instagram.com/reel/${it.shortCode}/`,
       caption: it.caption || '',
       media_type: 'video',
-      media_url: storedVideo || it.videoUrl || null,
+      media_url: storedVideo || null, // null = 임베드로 재생(다운로드 안 함)
       poster_url: storedPoster || it.displayUrl || null,
       posted_at: it.timestamp ? String(it.timestamp).slice(0, 10) : null,
       views,

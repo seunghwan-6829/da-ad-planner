@@ -143,6 +143,16 @@ function youtubeEmbed(p: Post): string | null {
   }
   return id ? `https://www.youtube.com/embed/${id}` : null;
 }
+// 인스타 릴스 임베드 URL (post_id 'ig_<code>' 또는 post_url 의 /reel|/p/<code> 에서 추출).
+function instagramEmbed(p: Post): string | null {
+  let code = "";
+  if (p.post_id?.startsWith("ig_")) code = p.post_id.slice(3);
+  if (!code && p.post_url) {
+    const m = p.post_url.match(/instagram\.com\/(?:reel|p|tv)\/([\w-]+)/);
+    if (m) code = m[1];
+  }
+  return code ? `https://www.instagram.com/reel/${code}/embed/` : null;
+}
 function platformLabel(pl: string): string {
   return pl === "instagram" ? "인스타그램" : "유튜브";
 }
@@ -273,9 +283,13 @@ function MediaView({ post, card, rounded }: { post: Post; card?: boolean; rounde
         </div>
       );
     }
-    // 상세: 저장된 mp4=직접 재생 / 유튜브=임베드 / 임베드 차단(media_url null)=온디맨드(로컬 서버)
+    // 상세: 저장된 mp4=직접 재생 / 인스타=임베드 / 유튜브=임베드 or 온디맨드
     if (stored) {
       return <video src={post.media_url!} poster={post.poster_url || undefined} controls playsInline preload="metadata" onClick={(e) => e.stopPropagation()} className={`h-full w-full bg-black object-contain ${r}`} />;
+    }
+    if (post.platform === "instagram") {
+      const ig = instagramEmbed(post);
+      if (ig) return <iframe src={ig} title="" scrolling="no" allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share" allowFullScreen className={`h-full w-full bg-white ${r}`} />;
     }
     if (post.platform === "youtube" && !post.media_url) {
       return <OnDemandOwnedVideo post={post} rounded={r} />;
