@@ -14,6 +14,10 @@ on:
         description: "최근 N시간 내 추가된 크리에이터만 크롤(0=전체). bat 즉시 크롤은 24."
         required: false
         default: "0"
+      ig_limit:
+        description: "인스타 프로필당 최신 게시물 수(Apify 결과당 과금). 기본 5, 전량 백필은 200 등."
+        required: false
+        default: "5"
 
 jobs:
   crawl:
@@ -51,6 +55,6 @@ jobs:
           CRAWL_SINCE_HOURS: ${{ github.event.inputs.since_hours }}
           # 인스타 수집은 Apify instagram-scraper 사용(없으면 인스타는 건너뜀). 유튜브는 Playwright(Apify 불필요).
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
-          # 프로필당 최신 개수(비용 조절). 60명·주1회·5개면 무료 한도 안.
-          IG_RESULTS_LIMIT: "5"
+          # 프로필당 최신 개수(비용 조절). 스케줄(빈 입력)은 5, dispatch 로 백필 시 ig_limit 지정.
+          IG_RESULTS_LIMIT: ${{ github.event.inputs.ig_limit || '5' }}
         run: node crawl.mjs
