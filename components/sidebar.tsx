@@ -16,7 +16,6 @@ import {
   Film,
   Images,
   LayoutDashboard,
-  Lightbulb,
   ListChecks,
   Lock,
   LogOut,
@@ -47,7 +46,6 @@ const navigationBottom = [
   { name: '제작 리스트', href: '/production-list', icon: ListChecks },
   { name: '기획안 제작', href: '/project-plans', icon: Clapperboard },
   { name: '기획 마인드맵', href: '/plan-mindmap', icon: Network },
-  { name: '기획안 아이디어', href: '/plan-ideas', icon: Lightbulb },
   { name: '컨텐츠 가이드', href: '/content-guide', icon: Film },
   { name: '모델 촬영 가이드', href: '/shooting-guide', icon: Camera },
   // 참고용 보드류는 맨 하단(모델 촬영 가이드 아래)으로
