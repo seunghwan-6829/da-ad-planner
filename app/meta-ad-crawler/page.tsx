@@ -474,9 +474,13 @@ export default function MetaAdCrawlerPage() {
       (async () => {
         setSyncing(true);
         const PAGE = 1000; // PostgREST 한 요청 최대치
-        const CONCURRENCY = 6;
+        const CONCURRENCY = 8;
         let nextOffset = 300; // bootstrap 이 최근 300 줬으니 그다음부터
         let done = false;
+        // 수신 행을 모아 1.2초마다 한 번에 병합 → 요청마다 전체 리스트 재구성/재렌더하던 비용 제거.
+        let buffer: Ad[] = [];
+        const flush = () => { if (buffer.length) { mergeAds(buffer); buffer = []; } };
+        const timer = setInterval(flush, 1200);
         const worker = async () => {
           while (!done) {
             const offset = nextOffset; // 동기적으로 고유 오프셋 선점(겹침/누락 없음)
@@ -488,7 +492,7 @@ export default function MetaAdCrawlerPage() {
                 break;
               }
               const rows: Ad[] = await r.json();
-              if (rows.length) mergeAds(rows);
+              if (rows.length) buffer.push(...rows);
               if (rows.length < PAGE) {
                 done = true; // 마지막 페이지 도달
                 break;
@@ -502,7 +506,7 @@ export default function MetaAdCrawlerPage() {
         try {
           await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
         } finally {
-          setSyncing(false);
+          clearInterval(timer); flush(); setSyncing(false);
         }
       })();
     }

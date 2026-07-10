@@ -164,41 +164,68 @@ function igCodeOf(post: Post): string | null {
   const m = (post.post_url || "").match(/instagram\.com\/(?:reel|reels|p|tv)\/([\w-]+)/);
   return m ? m[1] : null;
 }
+const isStoredUrl = (u?: string | null) => !!u && /\/storage\/v1\/object\//.test(u);
+
+// 로컬 영상 서버 health 캐시(15초) — 릴스마다 1.2초씩 재확인하지 않게, 꺼져 있으면 즉시 임베드 폴백.
+let localSrvCache: { at: number; up: boolean } | null = null;
+async function localServerUp(): Promise<boolean> {
+  const now = Date.now();
+  if (localSrvCache && now - localSrvCache.at < 15000) return localSrvCache.up;
+  try {
+    const h = await fetch(`${LOCAL_VIDEO_SERVER}/health`, { signal: AbortSignal.timeout(1000) });
+    localSrvCache = { at: now, up: h.ok };
+    return h.ok;
+  } catch {
+    localSrvCache = { at: now, up: false };
+    return false;
+  }
+}
+
+// 릴스 원본 mp4 URL 해석 결과 캐시(postId→Promise). 재생 4초 지연을 줄이려 카드 hover 때 미리 채워둔다.
+//   결과: 재생 가능한 URL(문자열) | null(로컬서버 없음/추출실패 → 임베드로 폴백)
+const igUrlCache = new Map<string, Promise<string | null>>();
+function resolveIgReel(post: Post): Promise<string | null> {
+  if (isStoredUrl(post.media_url)) return Promise.resolve(post.media_url!); // 저장본 즉시
+  const hit = igUrlCache.get(post.post_id);
+  if (hit) return hit;
+  const code = igCodeOf(post);
+  if (!code) return Promise.resolve(null);
+  const p = (async () => {
+    if (!(await localServerUp())) return null;
+    try {
+      const r = await fetch(`${LOCAL_VIDEO_SERVER}/ig?code=${encodeURIComponent(code)}`, { signal: AbortSignal.timeout(60000) });
+      const j = await r.json().catch(() => ({}));
+      return (j?.url as string) || null;
+    } catch { return null; }
+  })();
+  igUrlCache.set(post.post_id, p);
+  // 실패(null)면 캐시에서 제거 → 나중에(로컬서버 켠 뒤) 재시도 가능
+  p.then((u) => { if (!u) igUrlCache.delete(post.post_id); }).catch(() => igUrlCache.delete(post.post_id));
+  return p;
+}
+// 카드 hover 시 미리 해석(fire-and-forget) → 클릭해서 상세 열면 이미 준비됨.
+function prefetchIgReel(post: Post) {
+  if (post.platform === "instagram" && post.media_type === "video" && !isStoredUrl(post.media_url)) {
+    resolveIgReel(post).catch(() => {});
+  }
+}
 
 /* 인스타 릴스 재생: 임베드 iframe 은 타임라인 바가 없음 → 로컬 영상 서버(내 PC, residential IP)로
    원본 mp4 URL 을 뽑아 네이티브 <video controls> 로 재생(원하는 시간 탐색 O, +백그라운드 영구저장).
-   로컬 서버가 꺼져 있으면 임베드(iframe)로 폴백(재생은 되지만 타임라인 없음). */
+   hover 프리페치·캐시로 클릭 즉시 재생. 로컬 서버가 꺼져 있으면 임베드(iframe)로 폴백. */
 function IgSmartVideo({ post, rounded }: { post: Post; rounded: string }) {
-  const [src, setSrc] = useState<string | null>(post.media_url && /\/storage\/v1\/object\//.test(post.media_url) ? post.media_url : null);
-  const [phase, setPhase] = useState<"resolving" | "native" | "embed">(
-    post.media_url && /\/storage\/v1\/object\//.test(post.media_url) ? "native" : "resolving"
-  );
+  const [src, setSrc] = useState<string | null>(isStoredUrl(post.media_url) ? post.media_url! : null);
+  const [phase, setPhase] = useState<"resolving" | "native" | "embed">(isStoredUrl(post.media_url) ? "native" : "resolving");
 
   useEffect(() => {
-    // 이미 저장된 mp4 면 그대로 네이티브 재생(타임라인 O)
-    if (post.media_url && /\/storage\/v1\/object\//.test(post.media_url)) {
-      setSrc(post.media_url);
-      setPhase("native");
-      return;
-    }
+    if (isStoredUrl(post.media_url)) { setSrc(post.media_url!); setPhase("native"); return; }
     let alive = true;
     setSrc(null);
     setPhase("resolving");
-    const code = igCodeOf(post);
-    (async () => {
-      // 로컬 서버 살아있으면 그걸로 원본 mp4 URL 추출(타임라인 O)
-      if (code) {
-        try {
-          const h = await fetch(`${LOCAL_VIDEO_SERVER}/health`, { signal: AbortSignal.timeout(1200) });
-          if (h.ok) {
-            const r = await fetch(`${LOCAL_VIDEO_SERVER}/ig?code=${encodeURIComponent(code)}`, { signal: AbortSignal.timeout(60000) });
-            const j = await r.json().catch(() => ({}));
-            if (alive && j?.url) { setSrc(j.url as string); setPhase("native"); return; }
-          }
-        } catch { /* 로컬 서버 없음 → 임베드 폴백 */ }
-      }
-      if (alive) setPhase("embed"); // 로컬 서버 없거나 실패 → 임베드(타임라인 없음)
-    })();
+    // hover 로 이미 시작됐으면 캐시된 Promise 를 그대로 await → 대기시간 최소화
+    resolveIgReel(post)
+      .then((url) => { if (!alive) return; if (url) { setSrc(url); setPhase("native"); } else setPhase("embed"); })
+      .catch(() => { if (alive) setPhase("embed"); });
     return () => { alive = false; };
   }, [post.post_id, post.media_url]);
 
@@ -479,9 +506,13 @@ export default function OwnedMediaPage() {
       (async () => {
         setSyncing(true);
         const PAGE = 1000;
-        const CONCURRENCY = 4;
+        const CONCURRENCY = 6;
         let nextOffset = 300;
         let done = false;
+        // 수신 행을 모아 1.2초마다 한 번에 병합 → 요청마다 재렌더/재정렬하던 비용 제거(대량일수록 큰 차이).
+        let buffer: Post[] = [];
+        const flush = () => { if (buffer.length) { mergePosts(buffer); buffer = []; } };
+        const timer = setInterval(flush, 1200);
         const worker = async () => {
           while (!done) {
             const offset = nextOffset;
@@ -490,13 +521,13 @@ export default function OwnedMediaPage() {
               const r = await fetch(`/api/owned-media/posts?light=1&limit=${PAGE}&offset=${offset}`);
               if (!r.ok) { done = true; break; }
               const rows: Post[] = await r.json();
-              if (rows.length) mergePosts(rows);
+              if (rows.length) buffer.push(...rows);
               if (rows.length < PAGE) { done = true; break; }
             } catch { done = true; break; }
           }
         };
         try { await Promise.all(Array.from({ length: CONCURRENCY }, () => worker())); }
-        finally { setSyncing(false); }
+        finally { clearInterval(timer); flush(); setSyncing(false); }
       })();
     }
   }, [mergePosts]);
@@ -875,7 +906,7 @@ export default function OwnedMediaPage() {
               const hasAnalysis = !!p.has_analysis;
               const tLabel = typeLabelOf(p);
               return (
-                <div key={p.post_id} onClick={() => openDetail(p)} className="cursor-pointer rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 overflow-hidden flex flex-col hover:shadow-md transition-shadow">
+                <div key={p.post_id} onClick={() => openDetail(p)} onMouseEnter={() => prefetchIgReel(p)} className="cursor-pointer rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 overflow-hidden flex flex-col hover:shadow-md transition-shadow">
                   <div className="p-2.5">
                     <div className="flex items-center gap-2">
                       {img ? (
