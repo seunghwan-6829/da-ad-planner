@@ -23,7 +23,10 @@ const APIFY_TOKEN = (process.env.APIFY_TOKEN || '').trim()
 const CRAWL_CREATOR_ID = (process.env.CRAWL_CREATOR_ID || '').trim()
 const IG_RESULTS_LIMIT = Number(process.env.IG_RESULTS_LIMIT) || 5
 const YT_MAX_POSTS = Number(process.env.YT_MAX_POSTS) || 40
-const YT_DOWNLOAD = (process.env.YT_DOWNLOAD || '1') !== '0'
+// 유튜브는 기본 "임베드"로 가져온다(다운로드 X — 저장공간·봇차단 리스크 없음).
+//   임베드 차단된 쇼츠만 media_url=null 로 표시 → 페이지에서 재생 버튼 누르면 온디맨드(로컬 서버)로 받는다.
+//   YT_DOWNLOAD=1 을 명시하면 예전처럼 mp4 다운로드(로컬 실행용).
+const YT_DOWNLOAD = (process.env.YT_DOWNLOAD || '0') === '1'
 const YT_MAX_FILESIZE = process.env.YT_MAX_FILESIZE || '150M'
 const STORAGE_BUCKET = 'owned-media'
 
@@ -143,7 +146,15 @@ async function downloadYouTubeShort(url, videoId) {
   }
 }
 
-// 유튜브 저장: 신규 쇼츠만 다운로드(영구). 기존은 조회수만 갱신(저장 mp4 보존).
+// 임베드 가능 여부: oEmbed 가 200 이면 iframe 임베드 OK, 401/403 이면 임베드 차단.
+async function isEmbeddable(videoId) {
+  try {
+    const r = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`)
+    return r.ok
+  } catch { return true } // 확인 실패 시엔 일단 임베드로(재생 안 되면 페이지 폴백이 처리)
+}
+
+// 유튜브 저장: 기본 임베드(다운로드 X). 임베드 차단 쇼츠만 media_url=null(온디맨드). 기존은 조회수만 갱신.
 async function saveYouTube(creator, results, profile) {
   if (profile.name && !creator.profile_name) { try { await sb.from('om_creators').update({ profile_name: profile.name }).eq('id', creator.id) } catch {} }
   if (!results.length) return
@@ -161,12 +172,24 @@ async function saveYouTube(creator, results, profile) {
       continue
     }
     const videoId = r.post_id.replace(/^yt_/, '')
-    const dl = await downloadYouTubeShort(r.post_url, videoId)
+    let mediaUrl = r.media_url // 기본: watch URL(임베드)
+    let postedAt = r.posted_at
+    let views = r.views
+    if (YT_DOWNLOAD) {
+      // (옵션) 로컬 실행 시 mp4 영구 저장
+      const dl = await downloadYouTubeShort(r.post_url, videoId)
+      if (dl.storedUrl) mediaUrl = dl.storedUrl
+      if (dl.uploadDate) postedAt = dl.uploadDate
+      if (dl.views != null) views = dl.views
+    } else if (!(await isEmbeddable(videoId))) {
+      // 임베드 차단 → null 로 표시. 페이지에서 재생 버튼 누르면 온디맨드(로컬 서버)로 받아 재생.
+      mediaUrl = null
+    }
     newRows.push({
       ...r,
-      media_url: dl.storedUrl || r.media_url,
-      posted_at: dl.uploadDate || r.posted_at,
-      views: dl.views != null ? dl.views : r.views,
+      media_url: mediaUrl,
+      posted_at: postedAt,
+      views,
       creator_id: creator.id,
       creator_name: profile.name || creator.label,
       last_seen_at: now,

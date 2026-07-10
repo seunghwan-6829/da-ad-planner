@@ -115,10 +115,16 @@ function ytdlpGetUrl(id) {
 }
 
 // 빠른 경로: 이미 저장돼 있으면 그 URL, 아니면 직접 스트림 URL을 즉시 반환(+백그라운드로 Supabase 영구저장).
+// 구글 광고(ga_ads)와 온드미디어(om_posts, post_id='yt_<id>') 양쪽에서 조회/갱신.
 async function resolveFast(id) {
   try {
     const { data } = await sb.from('ga_ads').select('media_url').ilike('poster_url', `%${id}%`).eq('downloaded', true).limit(1)
     if (data?.[0]?.media_url) return data[0].media_url
+  } catch {}
+  try {
+    const { data } = await sb.from('om_posts').select('media_url').eq('post_id', `yt_${id}`).limit(1)
+    const u = data?.[0]?.media_url
+    if (u && /\/storage\/v1\/object\//.test(u)) return u // 이미 스토리지에 저장된 쇼츠
   } catch {}
   const direct = await ytdlpGetUrl(id)
   if (!direct) throw new Error('영상 URL 추출 실패(삭제/차단이거나 쿠키 만료)')
@@ -145,8 +151,9 @@ async function getOrDownload(id) {
     const up = await sb.storage.from(BUCKET).upload(path, buf, { contentType: 'video/mp4', upsert: true })
     if (up.error) throw new Error(up.error.message)
     const publicUrl = sb.storage.from(BUCKET).getPublicUrl(path).data.publicUrl
-    // 같은 영상 쓰는 모든 광고 갱신(poster 또는 media_url 에 id 포함)
+    // 같은 영상 쓰는 모든 광고 갱신(poster 또는 media_url 에 id 포함) + 온드미디어 쇼츠(post_id 일치)도 갱신
     try { await sb.from('ga_ads').update({ media_url: publicUrl, downloaded: true, media_path: path }).or(`poster_url.ilike.%${id}%,media_url.ilike.%${id}%`) } catch {}
+    try { await sb.from('om_posts').update({ media_url: publicUrl }).eq('post_id', `yt_${id}`) } catch {}
     return publicUrl
   })()
   inflight.set(id, job)

@@ -160,6 +160,91 @@ function pageItems(current: number, total: number): number[] {
   return Array.from({ length: end - start + 1 }, (_, i) => start + i);
 }
 
+// 내 PC 로컬 영상 서버(serve-videos.mjs). 임베드 차단 쇼츠를 재생할 때 사용(구글 광고 크롤러와 공유).
+const LOCAL_VIDEO_SERVER = "http://127.0.0.1:47615";
+const ytIdOfPost = (p: Post): string | null => {
+  if (p.post_id?.startsWith("yt_")) return p.post_id.slice(3);
+  const m = (p.post_url || "").match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([\w-]{6,})/);
+  return m ? m[1] : null;
+};
+
+/* ── 온디맨드 재생(임베드 차단 쇼츠): 상세창 열리면 로컬 서버로 스트림 URL 프리페치 → 재생 클릭 즉시.
+   로컬 서버가 없으면 유튜브 원본 링크 안내. (구글 광고 크롤러와 동일 패턴) */
+function OnDemandOwnedVideo({ post, rounded }: { post: Post; rounded: string }) {
+  const [phase, setPhase] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [url, setUrl] = useState<string | null>(null);
+  const [msg, setMsg] = useState("");
+  const [preReady, setPreReady] = useState(false);
+  const preRef = useRef<Promise<string | null> | null>(null);
+  const aliveRef = useRef(true);
+
+  const resolveViaLocal = useCallback(async (): Promise<string | null> => {
+    const id = ytIdOfPost(post);
+    if (!id) return null;
+    try {
+      const h = await fetch(`${LOCAL_VIDEO_SERVER}/health`, { signal: AbortSignal.timeout(1200) });
+      if (!h.ok) return null;
+    } catch { return null; }
+    try {
+      const r = await fetch(`${LOCAL_VIDEO_SERVER}/get?id=${id}`, { signal: AbortSignal.timeout(120000) });
+      const j = await r.json().catch(() => ({}));
+      return (j.url as string) || null;
+    } catch { return null; }
+  }, [post]);
+
+  useEffect(() => {
+    aliveRef.current = true;
+    const p = resolveViaLocal();
+    preRef.current = p;
+    p.then((u) => { if (aliveRef.current && u) setPreReady(true); }).catch(() => {});
+    return () => { aliveRef.current = false; };
+  }, [resolveViaLocal]);
+
+  async function start() {
+    setPhase("loading");
+    setMsg("영상 준비 중…");
+    let pre: string | null = null;
+    try { pre = await (preRef.current ?? resolveViaLocal()); } catch {}
+    if (!aliveRef.current) return;
+    if (pre) { setUrl(pre); setPhase("ready"); return; }
+    setMsg("임베드가 차단된 영상이에요. 내 PC의 로컬 영상 서버(serve-videos.bat)를 켜면 바로 재생돼요.");
+    setPhase("error");
+  }
+
+  const poster = posterThumb(post) || undefined;
+  if (phase === "ready" && url) {
+    return <video src={url} poster={poster} controls autoPlay playsInline preload="metadata" onClick={(e) => e.stopPropagation()} className={`h-full w-full bg-black object-contain ${rounded}`} />;
+  }
+  return (
+    <button type="button" onClick={(e) => { e.stopPropagation(); if (phase !== "loading") start(); }} className={`relative flex h-full w-full items-center justify-center overflow-hidden bg-black ${rounded}`}>
+      {poster && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={poster} alt="" className="absolute inset-0 h-full w-full object-cover opacity-40" />
+      )}
+      <div className="relative z-10 flex flex-col items-center gap-2 px-4 text-center text-white">
+        {phase === "loading" ? (
+          <>
+            <Loader2 className="h-8 w-8 animate-spin" />
+            <span className="text-xs">{msg}</span>
+          </>
+        ) : phase === "error" ? (
+          <>
+            <span className="text-xs text-red-300">{msg}</span>
+            <a href={post.post_url || "#"} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="rounded-full bg-white/20 px-3 py-1 text-xs">유튜브에서 보기 ↗</a>
+          </>
+        ) : (
+          <>
+            <div className={`flex h-14 w-14 items-center justify-center rounded-full backdrop-blur ${preReady ? "bg-emerald-500/70" : "bg-white/25"}`}>
+              <Play className="h-7 w-7 fill-white text-white" />
+            </div>
+            <span className="text-[11px] opacity-80">{preReady ? "재생 (준비 완료 · 즉시)" : "재생 (자동으로 불러와요)"}</span>
+          </>
+        )}
+      </div>
+    </button>
+  );
+}
+
 /* ── 미디어 뷰 ── */
 function MediaView({ post, card, rounded }: { post: Post; card?: boolean; rounded?: string }) {
   const urls = mediaListOf(post);
@@ -188,9 +273,12 @@ function MediaView({ post, card, rounded }: { post: Post; card?: boolean; rounde
         </div>
       );
     }
-    // 상세: 저장된 mp4=직접 재생 / (다운로드 실패한)유튜브=임베드 폴백
+    // 상세: 저장된 mp4=직접 재생 / 유튜브=임베드 / 임베드 차단(media_url null)=온디맨드(로컬 서버)
     if (stored) {
       return <video src={post.media_url!} poster={post.poster_url || undefined} controls playsInline preload="metadata" onClick={(e) => e.stopPropagation()} className={`h-full w-full bg-black object-contain ${r}`} />;
+    }
+    if (post.platform === "youtube" && !post.media_url) {
+      return <OnDemandOwnedVideo post={post} rounded={r} />;
     }
     if (embed) {
       return <iframe src={embed} title="" allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen className={`h-full w-full bg-black ${r}`} />;
