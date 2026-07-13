@@ -186,6 +186,12 @@ async function saveTargetAds(target, items) {
     if (seen.has(row.library_id)) continue
     seen.add(row.library_id)
 
+    // 구글이 원본을 막아 재생수단이 전혀 없는 영상(poster 썸네일·영상주소 모두 없음) → 담지 않음.
+    //   정상 영상은 previewUrl(=i.ytimg.com 썸네일)이 있어 안 걸림. 이 조건은 "표시 불가" 광고만 걸러낸다.
+    if (row.media_type === 'video' && !row.poster_url && !row.video_src_url) {
+      continue
+    }
+
     if (existing.has(row.library_id)) {
       // 기존: 마지막 게재일/상태만 갱신(저장 미디어 보존)
       try { await sb.from('ga_ads').update({ last_shown: row.last_shown, last_seen_at: now, status: 'active' }).eq('library_id', row.library_id) } catch {}
