@@ -432,7 +432,7 @@ function PlatformBadge({ platform, className }: { platform: string; className?: 
 
 // 모듈 메모리 캐시: 다른 탭 갔다가 재진입해도(SPA 이동) 재fetch 없이 그대로 유지.
 // F5(전체 새로고침 → 모듈 초기화) 때만 null 이 되어 새로 로드됨.
-let ownedMemCache: { creators: Creator[]; posts: Post[]; counts: Record<string, number> } | null = null;
+let ownedMemCache: { creators: Creator[]; posts: Post[]; counts: Record<string, number>; complete: boolean } | null = null;
 
 export default function OwnedMediaPage() {
   const { canMetaAd, isAdmin, loading: authLoading } = useAuth();
@@ -469,7 +469,8 @@ export default function OwnedMediaPage() {
 
   const bgLoadedRef = useRef(false);
   const loadedCreatorsRef = useRef<Set<string>>(new Set());
-  const hadCacheRef = useRef(false); // 진입 시 IndexedDB 캐시가 있었나(있으면 델타만 동기화)
+  const hadCacheRef = useRef(false); // 진입 시 완전 캐시가 있었나(있으면 델타만 동기화)
+  const [loadComplete, setLoadComplete] = useState(false); // 전체 로드 완료 여부(완료돼야 캐시에 저장)
   const cacheIdsRef = useRef<Set<string>>(new Set()); // 캐시에 담겨있던 post_id(델타 종료 판정용)
 
   // 추가 전용 병합(모르는 id만 추가). 캐시 복원·백그라운드·크리에이터 로드에 사용.
@@ -543,23 +544,25 @@ export default function OwnedMediaPage() {
           let buffer: Post[] = [];
           const flush = () => { if (buffer.length) { mergePosts(buffer); buffer = []; } };
           const timer = setInterval(flush, 1200);
+          let errored = false;
           const worker = async () => {
             while (!done) {
               const offset = nextOffset;
               nextOffset += PAGE;
               try {
                 const r = await fetch(`/api/owned-media/posts?light=1&limit=${PAGE}&offset=${offset}`);
-                if (!r.ok) { done = true; break; }
+                if (!r.ok) { errored = true; done = true; break; }
                 const rows: Post[] = await r.json();
                 if (rows.length) buffer.push(...rows);
                 if (rows.length < PAGE) { done = true; break; }
-              } catch { done = true; break; }
+              } catch { errored = true; done = true; break; }
             }
           };
           try { await Promise.all(Array.from({ length: CONCURRENCY }, () => worker())); }
-          finally { clearInterval(timer); flush(); setSyncing(false); }
+          finally { clearInterval(timer); flush(); setSyncing(false); if (!errored) setLoadComplete(true); }
         })();
       }
+      if (hadCacheRef.current) setLoadComplete(true); // 델타 경로는 이미 완전 캐시 → 완료 표시
     }
   }, [mergePosts, upsertPosts]);
 
@@ -570,31 +573,36 @@ export default function OwnedMediaPage() {
       setPosts(ownedMemCache.posts);
       setCounts(ownedMemCache.counts);
       setLoading(false);
-      hadCacheRef.current = true;
-      cacheIdsRef.current = new Set(ownedMemCache.posts.map((p) => p.post_id));
-      loadAll(); // 백그라운드 델타만 돌려 새 소식 반영
+      if (ownedMemCache.complete) {
+        hadCacheRef.current = true;
+        cacheIdsRef.current = new Set(ownedMemCache.posts.map((p) => p.post_id));
+      }
+      loadAll(); // 백그라운드 델타/전체 로드
       return;
     }
-    // 2) F5/새 탭/앱 재시작: IndexedDB 영구 캐시가 있으면 전체를 즉시 복원(동기화 바 없이) → 델타만.
+    // 2) F5/새 탭/앱 재시작: IndexedDB 캐시가 있으면 즉시 복원. complete 일 때만 델타(부분/구버전은 전체 재로드).
     loadCache<Post>("owned")
       .then((cached) => {
-        if (cached?.length) {
-          hadCacheRef.current = true;
-          cacheIdsRef.current = new Set(cached.map((p) => p.post_id));
-          setPosts(cached);
+        if (cached?.rows?.length) {
+          setPosts(cached.rows);
           setLoading(false);
+          if (cached.complete) {
+            hadCacheRef.current = true;
+            cacheIdsRef.current = new Set(cached.rows.map((p) => p.post_id));
+          }
         }
       })
       .finally(() => loadAll());
   }, [loadAll]);
 
-  // 최신 상태를 모듈 메모리 캐시(세션) + IndexedDB(영구, 디바운스)에 보관.
+  // 세션 메모리 캐시(항상) + IndexedDB(전체 로드 완료 시에만, 디바운스)에 보관.
   useEffect(() => {
     if (loading) return;
-    ownedMemCache = { creators, posts, counts };
-    const t = setTimeout(() => { saveCache("owned", posts); }, 1500);
+    ownedMemCache = { creators, posts, counts, complete: loadComplete };
+    if (!loadComplete) return; // 부분 데이터는 영구 캐시에 저장하지 않음
+    const t = setTimeout(() => { saveCache("owned", posts, true); }, 1500);
     return () => clearTimeout(t);
-  }, [creators, posts, counts, loading]);
+  }, [creators, posts, counts, loading, loadComplete]);
 
   useEffect(() => {
     getClients().then((cs) => setClients(cs || [])).catch(() => {});

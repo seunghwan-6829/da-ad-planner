@@ -20,14 +20,21 @@ function openDB(): Promise<IDBDatabase> {
   })
 }
 
-// 저장된 전체 행 배열(없으면 null). 실패해도 앱은 정상 동작(그냥 서버에서 로드).
-export async function loadCache<T>(store: CacheStore): Promise<T[] | null> {
+// 저장된 캐시(없으면 null). complete=true 일 때만 "전체를 담았다"는 의미 → 델타 동기화 허용.
+//   부분(로드 중 끊김)·구버전(배열) 캐시는 complete=false 로 취급해 호출측이 전체 재로드하게 한다.
+export async function loadCache<T>(store: CacheStore): Promise<{ rows: T[]; complete: boolean } | null> {
   try {
     const db = await openDB()
-    return await new Promise<T[] | null>((resolve) => {
+    return await new Promise<{ rows: T[]; complete: boolean } | null>((resolve) => {
       const tx = db.transaction(store, 'readonly')
       const req = tx.objectStore(store).get('rows')
-      req.onsuccess = () => resolve((req.result as T[]) || null)
+      req.onsuccess = () => {
+        const val = req.result
+        if (!val) return resolve(null)
+        if (Array.isArray(val)) return resolve({ rows: val as T[], complete: false }) // 구버전(배열) → 미완료 취급
+        if (val && Array.isArray(val.rows)) return resolve({ rows: val.rows as T[], complete: !!val.complete })
+        resolve(null)
+      }
       req.onerror = () => resolve(null)
     })
   } catch {
@@ -35,13 +42,13 @@ export async function loadCache<T>(store: CacheStore): Promise<T[] | null> {
   }
 }
 
-// 전체 행 배열 저장(디바운스는 호출측에서). 실패는 조용히 무시.
-export async function saveCache<T>(store: CacheStore, rows: T[]): Promise<void> {
+// 전체 행 저장. complete=true 는 "이 시점 전체 데이터를 담았음" 표시(다음 진입 시 델타만).
+export async function saveCache<T>(store: CacheStore, rows: T[], complete: boolean): Promise<void> {
   try {
     const db = await openDB()
     await new Promise<void>((resolve) => {
       const tx = db.transaction(store, 'readwrite')
-      tx.objectStore(store).put(rows, 'rows')
+      tx.objectStore(store).put({ rows, complete }, 'rows')
       tx.oncomplete = () => resolve()
       tx.onerror = () => resolve()
     })

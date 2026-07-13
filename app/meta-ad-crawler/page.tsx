@@ -383,7 +383,7 @@ function MediaView({
 
 // 모듈 메모리 캐시: 다른 탭 갔다가 재진입해도(SPA 이동) 재fetch 없이 그대로 유지.
 // F5(전체 새로고침 → 모듈 초기화) 때만 null 이 되어 새로 로드됨.
-let metaMemCache: { targets: Target[]; ads: Ad[]; counts: Record<string, number> } | null = null;
+let metaMemCache: { targets: Target[]; ads: Ad[]; counts: Record<string, number>; complete: boolean } | null = null;
 
 export default function MetaAdCrawlerPage() {
   const router = useRouter();
@@ -431,7 +431,8 @@ export default function MetaAdCrawlerPage() {
   const categorizedRef = useRef(false);
   const bgLoadedRef = useRef(false); // 백그라운드 전체 로드 1회만
   const loadedBrandsRef = useRef<Set<string>>(new Set()); // 브랜드별 on-demand 로드 추적
-  const hadCacheRef = useRef(false); // 진입 시 IndexedDB 캐시가 있었나(있으면 델타만 동기화)
+  const hadCacheRef = useRef(false); // 진입 시 완전 캐시가 있었나(있으면 델타만 동기화)
+  const [loadComplete, setLoadComplete] = useState(false); // 전체 로드 완료 여부(완료돼야 캐시에 저장)
   const cacheIdsRef = useRef<Set<string>>(new Set()); // 캐시에 담겨있던 library_id(델타 종료 판정용)
 
   // 새로 받은 광고들을 기존 ads 에 병합(중복 제거, 기존 항목 우선 — bootstrap 의 ad_text/has_analysis 보존)
@@ -507,23 +508,25 @@ export default function MetaAdCrawlerPage() {
           let buffer: Ad[] = [];
           const flush = () => { if (buffer.length) { mergeAds(buffer); buffer = []; } };
           const timer = setInterval(flush, 1200);
+          let errored = false;
           const worker = async () => {
             while (!done) {
               const offset = nextOffset;
               nextOffset += PAGE;
               try {
                 const r = await fetch(`/api/meta-ad/ads?light=1&limit=${PAGE}&offset=${offset}`);
-                if (!r.ok) { done = true; break; }
+                if (!r.ok) { errored = true; done = true; break; }
                 const rows: Ad[] = await r.json();
                 if (rows.length) buffer.push(...rows);
                 if (rows.length < PAGE) { done = true; break; }
-              } catch { done = true; break; }
+              } catch { errored = true; done = true; break; }
             }
           };
           try { await Promise.all(Array.from({ length: CONCURRENCY }, () => worker())); }
-          finally { clearInterval(timer); flush(); setSyncing(false); }
+          finally { clearInterval(timer); flush(); setSyncing(false); if (!errored) setLoadComplete(true); }
         })();
       }
+      if (hadCacheRef.current) setLoadComplete(true); // 델타 경로는 이미 완전 캐시 → 완료 표시
     }
   }, [mergeAds, upsertAds]);
 
@@ -534,31 +537,36 @@ export default function MetaAdCrawlerPage() {
       setAds(metaMemCache.ads);
       setCounts(metaMemCache.counts);
       setLoading(false);
-      hadCacheRef.current = true;
-      cacheIdsRef.current = new Set(metaMemCache.ads.map((a) => a.library_id));
+      if (metaMemCache.complete) {
+        hadCacheRef.current = true;
+        cacheIdsRef.current = new Set(metaMemCache.ads.map((a) => a.library_id));
+      }
       loadAll();
       return;
     }
-    // 2) F5/새 탭/앱 재시작: IndexedDB 영구 캐시가 있으면 전체를 즉시 복원(동기화 바 없이) → 델타만.
+    // 2) F5/새 탭/앱 재시작: IndexedDB 캐시가 있으면 즉시 복원. complete 일 때만 델타(부분/구버전은 전체 재로드).
     loadCache<Ad>("meta")
       .then((cached) => {
-        if (cached?.length) {
-          hadCacheRef.current = true;
-          cacheIdsRef.current = new Set(cached.map((a) => a.library_id));
-          setAds(cached);
+        if (cached?.rows?.length) {
+          setAds(cached.rows);
           setLoading(false);
+          if (cached.complete) {
+            hadCacheRef.current = true;
+            cacheIdsRef.current = new Set(cached.rows.map((a) => a.library_id));
+          }
         }
       })
       .finally(() => loadAll());
   }, [loadAll]);
 
-  // 최신 상태를 모듈 메모리 캐시(세션) + IndexedDB(영구, 디바운스)에 보관.
+  // 세션 메모리 캐시(항상) + IndexedDB(전체 로드 완료 시에만, 디바운스)에 보관.
   useEffect(() => {
     if (loading) return;
-    metaMemCache = { targets, ads, counts };
-    const t = setTimeout(() => { saveCache("meta", ads); }, 1500);
+    metaMemCache = { targets, ads, counts, complete: loadComplete };
+    if (!loadComplete) return; // 부분 데이터는 영구 캐시에 저장하지 않음
+    const t = setTimeout(() => { saveCache("meta", ads, true); }, 1500);
     return () => clearTimeout(t);
-  }, [targets, ads, counts, loading]);
+  }, [targets, ads, counts, loading, loadComplete]);
 
   // 기획안 제작의 클라이언트 목록(클라이언트별 브랜드 매핑/필터용)
   useEffect(() => {
