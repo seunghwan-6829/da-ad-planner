@@ -415,7 +415,7 @@ export function PlanMemoStudio({ onClose }: { onClose: () => void }) {
                       return (
                         <div key={i} className="flex min-h-0 flex-col rounded-2xl border border-gray-200 bg-gray-50/60 p-3 dark:border-gray-800 dark:bg-gray-900/50">
                           <div className="mb-1.5 flex shrink-0 items-center justify-between">
-                            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-bold text-primary">{v?.kind || ["후킹 강화", "톤 변형", "구성 변형"][i]}</span>
+                            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-bold text-primary">{v?.kind || ["후킹 강화", "톤 변형", "표현 변형"][i]}</span>
                             {v && (
                               <div className="flex items-center gap-1">
                                 <button onClick={() => copyVar(v, i)} title="복사" className="rounded p-0.5 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">{copiedIdx === i ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}</button>
