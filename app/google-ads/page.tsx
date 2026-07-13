@@ -328,8 +328,8 @@ function OnDemandGoogleVideo({ ad, rounded, videoRef }: { ad: Ad; rounded: strin
   const resolveViaLocal = useCallback(async (): Promise<string | null> => {
     const id = ytIdOfAd(ad);
     if (!id) {
-      // 크롤 데이터에 유튜브 영상 정보가 아예 없는 광고 → 재생 수단 없음(원본 링크로 안내).
-      localErrRef.current = { msg: "이 광고는 영상 정보가 수집되지 않아 재생할 수 없어요.", dead: true };
+      // 구글이 원본 영상을 잠긴 광고 프레임으로만 노출해 영상 주소를 못 얻는 광고(약 2%) → 앱 재생 불가, 원본에서 확인.
+      localErrRef.current = { msg: "구글이 원본 영상을 공개하지 않아 앱에서는 재생할 수 없어요. 원본 광고에서 확인하세요.", dead: true };
       return null;
     }
     try {
