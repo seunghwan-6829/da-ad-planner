@@ -234,6 +234,30 @@ export function PlanMemoStudio({ onClose }: { onClose: () => void }) {
   async function saveAndExit() { if (saveTimer.current) clearTimeout(saveTimer.current); await saveNow(); doExit(exitTo || "list"); }
   function closeStudio() { if (view === "editor") requestExit("close"); else onClose(); }
 
+  // 사이드바에서 폴더 선택(에디터 중이면 조용히 자동저장 후 목록으로). 언제든 바로 이동.
+  async function navFolder(target: "all" | "none" | string) {
+    if (view === "editor") {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      await saveNow({ silent: true });
+      activeIdRef.current = null;
+      setActive(null);
+      setView("list");
+    }
+    setSel(target);
+    loadAll();
+  }
+  // 에디터 → 목록(현재 폴더 유지, 조용히 저장)
+  async function goListKeep() {
+    if (view === "editor") {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      await saveNow({ silent: true });
+      activeIdRef.current = null;
+      setActive(null);
+    }
+    setView("list");
+    loadAll();
+  }
+
   const applyToMain = (v: Variation) => setContent(v.text);
   const copyVar = async (v: Variation, idx: number) => { try { await navigator.clipboard.writeText(v.text); setCopiedIdx(idx); setTimeout(() => setCopiedIdx(null), 1400); } catch {} };
   const folderColor = (id: string | null) => folders.find((f) => f.id === id)?.color || "#94a3b8";
@@ -244,7 +268,7 @@ export function PlanMemoStudio({ onClose }: { onClose: () => void }) {
       <div className="flex h-14 shrink-0 items-center justify-between border-b px-4 dark:border-gray-800">
         <div className="flex items-center gap-2.5">
           {view === "editor" && (
-            <button onClick={() => requestExit("list")} className="flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+            <button onClick={goListKeep} className="flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
               <ArrowLeft className="h-3.5 w-3.5" /> 목록
             </button>
           )}
@@ -253,146 +277,156 @@ export function PlanMemoStudio({ onClose }: { onClose: () => void }) {
         <button onClick={closeStudio} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"><X className="h-5 w-5" /></button>
       </div>
 
-      {view === "list" ? (
-        /* ── 목록: 폴더 사이드바 + 메모 그리드 ── */
-        <div className="flex flex-1 overflow-hidden">
-          {/* 좌: 폴더 */}
-          <div className="flex w-60 shrink-0 flex-col border-r bg-gray-50/50 dark:border-gray-800 dark:bg-gray-900/40">
-            <div className="flex items-center justify-between px-4 py-3">
-              <span className="text-xs font-bold uppercase text-gray-400">폴더</span>
-              <button onClick={() => { setAddingFolder(true); setNewFolderName(""); }} title="새 폴더" className="rounded p-1 text-gray-400 hover:bg-gray-200 hover:text-gray-700 dark:hover:bg-gray-800"><FolderPlus className="h-4 w-4" /></button>
-            </div>
-            <div className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-3">
-              <FolderRow label="전체 메모" count={counts.__all__ || 0} icon={<FileText className="h-4 w-4" />} active={sel === "all"} onClick={() => setSel("all")} />
-              <FolderRow label="미분류" count={counts.__none__ || 0} icon={<Folder className="h-4 w-4" />} active={sel === "none"} onClick={() => setSel("none")} />
-              <div className="my-1.5 border-t dark:border-gray-800" />
-              {folders.map((f) => (
-                <div key={f.id} className="group relative">
-                  {renaming === f.id ? (
-                    <input
-                      autoFocus value={renameVal}
-                      onChange={(e) => setRenameVal(e.target.value)}
-                      onBlur={() => renameFolder(f.id)}
-                      onKeyDown={(e) => { if (e.key === "Enter") renameFolder(f.id); if (e.key === "Escape") setRenaming(null); }}
-                      className="w-full rounded-lg border border-primary px-2.5 py-2 text-sm outline-none dark:bg-gray-800 dark:text-gray-100"
-                    />
-                  ) : (
-                    <button onClick={() => setSel(f.id)} className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-sm ${sel === f.id ? "bg-primary/10 font-semibold text-primary" : "text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"}`}>
-                      <span className="h-3 w-3 shrink-0 rounded-sm" style={{ backgroundColor: f.color }} />
-                      <span className="min-w-0 flex-1 truncate text-left">{f.name}</span>
-                      <span className="shrink-0 text-xs text-gray-400">{counts[f.id] || 0}</span>
-                      <span onClick={(e) => { e.stopPropagation(); setRenaming(f.id); setRenameVal(f.name); }} className="hidden shrink-0 rounded p-0.5 text-gray-400 hover:text-gray-700 group-hover:inline-flex dark:hover:text-gray-200"><Pencil className="h-3 w-3" /></span>
-                      <span onClick={(e) => deleteFolder(f, e)} className="hidden shrink-0 rounded p-0.5 text-gray-400 hover:text-red-500 group-hover:inline-flex"><Trash2 className="h-3 w-3" /></span>
-                    </button>
-                  )}
-                </div>
-              ))}
-              {addingFolder && (
-                <input
-                  autoFocus value={newFolderName}
-                  onChange={(e) => setNewFolderName(e.target.value)}
-                  onBlur={addFolder}
-                  onKeyDown={(e) => { if (e.key === "Enter") addFolder(); if (e.key === "Escape") setAddingFolder(false); }}
-                  placeholder="폴더 이름"
-                  className="w-full rounded-lg border border-primary px-2.5 py-2 text-sm outline-none dark:bg-gray-800 dark:text-gray-100"
-                />
-              )}
-            </div>
+      {/* 본문: 항상 좌측 폴더 사이드바 + 우측 콘텐츠(목록/에디터) */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* ── 좌: 폴더 사이드바(목록·에디터 공통, 언제든 이동) ── */}
+        <div className="flex w-60 shrink-0 flex-col border-r bg-gray-50/50 dark:border-gray-800 dark:bg-gray-900/40">
+          <div className="flex items-center justify-between px-4 py-3">
+            <span className="text-xs font-bold uppercase text-gray-400">폴더</span>
+            <button onClick={() => { setAddingFolder(true); setNewFolderName(""); }} title="새 폴더" className="rounded p-1 text-gray-400 hover:bg-gray-200 hover:text-gray-700 dark:hover:bg-gray-800"><FolderPlus className="h-4 w-4" /></button>
           </div>
-
-          {/* 우: 메모 카드 */}
-          <div className="flex-1 overflow-y-auto p-6">
-            <div className="mb-5 flex items-center justify-between">
-              <div>
-                <h1 className="text-xl font-bold dark:text-gray-100">{selName}</h1>
-                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">쓰는 동안 자동 저장 · AI가 살짝 다른 버전 3개를 실시간 제안</p>
-              </div>
-              <button onClick={newMemo} className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white"><Plus className="h-4 w-4" /> 신규 메모장</button>
-            </div>
-
-            {loadErr && <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{loadErr}</div>}
-
-            {loading ? (
-              <div className="flex h-40 items-center justify-center text-gray-400"><Loader2 className="h-6 w-6 animate-spin" /></div>
-            ) : shownMemos.length === 0 ? (
-              <button onClick={newMemo} className="flex h-40 w-full flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-gray-300 text-gray-400 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900"><Plus className="h-7 w-7" /> {sel !== "all" && sel !== "none" ? "이 폴더에 첫 메모 만들기" : "첫 메모를 시작해 보세요"}</button>
-            ) : (
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
-                {shownMemos.map((m) => (
-                  <button key={m.id} onClick={() => openMemo(m)} className="group flex h-44 flex-col rounded-2xl border border-gray-200 bg-white p-4 text-left transition hover:border-primary/40 hover:shadow-md dark:border-gray-800 dark:bg-gray-900">
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="line-clamp-1 text-sm font-bold dark:text-gray-100">{m.title || "무제 메모"}</p>
-                      <span onClick={(e) => removeMemo(m, e)} className="rounded p-1 text-gray-300 opacity-0 transition group-hover:opacity-100 hover:text-red-500"><Trash2 className="h-3.5 w-3.5" /></span>
-                    </div>
-                    <p className="mt-1.5 line-clamp-4 flex-1 whitespace-pre-wrap text-xs text-gray-500 dark:text-gray-400">{m.content || "(빈 메모)"}</p>
-                    <div className="mt-2 flex items-center gap-1.5 text-[11px] text-gray-400">
-                      {m.folder_id && sel === "all" && (<><span className="h-2 w-2 rounded-sm" style={{ backgroundColor: folderColor(m.folder_id) }} /><span className="truncate">{folders.find((f) => f.id === m.folder_id)?.name}</span><span>·</span></>)}
-                      <span>{new Date(m.updated_at).toLocaleDateString("ko-KR")}</span>
-                    </div>
+          <div className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-3">
+            <FolderRow label="전체 메모" count={counts.__all__ || 0} icon={<FileText className="h-4 w-4" />} active={view === "list" && sel === "all"} onClick={() => navFolder("all")} />
+            <FolderRow label="미분류" count={counts.__none__ || 0} icon={<Folder className="h-4 w-4" />} active={view === "list" && sel === "none"} onClick={() => navFolder("none")} />
+            <div className="my-1.5 border-t dark:border-gray-800" />
+            {folders.map((f) => (
+              <div key={f.id} className="group relative">
+                {renaming === f.id ? (
+                  <input
+                    autoFocus value={renameVal}
+                    onChange={(e) => setRenameVal(e.target.value)}
+                    onBlur={() => renameFolder(f.id)}
+                    onKeyDown={(e) => { if (e.key === "Enter") renameFolder(f.id); if (e.key === "Escape") setRenaming(null); }}
+                    className="w-full rounded-lg border border-primary px-2.5 py-2 text-sm outline-none dark:bg-gray-800 dark:text-gray-100"
+                  />
+                ) : (
+                  <button onClick={() => navFolder(f.id)} className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-sm ${view === "list" && sel === f.id ? "bg-primary/10 font-semibold text-primary" : "text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"}`}>
+                    <span className="h-3 w-3 shrink-0 rounded-sm" style={{ backgroundColor: f.color }} />
+                    <span className="min-w-0 flex-1 truncate text-left">{f.name}</span>
+                    <span className="shrink-0 text-xs text-gray-400">{counts[f.id] || 0}</span>
+                    <span onClick={(e) => { e.stopPropagation(); setRenaming(f.id); setRenameVal(f.name); }} className="hidden shrink-0 rounded p-0.5 text-gray-400 hover:text-gray-700 group-hover:inline-flex dark:hover:text-gray-200"><Pencil className="h-3 w-3" /></span>
+                    <span onClick={(e) => deleteFolder(f, e)} className="hidden shrink-0 rounded p-0.5 text-gray-400 hover:text-red-500 group-hover:inline-flex"><Trash2 className="h-3 w-3" /></span>
                   </button>
-                ))}
+                )}
               </div>
+            ))}
+            {addingFolder && (
+              <input
+                autoFocus value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                onBlur={addFolder}
+                onKeyDown={(e) => { if (e.key === "Enter") addFolder(); if (e.key === "Escape") setAddingFolder(false); }}
+                placeholder="폴더 이름"
+                className="w-full rounded-lg border border-primary px-2.5 py-2 text-sm outline-none dark:bg-gray-800 dark:text-gray-100"
+              />
             )}
           </div>
-        </div>
-      ) : (
-        /* ── 에디터 ── */
-        <div className="flex flex-1 flex-col overflow-hidden">
-          <div className="flex shrink-0 items-center gap-3 border-b px-6 py-3 dark:border-gray-800">
-            <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="메모 제목" className="flex-1 bg-transparent text-lg font-bold outline-none placeholder:text-gray-300 dark:text-gray-100" />
-            {/* 폴더 이동 */}
-            <select value={folderId || ""} onChange={(e) => setFolderId(e.target.value || null)} className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200">
-              <option value="">미분류</option>
-              {folders.map((f) => (<option key={f.id} value={f.id}>{f.name}</option>))}
-            </select>
-            <span className="flex items-center gap-1 text-xs text-gray-400">
-              {saveState === "saving" ? (<><Loader2 className="h-3.5 w-3.5 animate-spin" /> 저장 중…</>) : (<><Check className="h-3.5 w-3.5 text-emerald-500" /> 저장됨</>)}
-            </span>
+          {/* 사이드바 하단: 신규 메모장(항상) */}
+          <div className="border-t p-3 dark:border-gray-800">
+            <button onClick={newMemo} className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white"><Plus className="h-4 w-4" /> 신규 메모장</button>
           </div>
+        </div>
 
-          <div className="grid flex-1 gap-4 overflow-hidden p-4 lg:grid-cols-[1.7fr_1fr]">
-            <div className="flex min-h-0 flex-col rounded-2xl border border-gray-200 dark:border-gray-800">
-              <div className="border-b px-4 py-2 text-xs font-semibold text-gray-500 dark:border-gray-800 dark:text-gray-400">내 기획 (대본/이미지 기획 자유롭게)</div>
-              <textarea value={content} onChange={(e) => setContent(e.target.value)} autoFocus placeholder="여기에 기획을 실시간으로 적어보세요. 잠시 멈추면 오른쪽에 살짝 다른 버전 3개가 자동으로 생겨요." className="flex-1 resize-none rounded-b-2xl bg-transparent p-4 text-[15px] leading-relaxed outline-none dark:text-gray-100" />
-            </div>
-
-            <div className="flex min-h-0 flex-col">
-              <div className="mb-2 flex items-center justify-between">
-                <span className="flex items-center gap-1.5 text-xs font-bold text-primary"><Sparkles className="h-3.5 w-3.5" /> AI 실시간 베리에이션</span>
-                <button onClick={genVariations} disabled={aiState === "loading"} title="지금 내용으로 다시 생성" className="flex items-center gap-1 rounded-lg border border-gray-200 px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
-                  {aiState === "loading" ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />} 새로고침
-                </button>
+        {/* ── 우: 콘텐츠 ── */}
+        <div className="flex-1 overflow-y-auto">
+          {view === "list" ? (
+            /* 메모 그리드 (여백 줘서 가로폭 정돈) */
+            <div className="mx-auto max-w-5xl px-8 py-6">
+              <div className="mb-5 flex items-center justify-between">
+                <div>
+                  <h1 className="text-xl font-bold dark:text-gray-100">{selName}</h1>
+                  <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">쓰는 동안 자동 저장 · AI가 살짝 다른 버전 3개를 실시간 제안</p>
+                </div>
+                <button onClick={newMemo} className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white"><Plus className="h-4 w-4" /> 신규 메모장</button>
               </div>
-              {aiState === "error" && <div className="mb-2 rounded-lg bg-amber-50 p-2 text-[11px] text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">{aiErr}</div>}
-              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-                {[0, 1, 2].map((i) => {
-                  const v = variations[i];
-                  return (
-                    <div key={i} className="rounded-xl border border-gray-200 bg-gray-50/60 p-2.5 dark:border-gray-800 dark:bg-gray-900/60">
-                      <div className="mb-1 flex items-center justify-between">
-                        <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-bold text-primary">{v?.kind || ["후킹 강화", "톤 변형", "구성 변형"][i]}</span>
-                        {v && (
-                          <div className="flex items-center gap-1">
-                            <button onClick={() => copyVar(v, i)} title="복사" className="rounded p-0.5 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">{copiedIdx === i ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}</button>
-                            <button onClick={() => applyToMain(v)} title="본문으로 적용" className="rounded px-1.5 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/10">적용</button>
-                          </div>
-                        )}
+
+              {loadErr && <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{loadErr}</div>}
+
+              {loading ? (
+                <div className="flex h-40 items-center justify-center text-gray-400"><Loader2 className="h-6 w-6 animate-spin" /></div>
+              ) : shownMemos.length === 0 ? (
+                <button onClick={newMemo} className="flex h-40 w-full flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-gray-300 text-gray-400 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900"><Plus className="h-7 w-7" /> {sel !== "all" && sel !== "none" ? "이 폴더에 첫 메모 만들기" : "첫 메모를 시작해 보세요"}</button>
+              ) : (
+                <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+                  {shownMemos.map((m) => (
+                    <button key={m.id} onClick={() => openMemo(m)} className="group flex h-44 flex-col rounded-2xl border border-gray-200 bg-white p-4 text-left transition hover:border-primary/40 hover:shadow-md dark:border-gray-800 dark:bg-gray-900">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="line-clamp-1 text-sm font-bold dark:text-gray-100">{m.title || "무제 메모"}</p>
+                        <span onClick={(e) => removeMemo(m, e)} className="rounded p-1 text-gray-300 opacity-0 transition group-hover:opacity-100 hover:text-red-500"><Trash2 className="h-3.5 w-3.5" /></span>
                       </div>
-                      {v ? (
-                        <p className="whitespace-pre-wrap text-xs leading-relaxed text-gray-700 dark:text-gray-300">{v.text}</p>
-                      ) : aiState === "loading" ? (
-                        <div className="flex h-16 items-center justify-center text-gray-300"><Loader2 className="h-4 w-4 animate-spin" /></div>
-                      ) : (
-                        <p className="py-3 text-center text-[11px] text-gray-400">본문을 10자 이상 쓰면 자동 생성돼요</p>
-                      )}
-                    </div>
-                  );
-                })}
+                      <p className="mt-1.5 line-clamp-4 flex-1 whitespace-pre-wrap text-xs text-gray-500 dark:text-gray-400">{m.content || "(빈 메모)"}</p>
+                      <div className="mt-2 flex items-center gap-1.5 text-[11px] text-gray-400">
+                        {m.folder_id && sel === "all" && (<><span className="h-2 w-2 rounded-sm" style={{ backgroundColor: folderColor(m.folder_id) }} /><span className="truncate">{folders.find((f) => f.id === m.folder_id)?.name}</span><span>·</span></>)}
+                        <span>{new Date(m.updated_at).toLocaleDateString("ko-KR")}</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            /* 에디터: 여백 준 중앙 정렬 · 본문(크게) + 우측 베리에이션 3개(항상 꽉 차 보이게) */
+            <div className="mx-auto flex h-full max-w-6xl flex-col px-8 py-5">
+              <div className="mb-4 flex shrink-0 items-center gap-3">
+                <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="메모 제목" className="flex-1 bg-transparent text-xl font-bold outline-none placeholder:text-gray-300 dark:text-gray-100" />
+                <select value={folderId || ""} onChange={(e) => setFolderId(e.target.value || null)} title="이 메모의 폴더" className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200">
+                  <option value="">미분류</option>
+                  {folders.map((f) => (<option key={f.id} value={f.id}>{f.name}</option>))}
+                </select>
+                <span className="flex items-center gap-1 text-xs text-gray-400">
+                  {saveState === "saving" ? (<><Loader2 className="h-3.5 w-3.5 animate-spin" /> 저장 중…</>) : (<><Check className="h-3.5 w-3.5 text-emerald-500" /> 저장됨</>)}
+                </span>
+              </div>
+
+              <div className="grid min-h-0 flex-1 gap-5 lg:grid-cols-[1.8fr_1fr]">
+                {/* 메인 작성란(크게) */}
+                <div className="flex min-h-0 flex-col rounded-2xl border border-gray-200 dark:border-gray-800">
+                  <div className="border-b px-4 py-2.5 text-xs font-semibold text-gray-500 dark:border-gray-800 dark:text-gray-400">내 기획 (대본/이미지 기획 자유롭게)</div>
+                  <textarea value={content} onChange={(e) => setContent(e.target.value)} autoFocus placeholder="여기에 기획을 실시간으로 적어보세요. 잠시 멈추면 오른쪽에 살짝 다른 버전 3개가 자동으로 생겨요." className="flex-1 resize-none rounded-b-2xl bg-transparent p-5 text-[15px] leading-relaxed outline-none dark:text-gray-100" />
+                </div>
+
+                {/* 우측 베리에이션 3개 — 항상 같은 높이로 꽉 차게(3등분) */}
+                <div className="flex min-h-0 flex-col">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5 text-xs font-bold text-primary"><Sparkles className="h-3.5 w-3.5" /> AI 실시간 베리에이션</span>
+                    <button onClick={genVariations} disabled={aiState === "loading"} title="지금 내용으로 다시 생성" className="flex items-center gap-1 rounded-lg border border-gray-200 px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                      {aiState === "loading" ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />} 새로고침
+                    </button>
+                  </div>
+                  {aiState === "error" && <div className="mb-2 rounded-lg bg-amber-50 p-2 text-[11px] text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">{aiErr}</div>}
+                  <div className="grid min-h-0 flex-1 grid-rows-3 gap-3">
+                    {[0, 1, 2].map((i) => {
+                      const v = variations[i];
+                      return (
+                        <div key={i} className="flex min-h-0 flex-col rounded-2xl border border-gray-200 bg-gray-50/60 p-3 dark:border-gray-800 dark:bg-gray-900/50">
+                          <div className="mb-1.5 flex shrink-0 items-center justify-between">
+                            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-bold text-primary">{v?.kind || ["후킹 강화", "톤 변형", "구성 변형"][i]}</span>
+                            {v && (
+                              <div className="flex items-center gap-1">
+                                <button onClick={() => copyVar(v, i)} title="복사" className="rounded p-0.5 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">{copiedIdx === i ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}</button>
+                                <button onClick={() => applyToMain(v)} title="본문으로 적용" className="rounded px-1.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/10">적용</button>
+                              </div>
+                            )}
+                          </div>
+                          <div className="min-h-0 flex-1 overflow-y-auto">
+                            {v ? (
+                              <p className="whitespace-pre-wrap text-xs leading-relaxed text-gray-700 dark:text-gray-300">{v.text}</p>
+                            ) : aiState === "loading" ? (
+                              <div className="flex h-full items-center justify-center text-gray-300"><Loader2 className="h-4 w-4 animate-spin" /></div>
+                            ) : (
+                              <div className="flex h-full items-center justify-center px-2 text-center text-[11px] text-gray-400">본문을 10자 이상 쓰면 이 자리에 자동으로 생겨요</div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
-      )}
+      </div>
 
       {exitTo && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4" onClick={() => setExitTo(null)}>
