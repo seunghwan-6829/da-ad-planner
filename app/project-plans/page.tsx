@@ -9,6 +9,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { useAuth } from '@/lib/auth-context'
 import { supabase } from '@/lib/supabase'
+import { PlanMemoStudio } from '@/components/plan-memo-studio'
 import {
   getClients,
   getClientsForUser, 
@@ -58,6 +59,9 @@ export default function ProjectPlansPage() {
   const [showTrash, setShowTrash] = useState(false)
   const [deletedPlans, setDeletedPlans] = useState<ProjectPlan[]>([])
   
+  // 기획 메모장 스튜디오 오버레이
+  const [memoStudio, setMemoStudio] = useState(false)
+
   // 새 클라이언트 추가
   const [showAddForm, setShowAddForm] = useState(false)
   const [newClientName, setNewClientName] = useState('')
@@ -633,7 +637,19 @@ export default function ProjectPlansPage() {
             )}
           </div>
         )}
+
+        {/* 기획 메모장 — 클라이언트와 무관한 개인 실시간 메모(모두 사용) */}
+        {!showClientTrash && (
+          <div className="p-3 border-t dark:border-gray-800 bg-white dark:bg-gray-950">
+            <Button className="w-full" variant="outline" onClick={() => setMemoStudio(true)}>
+              <FileText className="h-4 w-4 mr-2" />
+              기획 메모장
+            </Button>
+          </div>
+        )}
       </div>
+
+      {memoStudio && <PlanMemoStudio onClose={() => setMemoStudio(false)} />}
 
       {/* 우측: 기획안 목록 */}
       <div className="flex-1 flex flex-col bg-gray-50/50 dark:bg-gray-950">
