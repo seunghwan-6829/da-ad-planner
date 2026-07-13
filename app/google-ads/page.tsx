@@ -6,6 +6,7 @@ import { useAuth } from "@/lib/auth-context";
 import { AddToProductionButton } from "@/components/add-to-production";
 import { aiFetch } from "@/lib/ai-fetch";
 import { getClients, type Client } from "@/lib/api/clients";
+import { loadCache, saveCache } from "@/lib/crawler-cache";
 import { createMindmap } from "@/lib/api/mindmaps";
 import { createContentGuide } from "@/lib/api/content-guides";
 import { supabase } from "@/lib/supabase";
@@ -570,6 +571,8 @@ export default function GoogleAdsCrawlerPage() {
   const categorizedRef = useRef(false);
   const bgLoadedRef = useRef(false); // 백그라운드 전체 로드 1회만
   const loadedBrandsRef = useRef<Set<string>>(new Set()); // 브랜드별 on-demand 로드 추적
+  const hadCacheRef = useRef(false); // 진입 시 IndexedDB 캐시가 있었나(있으면 델타만 동기화)
+  const cacheIdsRef = useRef<Set<string>>(new Set()); // 캐시에 담겨있던 library_id(델타 종료 판정용)
 
   // 새로 받은 광고들을 기존 ads 에 병합(중복 제거, 기존 항목 우선 — bootstrap 의 ad_text/has_analysis 보존)
   const mergeAds = useCallback((rows: Ad[]) => {
@@ -580,6 +583,15 @@ export default function GoogleAdsCrawlerPage() {
       return Array.from(map.values());
     });
   }, []);
+  // 갱신 병합(기존은 최신값으로 덮고, 신규는 추가). bootstrap 최신 300 반영에 사용.
+  const upsertAds = useCallback((rows: Ad[]) => {
+    if (!rows?.length) return;
+    setAds((prev) => {
+      const map = new Map(prev.map((a) => [a.library_id, a]));
+      for (const row of rows) map.set(row.library_id, { ...map.get(row.library_id), ...row });
+      return Array.from(map.values());
+    });
+  }, []);
 
   const loadAll = useCallback(async () => {
     try {
@@ -587,11 +599,8 @@ export default function GoogleAdsCrawlerPage() {
       if (res.ok) {
         const j = await res.json();
         setTargets(j.targets ?? []);
-        setAds(j.ads ?? []);
         setCounts(j.counts ?? {});
-        try {
-          sessionStorage.setItem("google-ads-cache", JSON.stringify(j));
-        } catch {}
+        upsertAds(j.ads ?? []); // 최신 300 을 갱신 병합(캐시로 이미 렌더된 목록 위에 최신값 반영)
       }
     } finally {
       setLoading(false);
@@ -611,73 +620,85 @@ export default function GoogleAdsCrawlerPage() {
     // 속도: 페이지를 한 번에 1000개씩, 6개를 동시(병렬)로 받아 합친다 → 순차 대비 수 배 빠름.
     if (!bgLoadedRef.current) {
       bgLoadedRef.current = true;
-      (async () => {
-        setSyncing(true);
-        const PAGE = 1000; // PostgREST 한 요청 최대치
-        const CONCURRENCY = 12; // 3만+ 대량이라 동시성 상향(경량 컬럼과 함께 sync 속도 개선)
-        let nextOffset = 300; // bootstrap 이 최근 300 줬으니 그다음부터
-        let done = false;
-        // 수신 행을 모아 1.2초마다 한 번에 병합 → 요청마다 3만개 리스트 재구성/재렌더하던 비용 제거(체감 큰 차이).
-        let buffer: Ad[] = [];
-        const flush = () => { if (buffer.length) { mergeAds(buffer); buffer = []; } };
-        const timer = setInterval(flush, 1200);
-        const worker = async () => {
-          while (!done) {
-            const offset = nextOffset; // 동기적으로 고유 오프셋 선점(겹침/누락 없음)
-            nextOffset += PAGE;
+      const PAGE = 1000; // PostgREST 한 요청 최대치
+      if (hadCacheRef.current) {
+        // 델타 동기화: 캐시가 이미 전체를 담고 있으니, 최신부터 훑다가 "모두 아는 페이지"를 만나면 중단.
+        //   보통 새로 생긴 몇 개만 받고 1~2요청에 끝난다(동기화 바 없음).
+        (async () => {
+          const known = cacheIdsRef.current;
+          for (let offset = 0; ; offset += PAGE) {
             try {
               const r = await fetch(`/api/google-ads/ads?light=1&limit=${PAGE}&offset=${offset}`);
-              if (!r.ok) {
-                done = true;
-                break;
-              }
+              if (!r.ok) break;
               const rows: Ad[] = await r.json();
-              if (rows.length) buffer.push(...rows);
-              if (rows.length < PAGE) {
-                done = true; // 마지막 페이지 도달
-                break;
-              }
-            } catch {
-              done = true;
-              break;
-            }
+              if (!rows.length) break;
+              const knownCount = rows.reduce((n, x) => n + (known.has(x.library_id) ? 1 : 0), 0);
+              mergeAds(rows);
+              if (rows.length < PAGE || knownCount === rows.length) break; // 끝 또는 전부 아는 페이지 → 중단
+            } catch { break; }
           }
-        };
-        try {
-          await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
-        } finally {
-          clearInterval(timer); flush(); setSyncing(false);
-        }
-      })();
+        })();
+      } else {
+        // 최초(캐시 없음): 전체 병렬 로드 후 캐시에 저장.
+        (async () => {
+          setSyncing(true);
+          const CONCURRENCY = 12; // 3만+ 대량이라 동시성 상향
+          let nextOffset = 300;
+          let done = false;
+          let buffer: Ad[] = [];
+          const flush = () => { if (buffer.length) { mergeAds(buffer); buffer = []; } };
+          const timer = setInterval(flush, 1200);
+          const worker = async () => {
+            while (!done) {
+              const offset = nextOffset;
+              nextOffset += PAGE;
+              try {
+                const r = await fetch(`/api/google-ads/ads?light=1&limit=${PAGE}&offset=${offset}`);
+                if (!r.ok) { done = true; break; }
+                const rows: Ad[] = await r.json();
+                if (rows.length) buffer.push(...rows);
+                if (rows.length < PAGE) { done = true; break; }
+              } catch { done = true; break; }
+            }
+          };
+          try { await Promise.all(Array.from({ length: CONCURRENCY }, () => worker())); }
+          finally { clearInterval(timer); flush(); setSyncing(false); }
+        })();
+      }
     }
-  }, [mergeAds]);
+  }, [mergeAds, upsertAds]);
 
   useEffect(() => {
-    // 다른 탭 갔다가 재진입(SPA): 메모리 캐시가 있으면 그대로 복원하고 재fetch 안 함(F5 해야 새로고침).
+    // 1) 같은 세션 SPA 재진입: 메모리 캐시 즉시 복원 + 백그라운드 델타.
     if (googleMemCache) {
       setTargets(googleMemCache.targets);
       setAds(googleMemCache.ads);
       setCounts(googleMemCache.counts);
       setLoading(false);
+      hadCacheRef.current = true;
+      cacheIdsRef.current = new Set(googleMemCache.ads.map((a) => a.library_id));
+      loadAll();
       return;
     }
-    // 첫 로드/F5: 세션 캐시를 즉시 표시(진입 순간 기다림 제거) → 뒤에서 최신으로 갱신
-    try {
-      const c = sessionStorage.getItem("google-ads-cache");
-      if (c) {
-        const j = JSON.parse(c);
-        setTargets(j.targets ?? []);
-        setAds(j.ads ?? []);
-        setCounts(j.counts ?? {});
-        setLoading(false);
-      }
-    } catch {}
-    loadAll();
+    // 2) F5/새 탭/앱 재시작: IndexedDB 영구 캐시가 있으면 전체를 즉시 복원(동기화 바 없이) → 델타만.
+    loadCache<Ad>("google")
+      .then((cached) => {
+        if (cached?.length) {
+          hadCacheRef.current = true;
+          cacheIdsRef.current = new Set(cached.map((a) => a.library_id));
+          setAds(cached);
+          setLoading(false);
+        }
+      })
+      .finally(() => loadAll());
   }, [loadAll]);
 
-  // 최신 상태를 모듈 메모리 캐시에 보관 → 재진입 시 위에서 그대로 복원(재fetch 없음).
+  // 최신 상태를 모듈 메모리 캐시(세션) + IndexedDB(영구, 디바운스)에 보관.
   useEffect(() => {
-    if (!loading) googleMemCache = { targets, ads, counts };
+    if (loading) return;
+    googleMemCache = { targets, ads, counts };
+    const t = setTimeout(() => { saveCache("google", ads); }, 1500);
+    return () => clearTimeout(t);
   }, [targets, ads, counts, loading]);
 
   // 기획안 제작의 클라이언트 목록(클라이언트별 브랜드 매핑/필터용)

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { AddToProductionButton } from "@/components/add-to-production";
 import { aiFetch } from "@/lib/ai-fetch";
+import { loadCache, saveCache } from "@/lib/crawler-cache";
 import { getClients, type Client } from "@/lib/api/clients";
 import { createMindmap } from "@/lib/api/mindmaps";
 import { createContentGuide } from "@/lib/api/content-guides";
@@ -468,12 +469,24 @@ export default function OwnedMediaPage() {
 
   const bgLoadedRef = useRef(false);
   const loadedCreatorsRef = useRef<Set<string>>(new Set());
+  const hadCacheRef = useRef(false); // 진입 시 IndexedDB 캐시가 있었나(있으면 델타만 동기화)
+  const cacheIdsRef = useRef<Set<string>>(new Set()); // 캐시에 담겨있던 post_id(델타 종료 판정용)
 
+  // 추가 전용 병합(모르는 id만 추가). 캐시 복원·백그라운드·크리에이터 로드에 사용.
   const mergePosts = useCallback((rows: Post[]) => {
     if (!rows?.length) return;
     setPosts((prev) => {
       const map = new Map(prev.map((a) => [a.post_id, a]));
       for (const row of rows) if (!map.has(row.post_id)) map.set(row.post_id, row);
+      return Array.from(map.values());
+    });
+  }, []);
+  // 갱신 병합(기존은 최신값으로 덮고, 신규는 추가). bootstrap 최신 300 반영에 사용.
+  const upsertPosts = useCallback((rows: Post[]) => {
+    if (!rows?.length) return;
+    setPosts((prev) => {
+      const map = new Map(prev.map((a) => [a.post_id, a]));
+      for (const row of rows) map.set(row.post_id, { ...map.get(row.post_id), ...row });
       return Array.from(map.values());
     });
   }, []);
@@ -484,9 +497,8 @@ export default function OwnedMediaPage() {
       if (res.ok) {
         const j = await res.json();
         setCreators(j.creators ?? []);
-        setPosts(j.posts ?? []);
         setCounts(j.counts ?? {});
-        try { sessionStorage.setItem("owned-media-cache", JSON.stringify(j)); } catch {}
+        upsertPosts(j.posts ?? []); // 최신 300 을 갱신 병합(캐시로 이미 렌더된 목록 위에 최신값 반영)
       }
     } finally {
       setLoading(false);
@@ -503,60 +515,85 @@ export default function OwnedMediaPage() {
       .catch(() => {});
     if (!bgLoadedRef.current) {
       bgLoadedRef.current = true;
-      (async () => {
-        setSyncing(true);
-        const PAGE = 1000;
-        const CONCURRENCY = 6;
-        let nextOffset = 300;
-        let done = false;
-        // 수신 행을 모아 1.2초마다 한 번에 병합 → 요청마다 재렌더/재정렬하던 비용 제거(대량일수록 큰 차이).
-        let buffer: Post[] = [];
-        const flush = () => { if (buffer.length) { mergePosts(buffer); buffer = []; } };
-        const timer = setInterval(flush, 1200);
-        const worker = async () => {
-          while (!done) {
-            const offset = nextOffset;
-            nextOffset += PAGE;
+      const PAGE = 1000;
+      if (hadCacheRef.current) {
+        // 델타 동기화: 캐시가 이미 전체를 담고 있으니, 최신부터 훑다가 "모두 아는 페이지"를 만나면 중단.
+        //   보통 새로 생긴 몇 개만 받고 1~2요청에 끝난다(동기화 바 없음).
+        (async () => {
+          const known = cacheIdsRef.current;
+          for (let offset = 0; ; offset += PAGE) {
             try {
               const r = await fetch(`/api/owned-media/posts?light=1&limit=${PAGE}&offset=${offset}`);
-              if (!r.ok) { done = true; break; }
+              if (!r.ok) break;
               const rows: Post[] = await r.json();
-              if (rows.length) buffer.push(...rows);
-              if (rows.length < PAGE) { done = true; break; }
-            } catch { done = true; break; }
+              if (!rows.length) break;
+              const knownCount = rows.reduce((n, x) => n + (known.has(x.post_id) ? 1 : 0), 0);
+              mergePosts(rows);
+              if (rows.length < PAGE || knownCount === rows.length) break; // 끝 또는 전부 아는 페이지 → 중단
+            } catch { break; }
           }
-        };
-        try { await Promise.all(Array.from({ length: CONCURRENCY }, () => worker())); }
-        finally { clearInterval(timer); flush(); setSyncing(false); }
-      })();
+        })();
+      } else {
+        // 최초(캐시 없음): 전체 병렬 로드 후 캐시에 저장.
+        (async () => {
+          setSyncing(true);
+          const CONCURRENCY = 6;
+          let nextOffset = 300;
+          let done = false;
+          let buffer: Post[] = [];
+          const flush = () => { if (buffer.length) { mergePosts(buffer); buffer = []; } };
+          const timer = setInterval(flush, 1200);
+          const worker = async () => {
+            while (!done) {
+              const offset = nextOffset;
+              nextOffset += PAGE;
+              try {
+                const r = await fetch(`/api/owned-media/posts?light=1&limit=${PAGE}&offset=${offset}`);
+                if (!r.ok) { done = true; break; }
+                const rows: Post[] = await r.json();
+                if (rows.length) buffer.push(...rows);
+                if (rows.length < PAGE) { done = true; break; }
+              } catch { done = true; break; }
+            }
+          };
+          try { await Promise.all(Array.from({ length: CONCURRENCY }, () => worker())); }
+          finally { clearInterval(timer); flush(); setSyncing(false); }
+        })();
+      }
     }
-  }, [mergePosts]);
+  }, [mergePosts, upsertPosts]);
 
   useEffect(() => {
-    // 다른 탭 갔다가 재진입(SPA): 메모리 캐시가 있으면 그대로 복원하고 재fetch 안 함(F5 해야 새로고침).
+    // 1) 같은 세션 SPA 재진입: 메모리 캐시 즉시 복원(재fetch 없음).
     if (ownedMemCache) {
       setCreators(ownedMemCache.creators);
       setPosts(ownedMemCache.posts);
       setCounts(ownedMemCache.counts);
       setLoading(false);
+      hadCacheRef.current = true;
+      cacheIdsRef.current = new Set(ownedMemCache.posts.map((p) => p.post_id));
+      loadAll(); // 백그라운드 델타만 돌려 새 소식 반영
       return;
     }
-    try {
-      const c = sessionStorage.getItem("owned-media-cache");
-      if (c) {
-        const j = JSON.parse(c);
-        setCreators(j.creators ?? []);
-        setPosts(j.posts ?? []);
-        setCounts(j.counts ?? {});
-        setLoading(false);
-      }
-    } catch {}
-    loadAll();
+    // 2) F5/새 탭/앱 재시작: IndexedDB 영구 캐시가 있으면 전체를 즉시 복원(동기화 바 없이) → 델타만.
+    loadCache<Post>("owned")
+      .then((cached) => {
+        if (cached?.length) {
+          hadCacheRef.current = true;
+          cacheIdsRef.current = new Set(cached.map((p) => p.post_id));
+          setPosts(cached);
+          setLoading(false);
+        }
+      })
+      .finally(() => loadAll());
   }, [loadAll]);
 
-  // 최신 상태를 모듈 메모리 캐시에 보관 → 재진입 시 위에서 그대로 복원(재fetch 없음).
+  // 최신 상태를 모듈 메모리 캐시(세션) + IndexedDB(영구, 디바운스)에 보관.
   useEffect(() => {
-    if (!loading) ownedMemCache = { creators, posts, counts };
+    if (loading) return;
+    ownedMemCache = { creators, posts, counts };
+    const t = setTimeout(() => { saveCache("owned", posts); }, 1500);
+    return () => clearTimeout(t);
   }, [creators, posts, counts, loading]);
 
   useEffect(() => {
