@@ -98,9 +98,10 @@ export function PlanMemoStudio({ onClose }: { onClose: () => void }) {
   const [content, setContent] = useState("");
   const [folderId, setFolderId] = useState<string | null>(null);
   const [variations, setVariations] = useState<Variation[]>([]);
+  const [vLoading, setVLoading] = useState<boolean[]>([false, false, false]); // 카드별 로딩(병렬)
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("saved");
-  const [aiState, setAiState] = useState<"idle" | "loading" | "error">("idle");
   const [aiErr, setAiErr] = useState("");
+  const anyLoading = vLoading.some(Boolean);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const [exitTo, setExitTo] = useState<null | "list" | "close">(null);
 
@@ -148,18 +149,32 @@ export function PlanMemoStudio({ onClose }: { onClose: () => void }) {
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
   }, [title, content, variations, folderId, view, saveNow]);
 
-  const genVariations = useCallback(async () => {
+  // 3개 각도를 병렬로 호출 → 각 카드가 도착하는 즉시 독립적으로 채워짐(전체 대기 없음, 빠름).
+  const genVariations = useCallback(async (force = false) => {
     const c = content.trim();
-    if (c.length < 10 || c === lastAiContent.current) return;
+    if (c.length < 10) return;
+    if (!force && c === lastAiContent.current) return;
     lastAiContent.current = c;
-    setAiState("loading"); setAiErr("");
-    try {
-      const r = await aiFetch("/api/ai/memo-variations", { method: "POST", body: JSON.stringify({ content: c }) });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) { setAiState("error"); setAiErr(j.error || "베리에이션 생성 실패"); return; }
-      if (Array.isArray(j.variations) && j.variations.length) setVariations(j.variations);
-      setAiState("idle");
-    } catch { setAiState("error"); setAiErr("네트워크 오류"); }
+    setAiErr("");
+    setVLoading([true, true, true]);
+    const angles = ["hook", "tone", "structure"] as const;
+    await Promise.all(
+      angles.map(async (angle, i) => {
+        try {
+          const r = await aiFetch("/api/ai/memo-variations", { method: "POST", body: JSON.stringify({ content: c, angle }) });
+          const j = await r.json().catch(() => ({}));
+          if (r.ok && j.variation) {
+            setVariations((prev) => { const n = [...prev]; n[i] = j.variation; return n; });
+          } else if (!r.ok && i === 0) {
+            setAiErr(j.error || "베리에이션 생성 실패");
+          }
+        } catch {
+          if (i === 0) setAiErr("네트워크 오류");
+        } finally {
+          setVLoading((prev) => { const n = [...prev]; n[i] = false; return n; });
+        }
+      }),
+    );
   }, [content]);
 
   useEffect(() => {
@@ -201,7 +216,7 @@ export function PlanMemoStudio({ onClose }: { onClose: () => void }) {
     savedRef.current = { title: m.title, content: m.content, folderId: m.folder_id ?? null };
     lastAiContent.current = "";
     setSaveState(t !== m.title || c !== m.content || fid !== (m.folder_id ?? null) ? "saving" : "saved");
-    setAiState("idle");
+    setVLoading([false, false, false]);
     setView("editor");
   }
 
@@ -389,11 +404,11 @@ export function PlanMemoStudio({ onClose }: { onClose: () => void }) {
                 <div className="flex min-h-0 flex-col">
                   <div className="mb-2 flex items-center justify-between">
                     <span className="flex items-center gap-1.5 text-xs font-bold text-primary"><Sparkles className="h-3.5 w-3.5" /> AI 실시간 베리에이션</span>
-                    <button onClick={genVariations} disabled={aiState === "loading"} title="지금 내용으로 다시 생성" className="flex items-center gap-1 rounded-lg border border-gray-200 px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
-                      {aiState === "loading" ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />} 새로고침
+                    <button onClick={() => genVariations(true)} disabled={anyLoading} title="지금 내용으로 다시 생성" className="flex items-center gap-1 rounded-lg border border-gray-200 px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                      {anyLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />} 새로고침
                     </button>
                   </div>
-                  {aiState === "error" && <div className="mb-2 rounded-lg bg-amber-50 p-2 text-[11px] text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">{aiErr}</div>}
+                  {aiErr && <div className="mb-2 rounded-lg bg-amber-50 p-2 text-[11px] text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">{aiErr}</div>}
                   <div className="grid min-h-0 flex-1 grid-rows-3 gap-3">
                     {[0, 1, 2].map((i) => {
                       const v = variations[i];
@@ -409,10 +424,10 @@ export function PlanMemoStudio({ onClose }: { onClose: () => void }) {
                             )}
                           </div>
                           <div className="min-h-0 flex-1 overflow-y-auto">
-                            {v ? (
-                              <p className="whitespace-pre-wrap text-xs leading-relaxed text-gray-700 dark:text-gray-300">{v.text}</p>
-                            ) : aiState === "loading" ? (
+                            {vLoading[i] ? (
                               <div className="flex h-full items-center justify-center text-gray-300"><Loader2 className="h-4 w-4 animate-spin" /></div>
+                            ) : v ? (
+                              <p className="whitespace-pre-wrap text-xs leading-relaxed text-gray-700 dark:text-gray-300">{v.text}</p>
                             ) : (
                               <div className="flex h-full items-center justify-center px-2 text-center text-[11px] text-gray-400">본문을 10자 이상 쓰면 이 자리에 자동으로 생겨요</div>
                             )}

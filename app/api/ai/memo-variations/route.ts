@@ -1,13 +1,28 @@
 import { NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+export const maxDuration = 30
 
 const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages'
 const MODEL = 'claude-sonnet-4-6'
 
-// 기획 메모의 실시간 베리에이션 3개 — 지금 쓰고 있는 내용을 "비슷하지만 살짝 다른 느낌"으로 디벨롭.
-// ⚠️ 사용자 본인 Anthropic 키(x-user-api-key)로만 동작(다른 AI 기능과 동일).
+// 각도별 지시 — 광고 카피 관점. 클라이언트가 3개를 병렬 호출(각 카드가 독립적으로 빨리 채워짐).
+const ANGLES: Record<string, { kind: string; how: string }> = {
+  hook: {
+    kind: '후킹 강화',
+    how: '첫 줄(후킹)을 확 세게 바꿔라. 숫자·손실회피·호기심 갭·역설·도발 중 하나로 3초 안에 스크롤을 멈추게. 뒷부분은 원문 흐름 유지.',
+  },
+  tone: {
+    kind: '톤 변형',
+    how: '메시지·소재는 그대로 두고 화자 "톤"만 확 바꿔라. 친구가 몰래 꿀팁 알려주듯 생생한 반말 구어체로, 광고티 빼고.',
+  },
+  structure: {
+    kind: '구성 변형',
+    how: 'PAS(문제 던지기 → 공감·증폭 → 해결=제품) 또는 Before→After→혜택 구조로 재배열해라. 같은 소재, 다른 짜임새.',
+  },
+}
+
+// 기획 메모의 카피 베리에이션 1개(각도 지정). ⚠️ 사용자 본인 Anthropic 키(x-user-api-key).
 export async function POST(req: Request) {
   const apiKey = req.headers.get('x-user-api-key')
   if (!apiKey) {
@@ -15,45 +30,38 @@ export async function POST(req: Request) {
   }
   const b = await req.json().catch(() => ({}))
   const content = (b.content || '').toString().trim()
-  if (content.length < 5) return NextResponse.json({ variations: [] })
+  const angleKey = (b.angle || 'hook').toString()
+  const angle = ANGLES[angleKey] || ANGLES.hook
+  if (content.length < 5) return NextResponse.json({ variation: null })
 
-  const prompt = `아래는 내가 지금 실시간으로 쓰고 있는 광고/콘텐츠 기획 초안이야(대본 기획 또는 이미지 기획).
-이걸 "완전히 새로 쓰지 말고" 원문을 최대한 살리면서 **살짝만 다른 느낌**으로 디벨롭한 3가지 버전을 만들어줘.
+  const prompt = `너는 한국 숏폼 퍼포먼스 광고 카피라이터다. 아래는 지금 작성 중인 광고 기획 초안(대본/이미지 문구)이야.
+이걸 바탕으로 "스크롤을 멈추게 하는" 카피 한 버전만 써라.
 
-[변형 방향]
-- 버전 1: 후킹/첫 문장을 더 임팩트 있게 (나머지는 원문 유지)
-- 버전 2: 톤앤매너만 살짝 다르게 (더 친근하거나 더 전문적으로 — 내용은 그대로)
-- 버전 3: 구성/전개 순서를 살짝 재배열하거나 디테일 한 스푼 추가
+[이번 버전의 변형 방향]
+${angle.how}
 
-[규칙]
-- 원문의 핵심 메시지·소재·의도는 유지. 전혀 다른 주제로 튀지 말 것.
-- 각 버전은 원문과 비슷한 분량. 마크다운/머리말 없이 내용만.
-- 한국어.
+[반드시 지킬 것]
+- 원문의 제품/소재/핵심 메시지·의도는 유지(전혀 다른 주제로 튀지 말 것).
+- 짧고 펀치 있게. 숏폼 자막 톤으로 3~6줄, 각 줄은 짧게.
+- 상투적 광고 표현("지금 바로", "놓치지 마세요", "특별한", "완벽한" 남발) 금지. 뻔한 정보성 문장 금지.
+- 설명·머리말·따옴표·마크다운 없이 "카피 본문만" 출력.
 
-[원문]
-"""${content.slice(0, 4000)}"""
-
-JSON 으로만 응답: {"variations":[{"kind":"후킹 강화","text":"..."},{"kind":"톤 변형","text":"..."},{"kind":"구성 변형","text":"..."}]}`
+[원문 초안]
+${content.slice(0, 3000)}`
 
   try {
     const r = await fetch(ANTHROPIC_BASE, {
       method: 'POST',
       headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: MODEL, max_tokens: 2000, messages: [{ role: 'user', content: prompt }] }),
+      body: JSON.stringify({ model: MODEL, max_tokens: 500, messages: [{ role: 'user', content: prompt }] }),
     })
     const j = await r.json().catch(() => ({}))
     if (!r.ok) return NextResponse.json({ error: j?.error?.message || `Anthropic 오류(${r.status})` }, { status: 502 })
-    const text: string = j?.content?.[0]?.text || ''
-    const m = text.match(/\{[\s\S]*\}/)
-    if (!m) return NextResponse.json({ variations: [] })
-    const parsed = JSON.parse(m[0])
-    const variations = Array.isArray(parsed.variations)
-      ? parsed.variations.slice(0, 3).map((v: { kind?: string; text?: string }) => ({
-          kind: (v.kind || '변형').toString().slice(0, 20),
-          text: (v.text || '').toString().slice(0, 4000),
-        }))
-      : []
-    return NextResponse.json({ variations })
+    let text: string = (j?.content?.[0]?.text || '').trim()
+    // 혹시 따옴표/코드펜스로 감싸 나오면 벗김
+    text = text.replace(/^```[\w]*\n?/, '').replace(/```$/, '').replace(/^["'“”]|["'“”]$/g, '').trim()
+    if (!text) return NextResponse.json({ variation: null })
+    return NextResponse.json({ variation: { kind: angle.kind, text: text.slice(0, 2000) } })
   } catch {
     return NextResponse.json({ error: '베리에이션 생성 중 오류가 발생했어요.' }, { status: 500 })
   }
