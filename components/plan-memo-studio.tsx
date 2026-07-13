@@ -278,7 +278,8 @@ export function PlanMemoStudio({ onClose }: { onClose: () => void }) {
   const folderColor = (id: string | null) => folders.find((f) => f.id === id)?.color || "#94a3b8";
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-white dark:bg-gray-950">
+    // 앱 전역 사이드바(w-64)는 가리지 않도록 그 오른쪽부터 덮는다 → 메모장 열어둔 채로 다른 메뉴 이동 가능.
+    <div className="fixed inset-y-0 right-0 left-0 z-40 flex flex-col bg-white dark:bg-gray-950 md:left-64">
       {/* 헤더 */}
       <div className="flex h-14 shrink-0 items-center justify-between border-b px-4 dark:border-gray-800">
         <div className="flex items-center gap-2.5">
