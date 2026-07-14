@@ -5,7 +5,6 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import {
   Activity,
-  AtSign,
   BarChart3,
   Bell,
   Camera,
@@ -41,7 +40,6 @@ const navigationTop = [
   { name: '메타 광고 크롤러', href: '/meta-ad-crawler', icon: Megaphone },
   { name: '구글 광고 크롤러', href: '/google-ads', icon: Chrome },
   { name: '네이버 카페 자동화', href: '/naver-cafe', icon: Coffee },
-  { name: '쓰레드 자동화', href: '/threads', icon: AtSign },
 ]
 
 const navigationBottom = [
@@ -80,8 +78,8 @@ export function Sidebar() {
 
   // 크롤러 권한 통일: can_meta_ad(또는 관리자)면 메타·구글·온드 3종 모두 노출.
   const crawlerHrefs = ['/meta-ad-crawler', '/owned-media', '/google-ads']
-  // 네이버 카페 자동화·쓰레드 자동화: 모두에게 보이되 관리자 외에는 잠금(락 아이콘, 클릭 불가).
-  const lockedHrefs = isAdmin ? [] : ['/naver-cafe', '/threads']
+  // 네이버 카페 자동화: 모두에게 보이되 관리자 외에는 잠금(락 아이콘, 클릭 불가).
+  const lockedHrefs = isAdmin ? [] : ['/naver-cafe']
   const topItems = navigationTop.filter((item) => !crawlerHrefs.includes(item.href) || canMetaAd)
 
   // #6 메타 광고 5일 알림: 신규/종료 변화가 있으면 하단 배지. 닫으면 그 시그니처는 다시 안 뜸(새 변화 시 재등장).

@@ -69,9 +69,3 @@ next-env.d.ts
 naver-cafe-agent/logs/
 naver-cafe-agent/node_modules/
 naver-cafe-agent/.env
-
-# 쓰레드 수집 에이전트 로컬 산출물
-threads-agent/logs/
-threads-agent/node_modules/
-threads-agent/.env
-threads-agent/.playwright-threads/
