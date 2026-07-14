@@ -1,0 +1,18 @@
+name: Threads Weekly Analyze (AI)
+
+on:
+  schedule:
+    # 매주 월 KST 07:00 (UTC 일 22:00) — 브랜드별 스타일 가이드 갱신 + hot 소재 주간 리포트.
+    - cron: "0 22 * * 0"
+  workflow_dispatch: {}
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Call threads analyze (deployed)
+        # ANTHROPIC_API_KEY 는 Vercel 환경변수.
+        run: |
+          curl -sS -X POST "https://da-ad-planner.vercel.app/api/threads/analyze" \
+            -H "Content-Type: application/json" -d '{}' | head -c 800

@@ -1,0 +1,18 @@
+name: Threads Insights Snapshot
+
+on:
+  schedule:
+    # 6시간마다 — 내 글 성과(조회/좋아요/답글 등) 스냅샷 수집(토큰 등록 브랜드만).
+    - cron: "20 */6 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Call threads insights snapshot (deployed)
+        run: |
+          curl -sS -X POST "https://da-ad-planner.vercel.app/api/threads/insights" \
+            -H "Content-Type: application/json" \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" -d '{}' | head -c 800

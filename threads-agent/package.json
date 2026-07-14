@@ -1,0 +1,9 @@
+{
+  "name": "threads-agent",
+  "private": true,
+  "type": "module",
+  "description": "쓰레드 수집 워커 — 로컬 브라우저로 Threads 공개 검색/외부 게시판을 크롤링해 서버로 스크랩 적재(발행은 서버 크론)",
+  "dependencies": {
+    "playwright-core": "^1.47.0"
+  }
+}
