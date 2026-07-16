@@ -18,13 +18,14 @@ export function LayoutWrapper({ children }: { children: React.ReactNode }) {
   const isPublicGuidePage = pathname.startsWith('/guide/')
   const isPublicAdSharePage = pathname.startsWith('/meta-ad/share/') || pathname.startsWith('/google-ad/share/')
   const isPublicContentGuidePage = pathname.startsWith('/content-guide/share/')
+  const isPublicMindmapSharePage = pathname.startsWith('/plan-mindmap/share/')
   // 데이터 추적: da-ad-planner 사이드바는 유지(매끄러운 섹션 전환·활성표시), main 패딩/배경만 제거해
   // pulseboard가 영역을 꽉 채우게. pulseboard CSS는 .pb-app 으로 스코프돼 사이드바에 영향 없음.
   const isDataTracking = pathname.startsWith('/data-tracking')
 
   return (
     <AuthProvider>
-      {isLoginPage || isPublicVideoSharePage || isPublicGuidePage || isPublicAdSharePage || isPublicContentGuidePage ? (
+      {isLoginPage || isPublicVideoSharePage || isPublicGuidePage || isPublicAdSharePage || isPublicContentGuidePage || isPublicMindmapSharePage ? (
         <>{children}</>
       ) : (
         <AuthGuard>

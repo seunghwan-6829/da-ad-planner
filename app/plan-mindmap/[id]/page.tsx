@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import {
   ArrowLeft, ExternalLink, Plus, Minus, Maximize2, Loader2, Save, Undo2, Redo2,
   Trash2, Type, Link2, Unlink, ImagePlus, Sparkles, X, ChevronsLeft, ChevronsRight, BoxSelect, PanelLeftOpen,
+  Share2, Copy, Check,
 } from 'lucide-react'
 import { getMindmap, updateMindmap, Mindmap, MMDoc, MMNode, MMEdge, MindmapData } from '@/lib/api/mindmaps'
 import { getClient, Client } from '@/lib/api/clients'
@@ -129,6 +130,8 @@ export default function MindmapCanvasPage() {
   const [marqueeMode, setMarqueeMode] = useState(false)
   const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const [confirmLeave, setConfirmLeave] = useState(false)
+  const [shareOpen, setShareOpen] = useState(false)
+  const [shareCopied, setShareCopied] = useState(false)
   const [centerAspect, setCenterAspect] = useState(9 / 16)
   const [sourceTabOpen, setSourceTabOpen] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -416,6 +419,8 @@ export default function MindmapCanvasPage() {
     catch { alert('저장에 실패했습니다.'); return false }
     finally { setSaving(false) }
   }
+  // 외부 공유: 최신 내용이 보이게 미저장이면 먼저 저장한 뒤 링크 카드 표시.
+  async function openShare() { if (dirty) { const ok = await save(); if (!ok) return } setShareOpen(true) }
   function requestLeave() { dirty ? setConfirmLeave(true) : router.push('/plan-mindmap') }
   useEffect(() => { function bu(e: BeforeUnloadEvent) { if (dirty) { e.preventDefault(); e.returnValue = '' } } window.addEventListener('beforeunload', bu); return () => window.removeEventListener('beforeunload', bu) }, [dirty])
 
@@ -488,6 +493,7 @@ export default function MindmapCanvasPage() {
   }
 
   const sourceUrl = mm.library_id ? `https://www.facebook.com/ads/library/?id=${mm.library_id}` : null
+  const shareUrl = typeof window !== 'undefined' ? `${window.location.origin}/plan-mindmap/share/${mm.id}` : ''
   const nodeById = (id: string) => doc.nodes.find((n) => n.id === id)
   const center = doc.nodes.find((n) => n.type === 'center')
   const off = sourceTabOpen ? SOURCE_W : 0
@@ -510,9 +516,26 @@ export default function MindmapCanvasPage() {
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {sourceUrl && <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"><ExternalLink className="h-3.5 w-3.5" /> 원본 광고</a>}
+          <button onClick={openShare} title="외부인이 볼 수 있는 읽기전용 링크" className="flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-100 dark:border-violet-900 dark:bg-violet-950/40 dark:text-violet-300"><Share2 className="h-3.5 w-3.5" /> 공유</button>
           <button onClick={save} disabled={saving || !dirty} className="flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-40">{saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} 저장</button>
         </div>
       </div>
+
+      {/* 외부 공유 링크 카드 */}
+      {shareOpen && (
+        <div className="absolute right-4 top-14 z-50 w-[340px] rounded-xl border border-gray-200 bg-white p-3.5 shadow-2xl dark:border-gray-700 dark:bg-gray-900">
+          <div className="mb-1.5 flex items-center justify-between">
+            <span className="flex items-center gap-1.5 text-xs font-bold text-gray-700 dark:text-gray-200"><Share2 className="h-3.5 w-3.5 text-violet-500" /> 외부 공유 링크</span>
+            <button onClick={() => setShareOpen(false)} className="rounded p-0.5 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"><X className="h-4 w-4" /></button>
+          </div>
+          <p className="mb-2 text-[11px] text-gray-400">로그인 없이 이 링크로 들어오면 <b>읽기 전용</b>으로만 볼 수 있어요(편집·기능 불가, 좌측 메뉴 없음).</p>
+          <div className="flex items-center gap-1.5">
+            <input readOnly value={shareUrl} onFocus={(e) => e.currentTarget.select()} className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-gray-50 px-2 py-1.5 text-[11px] text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300" />
+            <button onClick={() => { navigator.clipboard?.writeText(shareUrl); setShareCopied(true); setTimeout(() => setShareCopied(false), 1500) }} className="flex shrink-0 items-center gap-1 rounded-lg bg-primary px-2.5 py-1.5 text-[11px] font-medium text-white">{shareCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />} {shareCopied ? '복사됨' : '복사'}</button>
+          </div>
+          <a href={shareUrl} target="_blank" rel="noopener noreferrer" className="mt-2 flex items-center justify-center gap-1 rounded-lg border border-gray-200 py-1.5 text-[11px] font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"><ExternalLink className="h-3.5 w-3.5" /> 새 탭에서 열기</a>
+        </div>
+      )}
 
       {/* 별도 탭(소재 미리보기) */}
       {sourceTabOpen && (
