@@ -102,7 +102,7 @@ export function Sidebar() {
     change.newCount + change.endedCount > 0 &&
     change.latest != null &&
     dismissed !== change.latest &&
-    !activePath.startsWith('/meta-ad-crawler')
+    !(activePath || '').startsWith('/meta-ad-crawler')
 
   function dismissAlert() {
     if (change?.latest) {

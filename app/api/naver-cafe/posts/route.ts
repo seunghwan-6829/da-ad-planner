@@ -3,23 +3,30 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
 
-// 카페 글(초안 → 발행 대기 → 발행/실패).
-//   GET ?status=            → 목록(카페 정보 포함, 최신순)
-//   POST {cafe_id, title, body, status?, created_by} → 저장(기본 draft)
-//   PATCH {id, title?, body?, status?}  → 수정/발행대기/취소/재시도
+// 큐 아이템(초안 → 승인/보관/반려 → 발행/실패). post/comment 공용.
+//   GET ?status=&cafe_id=&kind=   → 목록(발행처 정보 포함, 최신순)
+//   POST {cafe_id, kind?, title?, body, source_url?, status?, created_by}
+//   PATCH {id, title?, body?, status?}  → 수정/승인/보관/반려/재시도
 //   DELETE ?id=
 
-const ALLOWED_STATUS = ['draft', 'queued', 'publishing', 'published', 'failed']
+// 필터/조회용(모든 상태). 웹이 직접 set 가능한 상태는 아래 WEB_SETTABLE 로 별도 제한.
+const ALL_STATUS = ['draft', 'approved', 'queued', 'publishing', 'published', 'rejected', 'failed', 'saved']
+// 웹(관리자 UI)에서 바꿀 수 있는 상태 — publishing/published/failed 는 에이전트 전용.
+const WEB_SETTABLE = ['draft', 'approved', 'queued', 'rejected', 'saved']
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url)
   const status = searchParams.get('status')
+  const cafeId = searchParams.get('cafe_id')
+  const kind = searchParams.get('kind')
   let q = supabaseAdmin
     .from('nc_posts')
-    .select('*, nc_cafes(id, name, cafe_url, board_name)')
+    .select('*, nc_cafes(id, name, cafe_url, board_name, brand_id)')
     .order('created_at', { ascending: false })
     .limit(500)
-  if (status && ALLOWED_STATUS.includes(status)) q = q.eq('status', status)
+  if (status && ALL_STATUS.includes(status)) q = q.eq('status', status)
+  if (cafeId) q = q.eq('cafe_id', cafeId)
+  if (kind === 'post' || kind === 'comment') q = q.eq('kind', kind)
   const { data, error } = await q
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json(data ?? [])
@@ -28,17 +35,38 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const b = await req.json().catch(() => ({}))
   const cafeId = (b.cafe_id || '').toString()
+  const kind = b.kind === 'comment' ? 'comment' : 'post'
   const title = (b.title || '').toString().trim()
   const body = (b.body || '').toString()
-  if (!cafeId || !title) return NextResponse.json({ error: '카페와 제목이 필요해요.' }, { status: 400 })
-  const status = b.status === 'queued' ? 'queued' : 'draft'
-  const { data, error } = await supabaseAdmin
+  if (!cafeId) return NextResponse.json({ error: '발행처가 필요해요.' }, { status: 400 })
+  if (kind === 'post' && !title) return NextResponse.json({ error: '제목이 필요해요.' }, { status: 400 })
+  if (!body.trim()) return NextResponse.json({ error: '내용이 필요해요.' }, { status: 400 })
+
+  const nowISO = new Date().toISOString()
+  const reqStatus = WEB_SETTABLE.includes(b.status) ? b.status : 'draft'
+  const row: Record<string, unknown> = {
+    cafe_id: cafeId,
+    kind,
+    title,
+    body,
+    status: reqStatus,
+    created_by: b.created_by ?? null,
+  }
+  if (typeof b.source_url === 'string') row.source_url = b.source_url
+  if (reqStatus === 'approved' || reqStatus === 'queued') row.approved_at = nowISO
+
+  // kind/source_url 컬럼 미존재(마이그레이션 전) 폴백
+  let res = await supabaseAdmin
     .from('nc_posts')
-    .insert({ cafe_id: cafeId, title, body, status, created_by: b.created_by ?? null })
-    .select('*, nc_cafes(id, name, cafe_url, board_name)')
+    .insert(row)
+    .select('*, nc_cafes(id, name, cafe_url, board_name, brand_id)')
     .single()
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ ok: true, post: data })
+  if (res.error && /kind|source_url|approved_at/.test(res.error.message)) {
+    for (const c of ['kind', 'source_url', 'approved_at']) delete row[c]
+    res = await supabaseAdmin.from('nc_posts').insert(row).select('*, nc_cafes(id, name, cafe_url, board_name, brand_id)').single()
+  }
+  if (res.error) return NextResponse.json({ error: res.error.message }, { status: 500 })
+  return NextResponse.json({ ok: true, post: res.data })
 }
 
 export async function PATCH(req: Request) {
@@ -49,13 +77,20 @@ export async function PATCH(req: Request) {
   if (typeof b.title === 'string') patch.title = b.title
   if (typeof b.body === 'string') patch.body = b.body
   if (typeof b.status === 'string') {
-    // 웹에서 바꿀 수 있는 상태만(발행중/발행완료는 에이전트 전용)
-    if (!['draft', 'queued'].includes(b.status)) return NextResponse.json({ error: '허용되지 않는 상태' }, { status: 400 })
+    if (!WEB_SETTABLE.includes(b.status)) return NextResponse.json({ error: '허용되지 않는 상태' }, { status: 400 })
     patch.status = b.status
-    if (b.status === 'queued') patch.error = null // 재시도 시 이전 오류 제거
+    if (b.status === 'approved' || b.status === 'queued') {
+      patch.approved_at = new Date().toISOString()
+      patch.error = null // 재승인 시 이전 오류/실패 제거
+      patch.fail_count = 0
+    }
   }
-  const { error } = await supabaseAdmin.from('nc_posts').update(patch).eq('id', id)
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  let res = await supabaseAdmin.from('nc_posts').update(patch).eq('id', id)
+  if (res.error && /approved_at|fail_count/.test(res.error.message)) {
+    delete patch.approved_at; delete patch.fail_count
+    res = await supabaseAdmin.from('nc_posts').update(patch).eq('id', id)
+  }
+  if (res.error) return NextResponse.json({ error: res.error.message }, { status: 500 })
   return NextResponse.json({ ok: true })
 }
 

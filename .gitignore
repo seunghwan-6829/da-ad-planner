@@ -52,8 +52,18 @@ __pycache__/
 *.tsbuildinfo
 next-env.d.ts
 
-# 사용자 별도 로컬 앱(이식 원본) — 절대 커밋 금지(자격증명 포함 가능)
+# 사용자 별도 로컬 앱(이식 원본) — 절대 커밋 금지(자격증명·토큰·로그인 세션 포함)
 네이버 카페 자동화/
+네이버카페 자동화_신규버전/
+쓰레드 자동화/
+# 위 폴더의 압축본
+*.zip
+
+# 로그인 세션/브라우저 프로필(계정 크리덴셜과 동급) — 어디에 있든 커밋 금지
+**/.whale-profile/
+**/.playwright-threads/
+**/.playwright-naver/
+**/api key.txt
 
 # 네이버 카페 발행 에이전트 로컬 산출물
 naver-cafe-agent/logs/

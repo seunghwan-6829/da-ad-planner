@@ -1,0 +1,19 @@
+name: Naver Cafe Auto-Schedule Tick
+
+on:
+  schedule:
+    # 매시각 — 발행처 자동 스케줄(주기 도래 시 초안 생성, auto_publish 면 승인). PC 꺼져도 서버가 생성.
+    - cron: "5 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Call naver-cafe tick (deployed)
+        # ANTHROPIC_API_KEY 는 Vercel 환경변수. CRON_SECRET 설정 시에만 검증(미설정이면 개방).
+        run: |
+          curl -sS -X POST "https://da-ad-planner.vercel.app/api/naver-cafe/tick" \
+            -H "Content-Type: application/json" \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" -d '{}' | head -c 800
