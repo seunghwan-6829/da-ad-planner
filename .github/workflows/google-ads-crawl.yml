@@ -2,8 +2,11 @@ name: Crawl Google Ads (Transparency Center)
 
 on:
   schedule:
-    # 주 1회 · 매주 화요일 KST 오전 10시 (UTC 화 01:00). Apify 비용 고려한 주간 주기.
-    - cron: "0 1 * * 2"
+    # 월 1회 · 매월 1일 KST 오전 10시 (UTC 1일 01:00).
+    # ⚠️ 비용 근거: 전체 재수집 1회 ≈ $29 (07-07 $29.91 / 07-14 $28.61 실측).
+    #    주간(화요일)이던 시절 월 $116~125 소진 → 월 1회로 변경해 ≈ $29/월 로 축소.
+    #    더 줄이려면 광고주당 수집 상한(GA_MAX_ADS)이나 주기를 더 늘릴 것.
+    - cron: "0 1 1 * *"
   workflow_dispatch:
     inputs:
       target_id:
