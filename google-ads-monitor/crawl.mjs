@@ -7,7 +7,9 @@
 // 필수 env: SUPABASE_URL, SUPABASE_SERVICE_KEY, APIFY_TOKEN
 // 선택 env: CRAWL_TARGET_ID(단일 광고주 즉시), CRAWL_SINCE_HOURS(최근 N시간 추가분만),
 //          GA_RESULTS_LIMIT(광고주당 최대 광고, 0=사실상 전량, 기본 0),
-//          GA_CONCURRENCY(동시에 돌릴 광고주 수 = Apify 병렬 실행 수, 기본 5)
+//          GA_CONCURRENCY(동시에 돌릴 광고주 수 = Apify 병렬 실행 수, 기본 5),
+//          GA_MIN_INTERVAL_DAYS(광고주별 최소 재크롤 간격, 기본 40 / 0=가드 끔),
+//          GA_FORCE=1(가드 무시하고 전량 강제 크롤)
 
 import { createClient } from '@supabase/supabase-js'
 
@@ -19,6 +21,10 @@ const CRAWL_TARGET_ID = (process.env.CRAWL_TARGET_ID || '').trim()
 const GA_RESULTS_LIMIT = Number(process.env.GA_RESULTS_LIMIT) || 0
 const HARD_CAP = 100000 // resultsLimit 미지정 시 액터가 소량만 줄 수 있어 큰 값으로 명시.
 const GA_CONCURRENCY = Math.max(1, Number(process.env.GA_CONCURRENCY) || 5)
+// 광고주별 최소 재크롤 간격(일). 정기 크롤에서 이 기간 안에 이미 크롤된 광고주는 건너뛴다.
+// 주간 크론 + 40일 가드 = 광고주 1명당 실제 재수집은 약 6주(42일)마다 → Apify 비용 대폭 절감 + 주 단위 분산.
+const GA_MIN_INTERVAL_DAYS = Number(process.env.GA_MIN_INTERVAL_DAYS ?? 40)
+const GA_FORCE = (process.env.GA_FORCE || '') === '1'
 const ACTOR = 'silva95gustavo~google-ads-scraper'
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
@@ -219,6 +225,19 @@ async function saveTargetAds(target, items) {
   await markEnded(target.id, seen, now)
 }
 
+// 이 광고주를 마지막으로 크롤한 시각(ms). 크롤할 때마다 ga_ads.last_seen_at 을 now 로 갱신하므로
+// 그 최댓값을 '마지막 크롤 시각'으로 쓴다(별도 컬럼/마이그레이션 불필요).
+// 광고가 한 건도 없으면 0 = '크롤된 적 없음' 취급 → 항상 크롤 대상(비용도 거의 안 듦).
+async function lastCrawledAt(targetId) {
+  try {
+    const { data } = await sb
+      .from('ga_ads').select('last_seen_at').eq('target_id', targetId)
+      .order('last_seen_at', { ascending: false }).limit(1)
+    const v = data?.[0]?.last_seen_at
+    return v ? new Date(v).getTime() : 0
+  } catch { return 0 }
+}
+
 async function main() {
   if (!APIFY_TOKEN) { console.error('APIFY_TOKEN 이 필요합니다.'); process.exit(1) }
 
@@ -240,6 +259,24 @@ async function main() {
   }
   // advertiser_id 없는 항목은 스킵
   list = list.filter((t) => t.advertiser_id)
+
+  // ── 광고주별 재크롤 간격 가드(Apify 비용 절감) ──
+  // 정기 크롤에서 최근 GA_MIN_INTERVAL_DAYS(기본 40일) 안에 이미 크롤된 광고주는 건너뛴다.
+  // 예외(항상 크롤): 단일 광고주 지정(CRAWL_TARGET_ID) / 신규 추가분(CRAWL_SINCE_HOURS) / GA_FORCE=1
+  if (!CRAWL_TARGET_ID && !sinceHours && !GA_FORCE && GA_MIN_INTERVAL_DAYS > 0) {
+    const cutoff = Date.now() - GA_MIN_INTERVAL_DAYS * 86400 * 1000
+    const before = list.length
+    const due = []
+    for (const t of list) {
+      const last = await lastCrawledAt(t.id)
+      if (!last || last < cutoff) due.push(t)
+      else log(`건너뜀 — ${t.label} (${Math.round((Date.now() - last) / 86400000)}일 전 크롤 · ${GA_MIN_INTERVAL_DAYS}일 미경과)`)
+    }
+    list = due
+    log(`${GA_MIN_INTERVAL_DAYS}일 가드: ${list.length}/${before}개 광고주가 이번 회차 대상`)
+    if (!list.length) { log('이번 회차엔 크롤할 광고주가 없습니다(전부 최근 크롤됨). 종료.'); return }
+  }
+
   log(`${list.length}개 광고주 크롤 시작 (동시 ${GA_CONCURRENCY}개 병렬, 광고주당 상한 ${GA_RESULTS_LIMIT || '무제한'})`)
 
   // 광고주 1명당 1 Apify 실행 → 최대 GA_CONCURRENCY개를 동시에. 끝나는 즉시 그 광고주 저장.
