@@ -310,7 +310,59 @@ const ytIdOfAd = (ad: Ad): string | null => {
   );
 };
 
-/* ── 온디맨드 영상: 임베드 차단된 구글 광고(유튜브) 영상 재생.  ※ Apify 안 씀(과금 0).
+// ── 유튜브 IFrame API 로더(문서당 1회). 임베드 "차단 여부"를 코드로 감지하려면 API 플레이어가 필요하다.
+let ytApiPromise: Promise<boolean> | null = null;
+type YTPlayerCtor = new (el: HTMLElement, opts: Record<string, unknown>) => { destroy?: () => void };
+function loadYtApi(): Promise<boolean> {
+  if (typeof window === "undefined") return Promise.resolve(false);
+  const w = window as unknown as { YT?: { Player?: YTPlayerCtor }; onYouTubeIframeAPIReady?: () => void };
+  if (w.YT?.Player) return Promise.resolve(true);
+  if (ytApiPromise) return ytApiPromise;
+  ytApiPromise = new Promise<boolean>((resolve) => {
+    const prev = w.onYouTubeIframeAPIReady;
+    w.onYouTubeIframeAPIReady = () => { if (prev) prev(); resolve(true); };
+    const s = document.createElement("script");
+    s.src = "https://www.youtube.com/iframe_api";
+    s.onerror = () => resolve(false);
+    document.head.appendChild(s);
+    setTimeout(() => resolve(!!w.YT?.Player), 8000); // 스크립트 차단/지연 시 폴백
+  });
+  return ytApiPromise;
+}
+
+/* 유튜브 임베드 플레이어. onError(101·150=소유자가 임베드 차단, 100=영상 없음 등)가 뜨면
+   onBlocked() 로 알려 상위가 다운로드/저장본 경로로 자동 폴백하게 한다. */
+function YtEmbedPlayer({ videoId, rounded, onBlocked }: { videoId: string; rounded: string; onBlocked: () => void }) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const blockedRef = useRef(onBlocked);
+  blockedRef.current = onBlocked;
+  useEffect(() => {
+    let alive = true;
+    let player: { destroy?: () => void } | null = null;
+    loadYtApi()
+      .then((ok) => {
+        if (!alive || !hostRef.current) return;
+        const w = window as unknown as { YT?: { Player?: YTPlayerCtor } };
+        if (!ok || !w.YT?.Player) { blockedRef.current(); return; } // API 자체 실패 → 폴백
+        player = new w.YT.Player(hostRef.current, {
+          videoId,
+          height: "100%",
+          width: "100%",
+          playerVars: { autoplay: 1, playsinline: 1, rel: 0, modestbranding: 1 },
+          events: { onError: () => { if (alive) blockedRef.current(); } },
+        });
+      })
+      .catch(() => { if (alive) blockedRef.current(); });
+    return () => { alive = false; try { player?.destroy?.(); } catch {} };
+  }, [videoId]);
+  return (
+    <div className={`h-full w-full bg-black ${rounded}`} onClick={(e) => e.stopPropagation()}>
+      <div ref={hostRef} className="h-full w-full" />
+    </div>
+  );
+}
+
+/* ── 온디맨드 영상: 구글 광고(유튜브) 영상 재생.  ※ Apify 안 씀(과금 0).
    상세창 열리는 순간 로컬 서버(내 PC)로 스트림 URL을 "미리" 추출(프리페치) → 재생 클릭 시 즉시 재생.
    재생하는 동안 Supabase 영구저장은 백그라운드로 진행. 로컬 서버 없으면 이미 받아둔 것만 재생(안내). */
 function OnDemandGoogleVideo({ ad, rounded, videoRef }: { ad: Ad; rounded: string; videoRef?: React.RefObject<HTMLVideoElement | null> }) {
@@ -366,8 +418,13 @@ function OnDemandGoogleVideo({ ad, rounded, videoRef }: { ad: Ad; rounded: strin
       if (!aliveRef.current) return;
       if (j.done && j.url) { setUrl(j.url); setPhase("ready"); return; }
       if (j.dead) setDead(true);
-      // 여기까지 왔다 = 유튜브 주소가 없는 소수 광고. 저장본도 없으면 앱에서 재생할 방법이 없다.
-      setMsg(j.error || "구글이 이 광고의 영상 주소를 공개하지 않아 앱에서 재생할 수 없어요. 원본 광고에서 확인해 주세요.");
+      // 여기까지 = ①유튜브 주소가 아예 없는 광고 또는 ②임베드가 막혔는데 저장본도 없는 경우.
+      setMsg(
+        j.error ||
+          (ytIdOfAd(ad)
+            ? "이 영상은 광고주가 임베드를 막아놨어요. 자동 다운로드가 끝나면 여기서 바로 재생됩니다(원본 광고 보기로 지금 확인 가능)."
+            : "구글이 이 광고의 영상 주소를 공개하지 않아 앱에서 재생할 수 없어요. 원본 광고에서 확인해 주세요.")
+      );
       setPhase("error");
     } catch {
       if (!aliveRef.current) return;
@@ -389,6 +446,16 @@ function OnDemandGoogleVideo({ ad, rounded, videoRef }: { ad: Ad; rounded: strin
     void checkStoredOrNotify();
   }
 
+  // 임베드가 막힌 소재(101·150) 감지 시 → 원본 스트림(로컬서버) → 저장본 순으로 자동 폴백.
+  // 임베드 실패가 막다른 길이 되지 않게 한다.
+  function onEmbedBlocked() {
+    if (!aliveRef.current) return;
+    if (preUrlRef.current) { setUrl(preUrlRef.current); setPhase("ready"); return; }
+    setPhase("loading");
+    setMsg("임베드가 막힌 영상이라 저장본을 확인 중…");
+    void checkStoredOrNotify();
+  }
+
   const poster = ad.poster_url || undefined;
 
   if (phase === "ready" && url) {
@@ -396,19 +463,10 @@ function OnDemandGoogleVideo({ ad, rounded, videoRef }: { ad: Ad; rounded: strin
   }
 
   // 유튜브 임베드 즉시 재생 — 저장본이 없어도, 로컬 영상 서버가 꺼져 있어도 바로 확인된다.
-  // (구글 광고 소재는 광고주가 올린 유튜브 영상이라 임베드가 열려 있음 — IFrame API READY 확인함)
+  // 임베드가 막힌 소재는 YtEmbedPlayer 가 onError 로 감지 → onEmbedBlocked 가 저장본/로컬서버로 자동 폴백.
   if (phase === "embed") {
-    return (
-      <div className={`h-full w-full bg-black ${rounded}`} onClick={(e) => e.stopPropagation()}>
-        <iframe
-          src={`https://www.youtube.com/embed/${ytIdOfAd(ad)}?autoplay=1&playsinline=1&rel=0&modestbranding=1`}
-          title="광고 영상"
-          allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-          allowFullScreen
-          className="h-full w-full border-0"
-        />
-      </div>
-    );
+    const ytId = ytIdOfAd(ad);
+    if (ytId) return <YtEmbedPlayer videoId={ytId} rounded={rounded} onBlocked={onEmbedBlocked} />;
   }
   return (
     <button type="button" onClick={(e) => { e.stopPropagation(); if (phase !== "loading" && !dead) start(); }} className={`relative flex h-full w-full items-center justify-center overflow-hidden bg-black ${rounded}`}>
