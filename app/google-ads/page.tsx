@@ -314,12 +314,13 @@ const ytIdOfAd = (ad: Ad): string | null => {
    상세창 열리는 순간 로컬 서버(내 PC)로 스트림 URL을 "미리" 추출(프리페치) → 재생 클릭 시 즉시 재생.
    재생하는 동안 Supabase 영구저장은 백그라운드로 진행. 로컬 서버 없으면 이미 받아둔 것만 재생(안내). */
 function OnDemandGoogleVideo({ ad, rounded, videoRef }: { ad: Ad; rounded: string; videoRef?: React.RefObject<HTMLVideoElement | null> }) {
-  const [phase, setPhase] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [phase, setPhase] = useState<"idle" | "loading" | "ready" | "embed" | "error">("idle");
   const [url, setUrl] = useState<string | null>(null);
   const [msg, setMsg] = useState<string>("");
   const [dead, setDead] = useState(false); // 원본 삭제/차단 등 재시도 무의미
   const [preReady, setPreReady] = useState(false);
   const preRef = useRef<Promise<string | null> | null>(null);
+  const preUrlRef = useRef<string | null>(null); // 프리페치로 이미 얻은 스트림 URL(있으면 즉시 재생)
   // 로컬 서버가 알려준 "진짜 실패 이유"(영상 삭제/차단, 추출 실패 등). 서버가 꺼져 있으면 null 유지.
   const localErrRef = useRef<{ msg: string; dead: boolean } | null>(null);
   const aliveRef = useRef(true);
@@ -349,7 +350,7 @@ function OnDemandGoogleVideo({ ad, rounded, videoRef }: { ad: Ad; rounded: strin
     aliveRef.current = true;
     const p = resolveViaLocal();
     preRef.current = p;
-    p.then((u) => { if (aliveRef.current && u) setPreReady(true); }).catch(() => {});
+    p.then((u) => { if (u) { preUrlRef.current = u; if (aliveRef.current) setPreReady(true); } }).catch(() => {});
     return () => { aliveRef.current = false; };
   }, [resolveViaLocal]);
 
@@ -365,7 +366,8 @@ function OnDemandGoogleVideo({ ad, rounded, videoRef }: { ad: Ad; rounded: strin
       if (!aliveRef.current) return;
       if (j.done && j.url) { setUrl(j.url); setPhase("ready"); return; }
       if (j.dead) setDead(true);
-      setMsg(j.error || "아직 다운로드 전이에요. 곧 자동으로 받아집니다.");
+      // 여기까지 왔다 = 유튜브 주소가 없는 소수 광고. 저장본도 없으면 앱에서 재생할 방법이 없다.
+      setMsg(j.error || "구글이 이 광고의 영상 주소를 공개하지 않아 앱에서 재생할 수 없어요. 원본 광고에서 확인해 주세요.");
       setPhase("error");
     } catch {
       if (!aliveRef.current) return;
@@ -374,28 +376,39 @@ function OnDemandGoogleVideo({ ad, rounded, videoRef }: { ad: Ad; rounded: strin
     }
   }
 
-  async function start() {
+  // 재생 클릭 → 무조건 1초 안에 화면이 뜨게 한다(다운로드·로컬서버 대기 금지).
+  function start() {
+    // ① 로컬 서버 프리페치가 이미 끝났으면 원본 스트림 재생(유튜브 UI 없이 깔끔).
+    if (preUrlRef.current) { setUrl(preUrlRef.current); setPhase("ready"); return; }
+    // ② 유튜브 ID 가 있으면 곧바로 임베드 재생 — 다운로드도, 로컬 서버도 필요 없다(주 경로).
+    //    구글 광고 소재는 대부분 광고주가 올린 유튜브 영상이라 이 경로로 즉시 재생된다.
+    if (ytIdOfAd(ad)) { setPhase("embed"); return; }
+    // ③ 유튜브 주소조차 없는 광고(소수) → 저장본이 있는지만 확인 후 안내.
     setPhase("loading");
-    setMsg("영상 준비 중…");
-    // 프리페치가 이미 끝났으면 즉시 재생. 아직이면 그 결과를 기다림(로컬 서버 있을 때만 값 나옴).
-    let pre: string | null = null;
-    try { pre = await (preRef.current ?? resolveViaLocal()); } catch {}
-    if (!aliveRef.current) return;
-    if (pre) { setUrl(pre); setPhase("ready"); return; }
-    // 로컬 서버가 실패 이유를 알려줬으면 그걸 그대로(삭제/차단 영상을 "준비 전"으로 오안내하지 않게).
-    if (localErrRef.current) {
-      setDead(localErrRef.current.dead);
-      setMsg(localErrRef.current.msg);
-      setPhase("error");
-      return;
-    }
-    checkStoredOrNotify();
+    setMsg("영상 확인 중…");
+    void checkStoredOrNotify();
   }
 
   const poster = ad.poster_url || undefined;
 
   if (phase === "ready" && url) {
     return <video ref={videoRef} src={url} poster={poster} controls autoPlay playsInline preload="metadata" onClick={(e) => e.stopPropagation()} className={`h-full w-full bg-black object-contain ${rounded}`} />;
+  }
+
+  // 유튜브 임베드 즉시 재생 — 저장본이 없어도, 로컬 영상 서버가 꺼져 있어도 바로 확인된다.
+  // (구글 광고 소재는 광고주가 올린 유튜브 영상이라 임베드가 열려 있음 — IFrame API READY 확인함)
+  if (phase === "embed") {
+    return (
+      <div className={`h-full w-full bg-black ${rounded}`} onClick={(e) => e.stopPropagation()}>
+        <iframe
+          src={`https://www.youtube.com/embed/${ytIdOfAd(ad)}?autoplay=1&playsinline=1&rel=0&modestbranding=1`}
+          title="광고 영상"
+          allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+          allowFullScreen
+          className="h-full w-full border-0"
+        />
+      </div>
+    );
   }
   return (
     <button type="button" onClick={(e) => { e.stopPropagation(); if (phase !== "loading" && !dead) start(); }} className={`relative flex h-full w-full items-center justify-center overflow-hidden bg-black ${rounded}`}>
@@ -426,10 +439,10 @@ function OnDemandGoogleVideo({ ad, rounded, videoRef }: { ad: Ad; rounded: strin
           </>
         ) : (
           <>
-            <div className={`flex h-14 w-14 items-center justify-center rounded-full backdrop-blur ${preReady ? "bg-emerald-500/70" : "bg-white/25"}`}>
+            <div className={`flex h-14 w-14 items-center justify-center rounded-full backdrop-blur ${preReady || ytIdOfAd(ad) ? "bg-emerald-500/70" : "bg-white/25"}`}>
               <Play className="h-7 w-7 fill-white text-white" />
             </div>
-            <span className="text-[11px] opacity-80">{preReady ? "재생 (준비 완료 · 즉시)" : "재생 (자동으로 불러와요)"}</span>
+            <span className="text-[11px] opacity-80">{preReady || ytIdOfAd(ad) ? "재생" : "재생 (확인 중…)"}</span>
           </>
         )}
       </div>
