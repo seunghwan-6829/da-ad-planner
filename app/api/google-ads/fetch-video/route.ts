@@ -4,10 +4,11 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
-// 영상 재생 상태 조회 — ⚠️ Apify(youtube-video-downloader) 호출 제거. 이 경로로는 절대 과금되지 않는다.
-//   • 이미 Supabase 에 받아둔 영상이면 그 URL 반환 → 즉시 재생.
-//   • 아직이면 notReady 안내. 실제 다운로드는 (1) 매일 자동(내 PC yt-dlp) + (2) 내 PC 로컬 서버(serve-videos)로
-//     무료 처리된다. 페이지는 먼저 로컬 서버(127.0.0.1)를 시도하고, 없을 때만 이 라우트로 상태를 확인한다.
+// 영상 재생 상태 조회 — ⚠️ Apify 호출 없음(과금 0).
+//   페이지의 재생 경로는 ① 저장본 → ② 유튜브 임베드 순이고, 이 라우트는 둘 다 안 될 때의 마지막 확인용이다.
+//   ※ 서버(Vercel)에서 유튜브 주소를 직접 뽑는 방법은 실측 결과 불가능하다.
+//     데이터센터 IP 는 유튜브가 봇으로 판정해 막는다(LOGIN_REQUIRED). 그래서 재생은 임베드가 주 경로다.
+//     임베드는 보는 사람의 인터넷으로 유튜브가 직접 재생하므로 어느 PC 에서든 되고 비용도 0이다.
 const isStored = (u: string | null) => !!u && /\/storage\/v1\/object\//.test(u)
 
 export async function POST(req: Request) {
@@ -30,9 +31,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ dead: true, error: '원본 영상이 유튜브에서 삭제/차단돼 재생할 수 없어요.' })
   }
 
-  // 아직 안 받음 → Apify 안 쓰고 안내만.
-  return NextResponse.json({
-    notReady: true,
-    error: '이 영상은 아직 준비 전이에요. 매일 자동으로 받아지고 있어요. 지금 바로 보려면 내 PC에서 로컬 영상 서버(serve-videos.bat)를 켜주세요.',
-  })
+  // 저장본 없음 → 클라이언트가 상황(임베드 차단 / 영상주소 없음)에 맞는 안내를 고르도록 사유만 알려준다.
+  return NextResponse.json({ notReady: true })
 }

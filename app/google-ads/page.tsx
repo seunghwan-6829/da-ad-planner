@@ -296,8 +296,22 @@ function pageItems(current: number, total: number): number[] {
   return Array.from({ length: end - start + 1 }, (_, i) => start + i);
 }
 
-// 내 PC의 로컬 온디맨드 영상 서버(serve-videos.mjs). 떠 있으면 재생이 ~5초로 압도적으로 빠름.
+/* 내 PC의 로컬 온디맨드 영상 서버(serve-videos.mjs). 떠 있으면 720p 원본을 바로 준다.
+   ※ 이건 "보너스"일 뿐, 재생의 필수 조건이 아니다. 다른 PC에는 당연히 없으므로
+     주 재생 경로는 유튜브 임베드(보는 사람의 인터넷으로 유튜브가 직접 재생)다. */
 const LOCAL_VIDEO_SERVER = "http://127.0.0.1:47615";
+
+/* 로컬 서버 헬스체크는 페이지당 딱 1번만. (예전엔 상세창 열 때마다 1.2초씩 기다렸다 —
+   로컬 서버가 없는 PC에서는 그 시간이 매번 그냥 버려졌다.) */
+let localHealthProbe: Promise<boolean> | null = null;
+function localServerUp(): Promise<boolean> {
+  if (!localHealthProbe) {
+    localHealthProbe = fetch(`${LOCAL_VIDEO_SERVER}/health`, { signal: AbortSignal.timeout(1200) })
+      .then((r) => r.ok)
+      .catch(() => false);
+  }
+  return localHealthProbe;
+}
 // 광고에서 유튜브 videoId 추출(poster 썸네일 i.ytimg.com/vi/<id> 우선).
 const ytIdOfAd = (ad: Ad): string | null => {
   const s = `${ad.poster_url || ""} ${ad.media_url || ""}`;
@@ -385,10 +399,7 @@ function OnDemandGoogleVideo({ ad, rounded, videoRef }: { ad: Ad; rounded: strin
       localErrRef.current = { msg: "구글이 원본 영상을 공개하지 않아 앱에서는 재생할 수 없어요. 원본 광고에서 확인하세요.", dead: true };
       return null;
     }
-    try {
-      const h = await fetch(`${LOCAL_VIDEO_SERVER}/health`, { signal: AbortSignal.timeout(1200) });
-      if (!h.ok) return null;
-    } catch { return null; }
+    if (!(await localServerUp())) return null; // 로컬 서버 없는 PC — 임베드 경로로 간다(정상)
     try {
       const r = await fetch(`${LOCAL_VIDEO_SERVER}/get?id=${id}`, { signal: AbortSignal.timeout(120000) });
       const j = await r.json().catch(() => ({}));
@@ -418,11 +429,11 @@ function OnDemandGoogleVideo({ ad, rounded, videoRef }: { ad: Ad; rounded: strin
       if (!aliveRef.current) return;
       if (j.done && j.url) { setUrl(j.url); setPhase("ready"); return; }
       if (j.dead) setDead(true);
-      // 여기까지 = ①유튜브 주소가 아예 없는 광고 또는 ②임베드가 막혔는데 저장본도 없는 경우.
+      // 여기까지 = ①유튜브 주소가 아예 없는 광고(전체의 0.02%) 또는 ②임베드가 막혔는데 저장본도 없는 경우.
       setMsg(
         j.error ||
           (ytIdOfAd(ad)
-            ? "이 영상은 광고주가 임베드를 막아놨어요. 자동 다운로드가 끝나면 여기서 바로 재생됩니다(원본 광고 보기로 지금 확인 가능)."
+            ? "지금은 앱에서 재생되지 않는 소재예요. 원본 광고에서 바로 확인하실 수 있어요."
             : "구글이 이 광고의 영상 주소를 공개하지 않아 앱에서 재생할 수 없어요. 원본 광고에서 확인해 주세요.")
       );
       setPhase("error");

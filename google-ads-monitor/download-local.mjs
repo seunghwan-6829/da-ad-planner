@@ -17,6 +17,7 @@ import { readFileSync, existsSync, mkdirSync, rmSync, readdirSync, statSync, cre
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { get } from 'node:https'
+import { confirmDead, reviveWronglyDead } from './yt-check.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const IS_WIN = process.platform === 'win32'
@@ -140,8 +141,10 @@ function cookieArgsFor(id) {
   return { args: [], tmp: null }
 }
 
-// 영구실패(다시 시도해도 소용없음): 삭제/비공개/지역차단 등. 레이트리밋/봇확인은 일시적이라 제외.
-const isPermanentFail = (err) => /removed for violating|not available on this country|Video unavailable\. This content is|Private video|no longer available|account (associated|has been) |members-only|Sign in to confirm your age/i.test(err || '')
+// 영구실패로 "의심"되는 패턴. ⚠️ 이것만 보고 dead 로 찍으면 안 된다 — 반드시 confirmDead() 로 유튜브에 확인한다.
+//   과거에 `Video unavailable. This content is` 패턴이 유튜브의 일시 오류
+//   ("...not available on this app")까지 잡아 1,687건(오탐률 98.9%)을 영구히 죽여놨었다.
+const looksPermanent = (err) => /removed for violating|not available on this country|Video unavailable|Private video|no longer available|account (associated|has been) |members-only|Sign in to confirm your age/i.test(err || '')
 
 // yt-dlp 로 영상 1개를 TMP 에 고유파일로 받음. { file, err } 반환. 병렬 안전. ffmpeg 불필요.
 function ytdlp(id) {
@@ -172,15 +175,16 @@ async function handleOne(id, libraryIds, n, total) {
     const r = await ytdlp(id)
     file = r.file; err = r.err
     if (file) break
-    if (isPermanentFail(err)) break // 영구실패는 재시도 안 함
-    if (a === 0) await sleep(1500)  // 일시 실패 1회 재시도
+    if (looksPermanent(err)) break // 영구실패로 보이면 재시도 대신 아래에서 유튜브에 확인
+    if (a === 0) await sleep(1500) // 일시 실패 1회 재시도
   }
   if (!file) {
-    if (isPermanentFail(err)) {
+    // 영구실패처럼 보여도 유튜브가 GONE 이라고 확인해줄 때만 dead. (오탐이면 다음 실행에서 다시 시도됨)
+    if (looksPermanent(err) && (await confirmDead(id))) {
       try { await sb.from('ga_ads').update({ media_path: 'dead' }).in('library_id', libraryIds) } catch {}
-      console.log(`[ga-local] (${n}/${total}) ${id} 삭제/차단 → 스킵표시(dead)`)
+      console.log(`[ga-local] (${n}/${total}) ${id} 삭제/차단 확인 → 스킵표시(dead)`)
     } else {
-      console.log(`[ga-local] (${n}/${total}) ${id} 실패: ${err.split('\n').filter(Boolean).pop()?.slice(0, 90) || ''}`)
+      console.log(`[ga-local] (${n}/${total}) ${id} 실패(다음에 재시도): ${err.split('\n').filter(Boolean).pop()?.slice(0, 90) || ''}`)
     }
     return false
   }
@@ -206,6 +210,10 @@ async function main() {
   await ensureDeno()
   try { rmSync(TMP, { recursive: true, force: true }) } catch {}
   mkdirSync(TMP, { recursive: true })
+  // 과거에 잘못 dead 로 찍힌 광고 자동 복구(유튜브가 OK 라고 답하는 것만). 오탐이 쌓이지 않게 매 실행 점검.
+  if (process.env.GA_SKIP_REVIVE !== '1') {
+    try { await reviveWronglyDead(sb, { log }) } catch (e) { log('dead 재검사 건너뜀:', String(e.message || e).slice(0, 80)) }
+  }
   const byId = await loadPending()
   let ids = [...byId.keys()]
   if (MAX_VIDEOS > 0) ids = ids.slice(0, MAX_VIDEOS)

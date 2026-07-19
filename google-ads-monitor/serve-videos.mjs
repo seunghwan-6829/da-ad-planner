@@ -13,6 +13,7 @@ import { readFileSync, existsSync, mkdirSync, rmSync, readdirSync, statSync, cre
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { get } from 'node:https'
+import { confirmDead } from './yt-check.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const IS_WIN = process.platform === 'win32'
@@ -116,8 +117,9 @@ function ytdlpGetUrl(id) {
   })
 }
 
-// 영구실패(다시 시도해도 소용없음): 삭제/비공개/지역차단 등. download-local.mjs 와 동일 판정.
-const isPermanentFail = (err) => /removed for violating|not available on this country|Video unavailable\. This content is|Private video|no longer available|account (associated|has been) |members-only|Sign in to confirm your age/i.test(err || '')
+// 영구실패로 "의심"되는 패턴. download-local.mjs 와 동일하게, 이것만으로 dead 를 찍지 않고
+// confirmDead() 로 유튜브에 한 번 더 확인한다(과거 오탐률 98.9%).
+const looksPermanent = (err) => /removed for violating|not available on this country|Video unavailable|Private video|no longer available|account (associated|has been) |members-only|Sign in to confirm your age/i.test(err || '')
 
 // 빠른 경로: 이미 저장돼 있으면 그 URL, 아니면 직접 스트림 URL을 즉시 반환(+백그라운드로 Supabase 영구저장).
 // 구글 광고(ga_ads)와 온드미디어(om_posts, post_id='yt_<id>') 양쪽에서 조회/갱신.
@@ -133,7 +135,7 @@ async function resolveFast(id) {
   } catch {}
   const { url: direct, err } = await ytdlpGetUrl(id)
   if (!direct) {
-    if (isPermanentFail(err)) {
+    if (looksPermanent(err) && (await confirmDead(id))) {
       // 원본이 유튜브에서 내려간 영상 → 'dead' 표시(일일 다운로더와 동일 컨벤션)해 다음부터 시도 안 함.
       try { await sb.from('ga_ads').update({ media_path: 'dead' }).or(`poster_url.ilike.%${id}%,media_url.ilike.%${id}%`) } catch {}
       const e = new Error('원본 영상이 유튜브에서 삭제/차단돼 재생할 수 없어요.')

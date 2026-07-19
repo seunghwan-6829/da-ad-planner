@@ -34,6 +34,72 @@ type PublicAd = {
   transcript: string | null
 }
 
+const isStored = (u: string | null) => !!u && /\/storage\/v1\/object\//.test(u)
+
+// 광고에서 유튜브 videoId 추출 — 갤러리(app/google-ads/page.tsx)와 동일 규칙.
+function ytIdOf(ad: PublicAd): string | null {
+  const s = `${ad.poster_url || ''} ${ad.media_url || ''}`
+  return (
+    s.match(/i\.ytimg\.com\/vi\/([\w-]{6,})\//)?.[1] ||
+    s.match(/[?&]v=([\w-]{6,})/)?.[1] ||
+    s.match(/youtu\.be\/([\w-]{6,})/)?.[1] ||
+    s.match(/shorts\/([\w-]{6,})/)?.[1] ||
+    null
+  )
+}
+
+/* 외부 공유용 영상 재생.  저장본(mp4) → 유튜브 임베드 → 안내 순으로 자동 전환.
+   예전에는 저장본만 재생해서 외부에서 보는 사람은 대부분(전체의 약 77%) 빈 화면만 봤다.
+   임베드는 보는 사람의 인터넷으로 유튜브가 직접 재생하므로 우리 서버 부담·비용이 0이다. */
+function ShareVideo({ ad }: { ad: PublicAd }) {
+  const [failed, setFailed] = useState(false)
+  const ytId = ytIdOf(ad)
+
+  if (isStored(ad.media_url)) {
+    return (
+      <video
+        src={ad.media_url as string}
+        poster={ad.poster_url || undefined}
+        controls
+        playsInline
+        preload="metadata"
+        className="h-full w-full bg-black object-contain"
+      />
+    )
+  }
+  if (ytId && !failed) {
+    return (
+      <iframe
+        src={`https://www.youtube-nocookie.com/embed/${ytId}?rel=0&modestbranding=1&playsinline=1`}
+        title="광고 영상"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+        allowFullScreen
+        onError={() => setFailed(true)}
+        className="h-full w-full border-0 bg-black"
+      />
+    )
+  }
+  return (
+    <div className="flex h-full w-full flex-col items-center justify-center gap-2 px-4 text-center">
+      {ad.poster_url && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={ad.poster_url} alt="" className="absolute inset-0 h-full w-full object-cover opacity-30" />
+      )}
+      <span className="relative z-10 text-xs text-white/80">이 소재는 원본에서만 확인할 수 있어요.</span>
+      {ad.source_url && (
+        <a
+          href={ad.source_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="relative z-10 rounded-full bg-white/20 px-3 py-1 text-xs text-white hover:bg-white/30"
+        >
+          원본 광고 보기 ↗
+        </a>
+      )}
+    </div>
+  )
+}
+
 function fmtDate(s: string | null): string {
   if (!s) return '—'
   const d = new Date(s)
@@ -136,15 +202,8 @@ export default function PublicAdSharePage() {
           {/* 좌: 미디어 + 캡션 + 대본 */}
           <div className="space-y-4 md:sticky md:top-6">
             <div className="relative mx-auto aspect-[9/16] w-full max-w-[340px] overflow-hidden rounded-2xl bg-black shadow-sm">
-              {ad.media_type === 'video' && ad.media_url ? (
-                <video
-                  src={ad.media_url}
-                  poster={ad.poster_url || undefined}
-                  controls
-                  playsInline
-                  preload="metadata"
-                  className="h-full w-full bg-black object-contain"
-                />
+              {ad.media_type === 'video' ? (
+                <ShareVideo ad={ad} />
               ) : urls.length > 0 ? (
                 <>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
