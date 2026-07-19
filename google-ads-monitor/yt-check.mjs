@@ -51,7 +51,10 @@ export async function confirmDead(videoId) {
  * 과거에 잘못 dead 로 찍힌 광고를 되살린다(유튜브가 OK 라고 답하는 것만).
  * 하루 한 번 다운로더가 돌 때 자동 실행 → 오탐이 쌓이지 않는다.
  */
-export async function reviveWronglyDead(sb, { log = console.log, limit = 4000, concurrency = 6 } = {}) {
+/* ⚠️ 페이스 주의: 짧은 시간에 몰아치면 유튜브가 IP 를 일시 제한한다(LOGIN_REQUIRED).
+   그럴 때 이 함수는 판단 보류로 두고 dead 를 유지하므로 데이터가 망가지진 않지만, 그날 복구량이 줄어든다.
+   그래서 동시 3개 + 요청 간 간격을 둔다. 남은 건 다음 실행에서 이어서 복구된다(수렴). */
+export async function reviveWronglyDead(sb, { log = console.log, limit = 4000, concurrency = 3, gapMs = 120 } = {}) {
   const rows = []
   for (let off = 0; off < limit; off += 1000) {
     const { data, error } = await sb
@@ -69,13 +72,17 @@ export async function reviveWronglyDead(sb, { log = console.log, limit = 4000, c
     return s.match(/i\.ytimg\.com\/vi\/([\w-]{6,})\//)?.[1] || s.match(/[?&]v=([\w-]{6,})/)?.[1] || null
   }
   const revive = []
-  let idx = 0
+  let idx = 0, gone = 0, unknown = 0
   const worker = async () => {
     while (idx < rows.length) {
       const r = rows[idx++]
       const id = idOf(r)
-      if (!id) continue
-      if ((await ytPlayability(id)) === 'OK') revive.push(r.library_id)
+      if (!id) { unknown++; continue }
+      const st = await ytPlayability(id)
+      if (st === 'OK') revive.push(r.library_id)
+      else if (st === 'GONE') gone++
+      else unknown++
+      if (gapMs) await new Promise((s) => setTimeout(s, gapMs))
     }
   }
   await Promise.all(Array.from({ length: concurrency }, worker))
@@ -84,6 +91,8 @@ export async function reviveWronglyDead(sb, { log = console.log, limit = 4000, c
     const chunk = revive.slice(i, i + 100)
     try { await sb.from('ga_ads').update({ media_path: null }).in('library_id', chunk) } catch {}
   }
-  if (revive.length) log(`잘못 재생불가로 표시됐던 광고 ${revive.length}건 복구 (재검사 ${rows.length}건)`)
-  return { checked: rows.length, revived: revive.length }
+  if (revive.length || unknown) {
+    log(`재검사 ${rows.length}건 → 복구 ${revive.length} / 진짜 재생불가 ${gone} / 확인보류 ${unknown}(다음 실행에 재시도)`)
+  }
+  return { checked: rows.length, revived: revive.length, gone, unknown }
 }

@@ -40,4 +40,5 @@ const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, { auth: { persistSes
 const log = (...a) => console.log('[revive]', ...a)
 log('재생불가로 표시된 광고를 유튜브에 한 건씩 확인합니다…')
 const r = await reviveWronglyDead(sb, { log })
-log(`완료 — 재검사 ${r.checked}건 / 복구 ${r.revived}건 / 진짜 재생불가 ${r.checked - r.revived}건 유지`)
+log(`완료 — 재검사 ${r.checked} / 복구 ${r.revived} / 진짜 재생불가 ${r.gone} / 확인보류 ${r.unknown}`)
+if (r.unknown) log('확인보류分은 유튜브가 잠시 요청을 제한한 것뿐입니다. 잠시 뒤 다시 실행하면 이어서 복구됩니다.')
