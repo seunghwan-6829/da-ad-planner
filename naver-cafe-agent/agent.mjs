@@ -13,6 +13,7 @@
 //   node agent.mjs --check   자가검사 — 로그인/카페접근/글쓰기 화면 요소를 점검만 하고 절대 등록하지 않음. = self-check.bat
 
 import { chromium } from 'playwright-core'
+import { execSync } from 'node:child_process'
 import { readFileSync, existsSync, mkdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join, resolve } from 'node:path'
@@ -57,40 +58,103 @@ async function http(path, method, body) {
   return j
 }
 
-// ── 브라우저: 웨일 실행파일 + 로그인된 프로필 ──
+/* ── 브라우저 선택 ──
+   ⚠️ 실측(2026-07-21): 네이버 웨일은 "단일 인스턴스"라, 평소 쓰는 웨일 창이 하나라도 열려 있으면
+      --user-data-dir 을 따로 줘도 새 프로세스가 기존 창에 넘기고 즉시 종료(exit 0)한다.
+      그래서 playwright 가 "Target page, context or browser has been closed" 로 실패한다.
+      → 사장님이 웨일을 쓰는 동안에는 자동화가 아예 못 뜬다(= 상시 실행 불가).
+   그래서 기본값은 이미 설치된 엣지/크롬을 "전용 프로필"로 띄우는 것이다. 크롬·엣지는 프로필이 다르면
+   따로 뜨므로(웨일과 달리) 평소 쓰던 창을 닫을 필요가 없다 — 실측으로 확인.
+   ※ playwright 번들 크로미움은 이 PC에서 VC++ 런타임 문제(side-by-side)로 실행되지 않아 후순위.
+   웨일을 꼭 쓰고 싶으면 NC_BROWSER=whale (단, 웨일 창을 전부 닫아야 함). */
+const BROWSER_PREF = (process.env.NC_BROWSER || 'auto').toLowerCase()
+// auto 일 때 시도 순서. 설치돼 있고 실행되는 첫 번째를 쓴다.
+const BROWSER_CHAIN = [
+  { key: 'msedge', label: '엣지', opts: { channel: 'msedge' } },
+  { key: 'chrome', label: '크롬', opts: { channel: 'chrome' } },
+  { key: 'chromium', label: '크로미움', opts: {} },
+]
+let resolvedBrowser = null // 한번 성공한 브라우저를 기억
 const WHALE = [
   process.env.WHALE_PATH,
   'C:\\Program Files\\Naver\\Naver Whale\\Application\\whale.exe',
   'C:\\Program Files (x86)\\Naver\\Naver Whale\\Application\\whale.exe',
   join(process.env.LOCALAPPDATA || '', 'Naver', 'Naver Whale', 'Application', 'whale.exe'),
 ].filter(Boolean).find((p) => existsSync(p))
+
+/** 웨일이 지금 실행 중인가(윈도우). 실행 중이면 웨일 모드는 반드시 실패한다. */
+function whaleRunning() {
+  if (process.platform !== 'win32') return false
+  try {
+    const out = execSync('tasklist /FI "IMAGENAME eq whale.exe" /NH', { encoding: 'utf8', timeout: 8000 })
+    return /whale\.exe/i.test(out)
+  } catch { return false }
+}
 /* 네이버 로그인 세션 프로필.
    ⚠️ 예전에는 옆 폴더('네이버카페 자동화_신규버전/.whale-profile')만 봤는데, 그 폴더가 사라지면
       에이전트가 아예 못 뜨고 만드는 방법도 없었다. 이제 이 폴더 안(.whale-profile)을 기본으로 쓰고,
       옛 경로가 남아 있으면 그대로 재사용한다. 없으면 `--login` 으로 새로 만들 수 있다. */
-const LOCAL_PROFILE = join(HERE, '.whale-profile')
-const PROFILE_DIR =
-  [process.env.NC_PROFILE_DIR, LOCAL_PROFILE, resolve(HERE, '..', '네이버카페 자동화_신규버전', '.whale-profile'), resolve(HERE, '..', '네이버 카페 자동화', '.whale-profile')]
-    .filter(Boolean)
-    .find((p) => existsSync(p)) || LOCAL_PROFILE
+// 브라우저별로 프로필을 분리한다 — 웨일 프로필을 다른 브라우저가 열어 망가뜨리는 일이 없게.
+const PROFILE_DIR = (() => {
+  if (process.env.NC_PROFILE_DIR) return process.env.NC_PROFILE_DIR
+  if (BROWSER_PREF === 'whale') {
+    const whaleDirs = [join(HERE, '.whale-profile'), resolve(HERE, '..', '네이버카페 자동화_신규버전', '.whale-profile'), resolve(HERE, '..', '네이버 카페 자동화', '.whale-profile')]
+    return whaleDirs.find((p) => existsSync(p)) || whaleDirs[0]
+  }
+  return join(HERE, '.browser-profile')
+})()
 
 let context = null
 async function getPage({ createProfile = false } = {}) {
   if (context) { try { return context.pages()[0] || (await context.newPage()) } catch { context = null } }
-  if (!WHALE) throw new Error('웨일 브라우저(whale.exe)를 찾을 수 없어요. WHALE_PATH 환경변수로 지정해 주세요.')
+
+  const useWhale = BROWSER_PREF === 'whale'
+  if (useWhale) {
+    if (!WHALE) throw new Error('웨일 브라우저(whale.exe)를 찾을 수 없어요. WHALE_PATH 환경변수로 지정해 주세요.')
+    if (whaleRunning()) {
+      throw new Error(
+        '평소 쓰는 웨일 창이 열려 있어 자동화용 웨일을 띄울 수 없어요(웨일은 창을 하나만 띄웁니다).\n' +
+        '    → 웨일 창을 전부 닫고 다시 실행하거나, NC_BROWSER 설정을 지워 전용 브라우저를 쓰세요(권장).'
+      )
+    }
+  }
+
   if (!existsSync(PROFILE_DIR)) {
     if (!createProfile) {
       throw new Error(`네이버 로그인이 아직 안 돼 있어요. login-setup.bat 을 먼저 한 번 실행해 주세요. (프로필: ${PROFILE_DIR})`)
     }
     mkdirSync(PROFILE_DIR, { recursive: true })
   }
-  log('브라우저 실행(웨일 + 로그인 프로필)…')
-  context = await chromium.launchPersistentContext(PROFILE_DIR, {
-    executablePath: WHALE,
+
+  const common = {
     headless: false,
     viewport: { width: 1280, height: 900 },
     args: ['--disable-blink-features=AutomationControlled'],
-  })
+    timeout: 45000,
+  }
+
+  if (useWhale) {
+    log('브라우저 실행(웨일 + 로그인 프로필)…')
+    context = await chromium.launchPersistentContext(PROFILE_DIR, { ...common, executablePath: WHALE })
+  } else {
+    // 설치된 브라우저를 순서대로 시도 — 하나라도 뜨면 그걸 기억해 다음부터 바로 쓴다.
+    const chain = resolvedBrowser ? BROWSER_CHAIN.filter((b) => b.key === resolvedBrowser) : BROWSER_CHAIN
+    const tried = []
+    for (const b of chain) {
+      try {
+        log(`브라우저 실행(${b.label} + 자동화 전용 프로필)…`)
+        context = await chromium.launchPersistentContext(PROFILE_DIR, { ...common, ...b.opts })
+        resolvedBrowser = b.key
+        break
+      } catch (e) {
+        tried.push(`${b.label}: ${String((e && e.message) || e).split('\n')[0].slice(0, 60)}`)
+        context = null
+      }
+    }
+    if (!context) {
+      throw new Error(`자동화에 쓸 브라우저를 띄우지 못했어요. 엣지나 크롬이 설치돼 있어야 합니다.\n    시도: ${tried.join(' | ')}`)
+    }
+  }
   context.on('close', () => { context = null })
   return context.pages()[0] || (await context.newPage())
 }
@@ -362,13 +426,24 @@ async function selfCheck() {
   }
 
   log('\n── 2. 브라우저 / 로그인 ──')
-  if (!WHALE) { mark('웨일 브라우저', false, 'whale.exe 를 찾지 못했어요'); return rows }
-  mark('웨일 브라우저', true, WHALE)
+  if (BROWSER_PREF === 'whale') {
+    if (!WHALE) { mark('웨일 브라우저', false, 'whale.exe 를 찾지 못했어요'); return rows }
+    if (whaleRunning()) { mark('웨일 브라우저', false, '평소 쓰는 웨일 창이 열려 있어요 → 전부 닫거나 NC_BROWSER 설정을 지우세요(권장)'); return rows }
+    mark('웨일 브라우저', true, WHALE)
+  } else {
+    mark('자동화 전용 브라우저', true, '평소 쓰는 브라우저와 분리 — 웨일을 켜둔 채로 돌려도 됩니다')
+  }
   if (!existsSync(PROFILE_DIR)) {
     mark('네이버 로그인 세션', false, 'login-setup.bat 을 먼저 실행해 주세요')
     return rows
   }
-  const page = await getPage()
+  let page
+  try {
+    page = await getPage()
+  } catch (e) {
+    mark('브라우저 실행', false, String((e && e.message) || e).split('\n')[0].slice(0, 160))
+    return rows
+  }
   const logged = await isLoggedIn(page)
   mark('네이버 로그인 세션', logged, logged ? '' : '세션이 만료됐어요 → login-setup.bat 다시 실행')
   if (!logged) return rows
@@ -418,18 +493,31 @@ if (MODE === 'login') {
   log(`  서버: ${SERVER}`)
   log(`  프로필: ${PROFILE_DIR}\n`)
   let rows = []
-  try { rows = await selfCheck() } catch (e) { log('검사 오류:', String((e && e.message) || e).slice(0, 200)) }
+  try {
+    rows = await selfCheck()
+  } catch (e) {
+    // ⚠️ 검사 도중 예외가 나면 rows 가 비어 "0/0 통과 → 🎉" 처럼 거짓 합격이 나올 수 있다.
+    //    예외 자체를 실패 항목으로 기록해 절대 통과로 보이지 않게 한다.
+    const msg = String((e && e.message) || e).split('\n')[0].slice(0, 200)
+    log(`  ❌ 검사 중단 — ${msg}`)
+    rows.push({ name: '검사 진행', ok: false, detail: msg })
+  }
   const bad = rows.filter((r) => !r.ok)
   log(`\n── 결과: ${rows.length - bad.length}/${rows.length} 통과 ──`)
-  if (bad.length) { log('해결이 필요한 항목:'); for (const b of bad) log(`  ❌ ${b.name} — ${b.detail}`) }
-  else log('  🎉 발행에 필요한 조건이 모두 준비됐습니다. 웹에서 글을 승인하면 발행됩니다.')
+  if (bad.length || !rows.length) {
+    log('해결이 필요한 항목:')
+    if (!rows.length) log('  ❌ 검사가 아무것도 수행하지 못했습니다.')
+    for (const b of bad) log(`  ❌ ${b.name} — ${b.detail}`)
+  } else {
+    log('  🎉 발행에 필요한 조건이 모두 준비됐습니다. 웹에서 글을 승인하면 발행됩니다.')
+  }
   await finish(bad.length ? 1 : 0)
 } else {
   log('네이버 카페 발행 에이전트 v3 시작')
   log(`  서버: ${SERVER}`)
   log(`  인증 토큰: ${TOKEN ? '설정됨' : '(없음 — 서버가 NC_AGENT_TOKEN 미설정 시에만 동작)'}`)
   log(`  프로필: ${PROFILE_DIR}${existsSync(PROFILE_DIR) ? '' : '  ⚠️ 아직 로그인 안 됨 → login-setup.bat 먼저 실행'}`)
-  log(`  브라우저: ${WHALE || '(웨일 못 찾음 — 발행 시 오류로 안내)'}`)
+  log(`  브라우저: ${BROWSER_PREF === 'whale' ? `웨일 ${WHALE || '(못 찾음)'}` : '엣지/크롬을 자동화 전용 프로필로 사용(평소 쓰는 창과 분리 — 켜둔 채로 돌아갑니다)'}`)
   log(`  승인된 글을 ${POLL / 1000}초 간격으로 확인합니다(페이스 규칙은 서버가 판정). 이 창을 닫으면 멈춥니다.`)
   await heartbeat()
   setInterval(heartbeat, 30_000)

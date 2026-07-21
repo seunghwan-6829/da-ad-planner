@@ -2,7 +2,12 @@
   "name": "naver-cafe-agent",
   "private": true,
   "type": "module",
-  "description": "네이버 카페 발행 에이전트 v3 — 로그인된 웨일 프로필로 승인된 글을 서버 페이스(계정 밴 방지) 규칙에 맞춰 자동 등록/댓글 + 24h 반응 측정",
+  "description": "네이버 카페 발행 에이전트 v3 — 로그인 세션으로 승인된 글을 서버 페이스(계정 밴 방지) 규칙에 맞춰 자동 등록/댓글 + 24h 반응 측정",
+  "scripts": {
+    "start": "node agent.mjs",
+    "login": "node agent.mjs --login",
+    "check": "node agent.mjs --check"
+  },
   "dependencies": {
     "playwright-core": "^1.47.0"
   }
