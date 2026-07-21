@@ -186,6 +186,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isTrial = profile?.role === 'trial'
   // 체험 계정도 크롤러를 봐야 하므로 '승인됨'으로 취급한다(차단은 middleware 와 메뉴에서).
   const isApproved = profile?.role === 'admin' || profile?.role === 'approved' || isTrial
+  /* 크롤러 접근 권한 — 이름은 can_meta_ad 지만 실제로는 **크롤러 3종 전체**를 관장한다
+     (메타 광고 /meta-ad-crawler · 구글 광고 /google-ads · 온드미디어 /owned-media).
+     사이드바 노출과 세 페이지의 진입 가드가 모두 이 값 하나를 본다.
+     컬럼명은 처음 메타 크롤러만 있던 시절의 잔재라 그대로 두었다(이름 변경은 마이그레이션 필요). */
   const canMetaAd = profile?.role === 'admin' || profile?.can_meta_ad === true || isTrial
 
   return (

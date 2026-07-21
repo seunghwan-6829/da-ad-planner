@@ -306,7 +306,7 @@ export default function AdminPage() {
           onClick={() => setActiveTab('metaAd')}
         >
           <Megaphone className="h-4 w-4 inline mr-2" />
-          메타 광고 크롤러
+          크롤러 권한
         </button>
         <button
           className={`px-4 py-2 font-medium transition-colors ${
@@ -672,16 +672,17 @@ export default function AdminPage() {
         </div>
       )}
 
-      {/* 메타 광고 크롤러 권한 탭 */}
+      {/* 크롤러 권한 탭 — 토글 하나가 크롤러 3종 전체를 관장한다(메타·구글·온드미디어). */}
       {activeTab === 'metaAd' && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Megaphone className="h-5 w-5" />
-              메타 광고 크롤러 접근 권한
+              크롤러 접근 권한
             </CardTitle>
             <CardDescription>
-              경쟁사 메타 광고 크롤러 메뉴를 볼 수 있는 사용자를 설정합니다. (관리자는 항상 접근 가능)
+              토글 하나로 그 사람의 <strong>크롤러 3종 전체</strong>(메타 광고 · 구글 광고 · 온드미디어)를 함께 열고 닫습니다.
+              끄면 메뉴가 사라지고 주소를 직접 입력해도 열리지 않아요. 관리자는 항상 접근 가능하고, 체험 계정은 발급 시점부터 자동으로 켜져 있습니다.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -705,7 +706,24 @@ export default function AdminPage() {
                         <div className={`w-10 h-10 rounded-full flex items-center justify-center ${has ? 'bg-green-100' : 'bg-gray-100'}`}>
                           {has ? <Check className="h-5 w-5 text-green-600" /> : <X className="h-5 w-5 text-gray-400" />}
                         </div>
-                        <p className="font-medium text-lg">{user.email}</p>
+                        <div>
+                          <p className="font-medium text-lg">{user.email}</p>
+                          {/* 한 토글이 3종을 함께 여닫는다는 걸 눈으로 보이게 */}
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {['메타 광고', '구글 광고', '온드미디어'].map((c) => (
+                              <span
+                                key={c}
+                                className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                                  has
+                                    ? 'bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300'
+                                    : 'bg-gray-100 text-gray-400 line-through dark:bg-gray-800 dark:text-gray-500'
+                                }`}
+                              >
+                                {c}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
                       </div>
                       <div className="flex items-center gap-2">
                         {isUserAdmin ? (
