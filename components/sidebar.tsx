@@ -67,7 +67,7 @@ function isNavActive(pathname: string | null, href: string): boolean {
 export function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
-  const { user, profile, isAdmin, canMetaAd, signOut } = useAuth()
+  const { user, profile, isAdmin, canMetaAd, isTrial, signOut } = useAuth()
 
   // ⚠️ 하드 리로드(F5) 시 usePathname()이 일시적으로 '/'로 잡혀 '대시보드'가 잘못 활성화되는
   //    하이드레이션 타이밍 버그 방지 → 마운트/경로변경 후 실제 URL(window.location)로 활성 경로 동기화.
@@ -78,8 +78,12 @@ export function Sidebar() {
 
   // 크롤러 권한 통일: can_meta_ad(또는 관리자)면 메타·구글·온드 3종 모두 노출.
   const crawlerHrefs = ['/meta-ad-crawler', '/owned-media', '/google-ads']
-  // 네이버 카페 자동화: 모두에게 보이되 관리자 외에는 잠금(락 아이콘, 클릭 불가).
-  const lockedHrefs = isAdmin ? [] : ['/naver-cafe']
+  /* 잠금 메뉴(락 아이콘, 클릭 불가).
+     체험 계정은 네이버 카페·기획안 제작·데이터 추적·인스타 성과를 쓸 수 없다.
+     ⚠️ 여기서 잠그는 건 어디까지나 표시용 — 실제 차단은 middleware.ts 가 서버에서 한다
+        (주소를 직접 쳐도 막힌다). */
+  const TRIAL_LOCKED = ['/naver-cafe', '/project-plans', '/data-tracking', '/instagram']
+  const lockedHrefs = isAdmin ? [] : isTrial ? TRIAL_LOCKED : ['/naver-cafe']
   const topItems = navigationTop.filter((item) => !crawlerHrefs.includes(item.href) || canMetaAd)
 
   // #6 메타 광고 5일 알림: 신규/종료 변화가 있으면 하단 배지. 닫으면 그 시그니처는 다시 안 뜸(새 변화 시 재등장).

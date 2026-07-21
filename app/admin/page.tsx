@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Shield, Users, Check, X, Clock, Loader2, RefreshCw, Folder, UserCheck, Megaphone, Trash2, Search } from 'lucide-react'
+import { Shield, Users, Check, X, Clock, Loader2, RefreshCw, Folder, UserCheck, Megaphone, Trash2, Search, Ticket } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { useAuth, UserRole } from '@/lib/auth-context'
+import { TrialAccountsPanel } from '@/components/admin/trial-accounts-panel'
 import { supabase } from '@/lib/supabase'
 import { 
   getClients, 
@@ -32,7 +33,7 @@ export default function AdminPage() {
   const { user, isAdmin, loading: authLoading } = useAuth()
 
   // 탭 관리
-  const [activeTab, setActiveTab] = useState<'users' | 'clients' | 'metaAd'>('users')
+  const [activeTab, setActiveTab] = useState<'users' | 'clients' | 'metaAd' | 'trial'>('users')
   const [metaUpdating, setMetaUpdating] = useState<string | null>(null)
 
   // 사용자 관리
@@ -307,7 +308,20 @@ export default function AdminPage() {
           <Megaphone className="h-4 w-4 inline mr-2" />
           메타 광고 크롤러
         </button>
+        <button
+          className={`px-4 py-2 font-medium transition-colors ${
+            activeTab === 'trial'
+              ? 'border-b-2 border-primary text-primary'
+              : 'text-gray-500 hover:text-gray-700'
+          }`}
+          onClick={() => setActiveTab('trial')}
+        >
+          <Ticket className="h-4 w-4 inline mr-2" />
+          체험 계정
+        </button>
       </div>
+
+      {activeTab === 'trial' && <TrialAccountsPanel />}
 
       {/* 사용자 관리 탭 */}
       {activeTab === 'users' && (
