@@ -51,3 +51,109 @@
 .pb-app .workspace-date-field input { font-size: 12px; padding: 6px 8px; }
 /* 시작일/종료일 라벨 제거 — 날짜만으로 충분(사회적 약속) */
 .pb-app .workspace-date-field span { display: none; }
+
+/* ───────────────── 기간 선택기(광고 관리자 스타일) ─────────────────
+   components/pb/DateRangePicker.tsx 전용. .pb-app 스코프라 전역 누수 없음. */
+.pb-app .pb-drp { position: relative; display: inline-block; }
+
+.pb-app .pb-drp-trigger {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 36px; padding: 0 12px;
+  border: 1px solid var(--line-strong); border-radius: 10px;
+  background: var(--panel); color: var(--text);
+  font-size: 13px; font-weight: 600; cursor: pointer;
+  transition: border-color .15s, box-shadow .15s;
+}
+.pb-app .pb-drp-trigger:hover:not(:disabled) { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.pb-app .pb-drp-trigger:disabled { opacity: .6; cursor: wait; }
+
+.pb-app .pb-drp-pop {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 60;
+  width: min(760px, calc(100vw - 32px));
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 14px; box-shadow: 0 12px 32px rgba(16, 24, 40, .16);
+  overflow: hidden;
+}
+.pb-app .pb-drp.align-left .pb-drp-pop { right: auto; left: 0; }
+
+.pb-app .pb-drp-body { display: grid; grid-template-columns: 190px 1fr; }
+.pb-app .pb-drp-presets {
+  border-right: 1px solid var(--line); padding: 12px 8px;
+  max-height: 380px; overflow-y: auto;
+}
+.pb-app .pb-drp-presets-title { margin: 4px 8px 8px; font-size: 12px; font-weight: 700; color: var(--muted); }
+.pb-app .pb-drp-presets-sep { height: 1px; background: var(--line); margin: 8px 8px; }
+.pb-app .pb-drp-preset {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 8px 10px; border: 0; border-radius: 8px; background: transparent;
+  font-size: 13px; color: var(--text); text-align: left; cursor: pointer;
+}
+.pb-app .pb-drp-preset:hover { background: var(--panel-soft); }
+.pb-app .pb-drp-radio {
+  width: 15px; height: 15px; flex: 0 0 15px;
+  border: 2px solid var(--line-strong); border-radius: 50%;
+}
+.pb-app .pb-drp-preset.active { color: var(--accent); font-weight: 700; }
+.pb-app .pb-drp-preset.active .pb-drp-radio { border-color: var(--accent); box-shadow: inset 0 0 0 3px var(--panel), inset 0 0 0 8px var(--accent); }
+
+.pb-app .pb-drp-cal { padding: 12px 14px; }
+.pb-app .pb-drp-cal-head { display: flex; align-items: center; gap: 8px; }
+.pb-app .pb-drp-cal-titles { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.pb-app .pb-drp-selects { display: flex; align-items: center; gap: 6px; justify-content: center; }
+.pb-app .pb-drp-selects select {
+  height: 30px; border: 0; background: transparent; color: var(--text);
+  font-size: 13px; font-weight: 700; cursor: pointer; padding: 0 2px;
+}
+.pb-app .pb-drp-selects-right span { font-size: 13px; font-weight: 700; color: var(--text); }
+.pb-app .pb-drp-nav {
+  width: 30px; height: 30px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--text); font-size: 20px; line-height: 1; cursor: pointer;
+}
+.pb-app .pb-drp-nav:hover:not(:disabled) { background: var(--panel-soft); }
+.pb-app .pb-drp-nav:disabled { opacity: .25; cursor: default; }
+
+.pb-app .pb-drp-months { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 6px; }
+.pb-app .pb-drp-dow, .pb-app .pb-drp-grid { display: grid; grid-template-columns: repeat(7, 1fr); }
+.pb-app .pb-drp-dow span { text-align: center; font-size: 11px; font-weight: 700; color: var(--muted); padding: 6px 0; }
+.pb-app .pb-drp-cell {
+  height: 32px; border: 0; background: transparent; color: var(--text);
+  font-size: 12.5px; cursor: pointer; position: relative;
+}
+.pb-app .pb-drp-cell.empty { cursor: default; }
+.pb-app .pb-drp-cell:hover:not(:disabled):not(.edge) { background: var(--accent-soft); border-radius: 8px; }
+.pb-app .pb-drp-cell.disabled { color: var(--line-strong); cursor: default; }
+.pb-app .pb-drp-cell.inrange { background: var(--accent-soft); }
+.pb-app .pb-drp-cell.edge { background: var(--accent); color: #fff; font-weight: 700; border-radius: 8px; }
+
+.pb-app .pb-drp-selected {
+  display: flex; align-items: center; gap: 8px; margin-top: 12px;
+  font-size: 12.5px; color: var(--muted);
+}
+.pb-app .pb-drp-selected span {
+  min-width: 104px; padding: 6px 10px;
+  border: 1px solid var(--line); border-radius: 8px; color: var(--text);
+}
+.pb-app .pb-drp-selected em { font-style: normal; }
+
+.pb-app .pb-drp-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 14px; border-top: 1px solid var(--line); background: var(--panel-soft);
+}
+.pb-app .pb-drp-foot p { margin: 0; font-size: 11.5px; color: var(--muted); }
+.pb-app .pb-drp-foot-actions { display: flex; gap: 8px; }
+.pb-app .pb-drp-btn {
+  height: 34px; padding: 0 16px; border-radius: 8px;
+  border: 1px solid var(--line-strong); background: var(--panel);
+  color: var(--text); font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.pb-app .pb-drp-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.pb-app .pb-drp-btn:disabled { opacity: .5; cursor: default; }
+
+/* 좁은 화면: 프리셋을 위로 접어 세로 배치 */
+@media (max-width: 720px) {
+  .pb-app .pb-drp-body { grid-template-columns: 1fr; }
+  .pb-app .pb-drp-presets { border-right: 0; border-bottom: 1px solid var(--line); max-height: 180px; }
+  .pb-app .pb-drp-months { grid-template-columns: 1fr; }
+  .pb-app .pb-drp-cal-titles { grid-template-columns: 1fr; }
+  .pb-app .pb-drp-selects-right { display: none; }
+}

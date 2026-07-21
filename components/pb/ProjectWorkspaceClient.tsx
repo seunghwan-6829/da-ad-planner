@@ -3,6 +3,7 @@
 import type { MouseEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ActivityItem, BehaviorCard, MetricItem, ProjectRecord, RangePreset, TopPageItem, WorkspaceData } from "@/lib/pb/home-data";
+import { DateRangePicker, toServerPreset, type DateRange } from "@/components/pb/DateRangePicker";
 
 type Props = {
   initialData: WorkspaceData;
@@ -36,28 +37,8 @@ function formatDateTime(value: string) {
   });
 }
 
-function toDateInput(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function buildPresetRange(preset: RangePreset) {
-  const today = new Date();
-  if (preset === "7D") {
-    const start = new Date(today);
-    start.setDate(today.getDate() - 6);
-    return { startDate: toDateInput(start), endDate: toDateInput(today) };
-  }
-  if (preset === "30D") {
-    const start = new Date(today);
-    start.setDate(today.getDate() - 29);
-    return { startDate: toDateInput(start), endDate: toDateInput(today) };
-  }
-  const current = toDateInput(today);
-  return { startDate: current, endDate: current };
-}
+/* 기간 계산은 DateRangePicker 가 서울 시간 기준으로 전담한다(예전 toDateInput/buildPresetRange 제거).
+   기존 함수들은 브라우저 로컬 시간을 써서, 해외에서 접속하면 하루가 밀릴 수 있었다. */
 
 function buildHeadCode(project: ProjectRecord) {
   if (typeof window === "undefined") return "";
@@ -796,25 +777,16 @@ export function ProjectWorkspaceClient({ initialData, initialSelectedProjectId }
     setNotice("HEAD 코드를 복사했습니다.");
   }
 
-  async function applyDateRange() {
+  /* 기간 선택기에서 [업데이트] 를 누르면 호출. 선택기는 서버가 모르는 기간(최근 14일 등)도
+     다루므로, 서버가 아는 종류로 환산하고 나머지는 실제 날짜(CUSTOM)로 넘긴다. */
+  async function applyRange(range: DateRange, presetKey: string) {
+    const serverPreset = toServerPreset(presetKey) as RangePreset;
     setRangeLoading(true);
     try {
-      setRangePreset("CUSTOM");
-      await refreshWorkspace(selectedProject?.id, dateRange, "CUSTOM");
-      setNotice("날짜 기준으로 데이터를 다시 불러왔습니다.");
-    } finally {
-      setRangeLoading(false);
-    }
-  }
-
-  async function applyPreset(preset: RangePreset) {
-    const nextRange = buildPresetRange(preset);
-    setRangeLoading(true);
-    try {
-      setDateRange(nextRange);
-      setRangePreset(preset);
-      await refreshWorkspace(selectedProject?.id, nextRange, preset);
-      const label = preset === "TODAY" ? "TODAY" : preset === "7D" ? "최근 7일" : "최근 30일";
+      setDateRange(range);
+      setRangePreset(serverPreset);
+      await refreshWorkspace(selectedProject?.id, range, serverPreset);
+      const label = range.startDate === range.endDate ? range.startDate : `${range.startDate} ~ ${range.endDate}`;
       setNotice(`${label} 기준으로 데이터를 다시 불러왔습니다.`);
     } finally {
       setRangeLoading(false);
@@ -924,42 +896,13 @@ export function ProjectWorkspaceClient({ initialData, initialSelectedProjectId }
                 ) : null}
               </div>
                 <div className="workspace-range-controls">
-                  <div className="workspace-range-presets">
-                  {([
-                    { value: "TODAY", label: "TODAY" },
-                    { value: "7D", label: "최근 7일" },
-                    { value: "30D", label: "최근 30일" }
-                  ] as { value: RangePreset; label: string }[]).map((preset) => (
-                    <button key={preset.value} type="button" className={`workspace-range-chip ${rangePreset === preset.value ? "active" : ""}`} onClick={() => void applyPreset(preset.value)} disabled={rangeLoading}>
-                      {preset.label}
-                    </button>
-                  ))}
-                  </div>
-                <label className="workspace-date-field">
-                  <span>시작일</span>
-                  <input
-                    type="date"
-                    value={dateRange.startDate}
-                    disabled={rangeLoading}
-                    onChange={(event) =>
-                      setDateRange((current) => {
-                        const nextStart = event.target.value;
-                        return {
-                          startDate: nextStart,
-                          endDate: current.endDate < nextStart ? nextStart : current.endDate
-                        };
-                      })
-                    }
+                  {/* 광고 관리자와 같은 기간 선택기 — 자주 쓰는 기간 + 2개월 달력. */}
+                  <DateRangePicker
+                    startDate={dateRange.startDate}
+                    endDate={dateRange.endDate}
+                    disabled={rangeLoading || loading}
+                    onApply={(range, presetKey) => void applyRange(range, presetKey)}
                   />
-                </label>
-                <label className="workspace-date-field">
-                  <span>종료일</span>
-                  <input type="date" min={dateRange.startDate} value={dateRange.endDate} disabled={rangeLoading} onChange={(event) => setDateRange((current) => ({ ...current, endDate: event.target.value }))} />
-                </label>
-                <button className="workspace-primary-button" onClick={applyDateRange} disabled={loading || rangeLoading}>
-                  {rangeLoading ? <span className="workspace-spinner" /> : null}
-                  {rangeLoading ? "불러오는 중" : "날짜 적용"}
-                </button>
               </div>
             </section>
 

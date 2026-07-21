@@ -11,6 +11,7 @@ import {
   useTransition
 } from "react";
 import type { HeatmapData, HeatmapRangePreset } from "@/lib/pb/heatmap-data";
+import { DateRangePicker, toServerPreset, type DateRange } from "@/components/pb/DateRangePicker";
 
 type SecretPageItem = {
   id: string;
@@ -44,28 +45,7 @@ const MO_WIDTH = 430;
 const PREVIEW_VIEWPORT_HEIGHT_PC = 840;
 const PREVIEW_VIEWPORT_HEIGHT_MO = 860;
 
-function toDateInput(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function buildPresetRange(preset: HeatmapRangePreset) {
-  const today = new Date();
-  if (preset === "7D") {
-    const start = new Date(today);
-    start.setDate(today.getDate() - 6);
-    return { startDate: toDateInput(start), endDate: toDateInput(today) };
-  }
-  if (preset === "30D") {
-    const start = new Date(today);
-    start.setDate(today.getDate() - 29);
-    return { startDate: toDateInput(start), endDate: toDateInput(today) };
-  }
-  const current = toDateInput(today);
-  return { startDate: current, endDate: current };
-}
+/* 기간 계산은 DateRangePicker 가 서울 시간 기준으로 전담한다(예전 toDateInput/buildPresetRange 제거). */
 
 function normalizePageKeyFromUrl(value: string) {
   try {
@@ -347,21 +327,14 @@ export function HeatmapClient({ data, initialSecretMode }: HeatmapClientProps) {
     });
   }
 
-  function applyPreset(preset: HeatmapRangePreset) {
-    const range = buildPresetRange(preset);
+  /* 기간 선택기에서 [업데이트] 를 누르면 호출. 선택기가 다루는 기간이 서버 타입보다 많아
+     서버가 아는 것만 환산하고 나머지는 실제 날짜(CUSTOM)로 넘긴다. */
+  function applyRange(range: DateRange, presetKey: string) {
+    const preset = toServerPreset(presetKey) as HeatmapRangePreset;
     setRangePreset(preset);
     setStartDate(range.startDate);
     setEndDate(range.endDate);
     updateRoute({ start: range.startDate, end: range.endDate, preset });
-  }
-
-  function applyCustomRange() {
-    const orderedStart = startDate <= endDate ? startDate : endDate;
-    const orderedEnd = startDate <= endDate ? endDate : startDate;
-    setRangePreset("CUSTOM");
-    setStartDate(orderedStart);
-    setEndDate(orderedEnd);
-    updateRoute({ start: orderedStart, end: orderedEnd, preset: "CUSTOM" });
   }
 
   function handleDeviceChange(device: "pc" | "mo") {
@@ -516,28 +489,15 @@ export function HeatmapClient({ data, initialSecretMode }: HeatmapClientProps) {
             <button type="button" className={`heatmap-mode-button ${debugEnabled ? "active" : ""}`} onClick={() => setDebugEnabled((current) => !current)}>
               DEBUG
             </button>
-            <button type="button" className={`heatmap-chip ${rangePreset === "TODAY" ? "active" : ""}`} onClick={() => applyPreset("TODAY")}>
-              TODAY
-            </button>
-            <button type="button" className={`heatmap-chip ${rangePreset === "7D" ? "active" : ""}`} onClick={() => applyPreset("7D")}>
-              최근 7일
-            </button>
-            <button type="button" className={`heatmap-chip ${rangePreset === "30D" ? "active" : ""}`} onClick={() => applyPreset("30D")}>
-              최근 30일
-            </button>
           </div>
           <div className="heatmap-range-actions workspace-settings-actions">
-            <label className="workspace-date-field">
-              <span>시작일</span>
-              <input type="date" value={startDate} max={endDate} onChange={(event) => setStartDate(event.target.value)} />
-            </label>
-            <label className="workspace-date-field">
-              <span>종료일</span>
-              <input type="date" value={endDate} min={startDate} onChange={(event) => setEndDate(event.target.value)} />
-            </label>
-            <button type="button" className="workspace-button-primary" onClick={applyCustomRange} disabled={isPending}>
-              {isPending ? "불러오는 중" : "날짜 적용"}
-            </button>
+            {/* 대시보드와 같은 기간 선택기(광고 관리자 스타일) */}
+            <DateRangePicker
+              startDate={startDate}
+              endDate={endDate}
+              disabled={isPending}
+              onApply={(range, presetKey) => applyRange(range, presetKey)}
+            />
             <button type="button" className="workspace-button-secondary" onClick={openSecretCreate}>
               비밀페이지 등록
             </button>
