@@ -6,11 +6,19 @@
 //   - GET/POST {SERVER}/api/naver-cafe/agent/track → 24h 반응 측정 큐/결과
 //   로그인된 웨일 브라우저 프로필(playwright-core)로 사람처럼 실제 타이핑해 등록/댓글.
 //   ⚠️ service_role 키가 필요 없다(서버 URL + AGENT 토큰만). 창을 닫으면 자동 발행이 멈춘다.
+//
+// 실행 모드
+//   node agent.mjs           발행 루프(기본). = publish-agent.bat
+//   node agent.mjs --login   네이버 로그인 세션 만들기(최초 1회). = login-setup.bat
+//   node agent.mjs --check   자가검사 — 로그인/카페접근/글쓰기 화면 요소를 점검만 하고 절대 등록하지 않음. = self-check.bat
 
 import { chromium } from 'playwright-core'
 import { readFileSync, existsSync, mkdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join, resolve } from 'node:path'
+
+const ARGS = process.argv.slice(2)
+const MODE = ARGS.includes('--login') ? 'login' : ARGS.includes('--check') ? 'check' : 'run'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const LOGS = join(HERE, 'logs')
@@ -56,19 +64,26 @@ const WHALE = [
   'C:\\Program Files (x86)\\Naver\\Naver Whale\\Application\\whale.exe',
   join(process.env.LOCALAPPDATA || '', 'Naver', 'Naver Whale', 'Application', 'whale.exe'),
 ].filter(Boolean).find((p) => existsSync(p))
-// 네이버 로그인 세션 프로필(신규/구 폴더 모두 탐색 — 평소 쓰는 웨일 창과 충돌 없음)
-const PROFILE_CANDIDATES = [
-  process.env.NC_PROFILE_DIR,
-  resolve(HERE, '..', '네이버카페 자동화_신규버전', '.whale-profile'),
-  resolve(HERE, '..', '네이버 카페 자동화', '.whale-profile'),
-].filter(Boolean)
-const PROFILE_DIR = PROFILE_CANDIDATES.find((p) => existsSync(p)) || PROFILE_CANDIDATES[PROFILE_CANDIDATES.length - 1]
+/* 네이버 로그인 세션 프로필.
+   ⚠️ 예전에는 옆 폴더('네이버카페 자동화_신규버전/.whale-profile')만 봤는데, 그 폴더가 사라지면
+      에이전트가 아예 못 뜨고 만드는 방법도 없었다. 이제 이 폴더 안(.whale-profile)을 기본으로 쓰고,
+      옛 경로가 남아 있으면 그대로 재사용한다. 없으면 `--login` 으로 새로 만들 수 있다. */
+const LOCAL_PROFILE = join(HERE, '.whale-profile')
+const PROFILE_DIR =
+  [process.env.NC_PROFILE_DIR, LOCAL_PROFILE, resolve(HERE, '..', '네이버카페 자동화_신규버전', '.whale-profile'), resolve(HERE, '..', '네이버 카페 자동화', '.whale-profile')]
+    .filter(Boolean)
+    .find((p) => existsSync(p)) || LOCAL_PROFILE
 
 let context = null
-async function getPage() {
+async function getPage({ createProfile = false } = {}) {
   if (context) { try { return context.pages()[0] || (await context.newPage()) } catch { context = null } }
   if (!WHALE) throw new Error('웨일 브라우저(whale.exe)를 찾을 수 없어요. WHALE_PATH 환경변수로 지정해 주세요.')
-  if (!existsSync(PROFILE_DIR)) throw new Error(`브라우저 프로필이 없어요: ${PROFILE_DIR}`)
+  if (!existsSync(PROFILE_DIR)) {
+    if (!createProfile) {
+      throw new Error(`네이버 로그인이 아직 안 돼 있어요. login-setup.bat 을 먼저 한 번 실행해 주세요. (프로필: ${PROFILE_DIR})`)
+    }
+    mkdirSync(PROFILE_DIR, { recursive: true })
+  }
   log('브라우저 실행(웨일 + 로그인 프로필)…')
   context = await chromium.launchPersistentContext(PROFILE_DIR, {
     executablePath: WHALE,
@@ -80,6 +95,21 @@ async function getPage() {
   return context.pages()[0] || (await context.newPage())
 }
 
+/** 네이버에 로그인돼 있는지 확인(카페 메인에서 로그인 흔적을 본다). */
+async function isLoggedIn(page) {
+  await page.goto('https://cafe.naver.com', { waitUntil: 'domcontentloaded', timeout: 30000 })
+  await sleep(1500)
+  if (page.url().includes('nid.naver.com')) return false
+  try {
+    // 로그아웃 링크나 내 정보 영역이 보이면 로그인 상태.
+    const html = await page.content()
+    if (/logout|로그아웃|nid\.naver\.com\/nidlogin\.logout/i.test(html)) return true
+    // 로그인 버튼만 보이면 비로그인.
+    if (/로그인하세요|nidlogin\.login/i.test(html)) return false
+  } catch {}
+  return true // 판단 애매하면 통과시키고, 실제 글쓰기 화면에서 다시 검증한다.
+}
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 async function humanType(page, text) {
   for (const ch of String(text)) {
@@ -88,6 +118,34 @@ async function humanType(page, text) {
     if (ch === ' ' && Math.random() < 0.12) await sleep(200 + Math.random() * 400)
   }
 }
+
+/* 네이버 카페 글쓰기 화면 요소 — 발행과 자가검사가 "같은 셀렉터"를 쓰도록 한곳에서 관리한다.
+   (예전엔 검사 수단이 없어서, 셀렉터가 깨졌는지는 실제 발행이 실패해야만 알 수 있었다.)
+   네이버가 화면을 바꾸면 여기만 고치면 되고, self-check.bat 으로 즉시 확인할 수 있다. */
+const TITLE_SEL = [
+  'textarea[placeholder*="제목"]',
+  'input[placeholder*="제목"]',
+  '.textarea_input',
+  'textarea.textarea_input',
+  '[class*="Subject"] textarea',
+  '[class*="subject"] textarea',
+].join(', ')
+const BODY_SEL = [
+  '.se-component-content [contenteditable="true"]',
+  '.se-content [contenteditable="true"]',
+  '.se-text-paragraph',
+  '[class*="Editor"] [contenteditable="true"]',
+  'div[contenteditable="true"]',
+  '[contenteditable="true"]',
+].join(', ')
+const SUBMIT_SEL = [
+  'a.BaseButton--skinGreen',
+  'button.BaseButton--skinGreen',
+  '[class*="write_footer"] a:has-text("등록")',
+  '[class*="WriteFooter"] button:has-text("등록")',
+  'a:has-text("등록")',
+  'button:has-text("등록")',
+].join(', ')
 
 // 로그인 세션 만료 감지
 function assertLoggedIn(page) {
@@ -138,11 +196,15 @@ async function publishPost(job) {
   }
 
   // 제목
-  await page.locator('textarea[placeholder*="제목"], .textarea_input').first().click({ timeout: 8000 })
+  await page.locator(TITLE_SEL).first().click({ timeout: 8000 }).catch(() => {
+    throw new Error('제목 입력칸을 찾지 못했어요(네이버 화면 변경). self-check.bat 으로 확인해 주세요.')
+  })
   await humanType(page, job.title)
 
   // 본문
-  await page.locator('.se-component-content [contenteditable="true"], .se-content [contenteditable="true"], [contenteditable="true"]').first().click({ timeout: 8000 })
+  await page.locator(BODY_SEL).first().click({ timeout: 8000 }).catch(() => {
+    throw new Error('본문 입력칸을 찾지 못했어요(네이버 화면 변경). self-check.bat 으로 확인해 주세요.')
+  })
   const lines = String(job.body || '').replace(/\r\n/g, '\n').split('\n')
   for (let i = 0; i < lines.length; i++) {
     if (lines[i]) await humanType(page, lines[i])
@@ -151,7 +213,9 @@ async function publishPost(job) {
   await sleep(500)
 
   // 등록
-  await page.locator('a:has-text("등록"), button:has-text("등록")').first().click({ timeout: 8000 })
+  await page.locator(SUBMIT_SEL).first().click({ timeout: 8000 }).catch(() => {
+    throw new Error('등록 버튼을 찾지 못했어요(네이버 화면 변경). self-check.bat 으로 확인해 주세요.')
+  })
   await page.waitForURL((u) => /articles\/\d+|articleid=\d+|ArticleRead/i.test(String(u)), { timeout: 20000 })
   return page.url()
 }
@@ -252,16 +316,126 @@ async function trackReactions() {
   }
 }
 
-log('네이버 카페 발행 에이전트 v3 시작')
-log(`  서버: ${SERVER}`)
-log(`  인증 토큰: ${TOKEN ? '설정됨' : '(없음 — 서버가 NC_AGENT_TOKEN 미설정 시에만 동작)'}`)
-log(`  프로필: ${PROFILE_DIR}`)
-log(`  브라우저: ${WHALE || '(웨일 못 찾음 — 발행 시 오류로 안내)'}`)
-log(`  승인된 글을 ${POLL / 1000}초 간격으로 확인합니다(페이스 규칙은 서버가 판정). 이 창을 닫으면 멈춥니다.`)
-await heartbeat()
-setInterval(heartbeat, 30_000)
-for (;;) {
-  try { await publishTick() } catch (e) { log('루프 오류:', String((e && e.message) || e).slice(0, 200)) }
-  try { await trackReactions() } catch (e) { log('추적 오류:', String((e && e.message) || e).slice(0, 200)) }
-  await sleep(POLL)
+// ── 최초 1회: 네이버 로그인 세션 만들기 ──
+async function loginSetup() {
+  log('로그인 설정을 시작합니다. 열리는 웨일 창에서 네이버에 로그인해 주세요.')
+  log(`  프로필 저장 위치: ${PROFILE_DIR}`)
+  const page = await getPage({ createProfile: true })
+  await page.goto('https://nid.naver.com/nidlogin.login?url=https%3A%2F%2Fcafe.naver.com', { waitUntil: 'domcontentloaded', timeout: 30000 })
+  log('')
+  log('  ⏳ 창에서 직접 로그인해 주세요(아이디/비밀번호는 이 프로그램이 절대 만지지 않습니다).')
+  log('     로그인이 끝나면 자동으로 감지합니다. 최대 5분 기다립니다.')
+  const deadline = Date.now() + 5 * 60 * 1000
+  while (Date.now() < deadline) {
+    await sleep(3000)
+    let url = ''
+    try { url = page.url() } catch { log('  창이 닫혔습니다. 다시 실행해 주세요.'); return false }
+    if (!url.includes('nid.naver.com')) {
+      await sleep(2000)
+      if (await isLoggedIn(page)) {
+        log('')
+        log('  ✅ 로그인 완료! 세션이 저장됐습니다. 이제 publish-agent.bat 으로 발행을 돌릴 수 있어요.')
+        log('     (이 창은 닫으셔도 됩니다)')
+        return true
+      }
+    }
+  }
+  log('  ⏱ 5분 안에 로그인이 확인되지 않았습니다. 다시 실행해 주세요.')
+  return false
+}
+
+// ── 자가검사: 실제 등록은 절대 하지 않고, 발행에 필요한 조건만 하나씩 확인 ──
+async function selfCheck() {
+  const rows = []
+  const mark = (name, ok, detail = '') => { rows.push({ name, ok, detail }); log(`  ${ok ? '✅' : '❌'} ${name}${detail ? ` — ${detail}` : ''}`) }
+
+  log('── 1. 서버 연결 ──')
+  let targets = []
+  try {
+    const j = await http('/api/naver-cafe/agent/targets', 'GET')
+    targets = Array.isArray(j?.cafes) ? j.cafes : []
+    mark('서버 연결 + 인증', true, `발행처 ${targets.length}곳`)
+  } catch (e) {
+    mark('서버 연결 + 인증', false, String((e && e.message) || e).slice(0, 120))
+    log('\n서버에 연결할 수 없어 검사를 중단합니다.')
+    return rows
+  }
+
+  log('\n── 2. 브라우저 / 로그인 ──')
+  if (!WHALE) { mark('웨일 브라우저', false, 'whale.exe 를 찾지 못했어요'); return rows }
+  mark('웨일 브라우저', true, WHALE)
+  if (!existsSync(PROFILE_DIR)) {
+    mark('네이버 로그인 세션', false, 'login-setup.bat 을 먼저 실행해 주세요')
+    return rows
+  }
+  const page = await getPage()
+  const logged = await isLoggedIn(page)
+  mark('네이버 로그인 세션', logged, logged ? '' : '세션이 만료됐어요 → login-setup.bat 다시 실행')
+  if (!logged) return rows
+
+  log('\n── 3. 발행처별 글쓰기 화면 ──')
+  for (const c of targets) {
+    const label = c.name || c.id
+    const m = String(c.cafe_url || '').match(/cafe\.naver\.com\/(?:f-e\/|ca-fe\/)?cafes\/(\d+)(?:\/menus\/(\d+))?/i)
+    const clubId = c.club_id || m?.[1] || null
+    const menuId = c.board_id || m?.[2] || null
+    if (!clubId) { mark(`[${label}] 카페 주소`, false, `club_id 도 cafe_url 도 없음 (${c.cafe_url || '주소 없음'})`); continue }
+
+    try {
+      await page.goto(`https://cafe.naver.com/ca-fe/cafes/${clubId}/articles/write?boardType=L${menuId ? `&menuId=${menuId}` : ''}`, { waitUntil: 'domcontentloaded', timeout: 30000 })
+      await sleep(3000)
+      if (page.url().includes('nid.naver.com')) { mark(`[${label}] 글쓰기 화면`, false, '로그인 요구됨'); continue }
+      try { const btn = page.locator('button:has-text("취소")').first(); if (await btn.isVisible({ timeout: 1200 })) await btn.click() } catch {}
+
+      const titleOk = await page.locator(TITLE_SEL).first().isVisible({ timeout: 6000 }).catch(() => false)
+      const bodyOk = await page.locator(BODY_SEL).first().isVisible({ timeout: 6000 }).catch(() => false)
+      const submitOk = await page.locator(SUBMIT_SEL).first().isVisible({ timeout: 6000 }).catch(() => false)
+      const shot = join(LOGS, `check-${String(label).replace(/[^\w가-힣]/g, '_')}.png`)
+      try { await page.screenshot({ path: shot }) } catch {}
+      const parts = [`제목 ${titleOk ? 'OK' : '실패'}`, `본문 ${bodyOk ? 'OK' : '실패'}`, `등록버튼 ${submitOk ? 'OK' : '실패'}`]
+      mark(`[${label}] 글쓰기 화면`, titleOk && bodyOk && submitOk, `${parts.join(' · ')} → ${shot}`)
+    } catch (e) {
+      mark(`[${label}] 글쓰기 화면`, false, String((e && e.message) || e).slice(0, 100))
+    }
+    await sleep(1200)
+  }
+  return rows
+}
+
+// ── 진입점 ──
+// process.exit() 을 바로 부르면 열려 있던 브라우저/소켓 핸들 때문에 윈도우에서 libuv 어설션이 뜬다.
+// 핸들을 정리하고 exitCode 만 세팅해 자연 종료시킨다.
+async function finish(code) {
+  try { await context?.close() } catch {}
+  process.exitCode = code
+}
+
+if (MODE === 'login') {
+  const ok = await loginSetup()
+  await finish(ok ? 0 : 1)
+} else if (MODE === 'check') {
+  log('네이버 카페 자동화 자가검사 — 글은 절대 등록하지 않습니다.')
+  log(`  서버: ${SERVER}`)
+  log(`  프로필: ${PROFILE_DIR}\n`)
+  let rows = []
+  try { rows = await selfCheck() } catch (e) { log('검사 오류:', String((e && e.message) || e).slice(0, 200)) }
+  const bad = rows.filter((r) => !r.ok)
+  log(`\n── 결과: ${rows.length - bad.length}/${rows.length} 통과 ──`)
+  if (bad.length) { log('해결이 필요한 항목:'); for (const b of bad) log(`  ❌ ${b.name} — ${b.detail}`) }
+  else log('  🎉 발행에 필요한 조건이 모두 준비됐습니다. 웹에서 글을 승인하면 발행됩니다.')
+  await finish(bad.length ? 1 : 0)
+} else {
+  log('네이버 카페 발행 에이전트 v3 시작')
+  log(`  서버: ${SERVER}`)
+  log(`  인증 토큰: ${TOKEN ? '설정됨' : '(없음 — 서버가 NC_AGENT_TOKEN 미설정 시에만 동작)'}`)
+  log(`  프로필: ${PROFILE_DIR}${existsSync(PROFILE_DIR) ? '' : '  ⚠️ 아직 로그인 안 됨 → login-setup.bat 먼저 실행'}`)
+  log(`  브라우저: ${WHALE || '(웨일 못 찾음 — 발행 시 오류로 안내)'}`)
+  log(`  승인된 글을 ${POLL / 1000}초 간격으로 확인합니다(페이스 규칙은 서버가 판정). 이 창을 닫으면 멈춥니다.`)
+  await heartbeat()
+  setInterval(heartbeat, 30_000)
+  for (;;) {
+    try { await publishTick() } catch (e) { log('루프 오류:', String((e && e.message) || e).slice(0, 200)) }
+    try { await trackReactions() } catch (e) { log('추적 오류:', String((e && e.message) || e).slice(0, 200)) }
+    await sleep(POLL)
+  }
 }
