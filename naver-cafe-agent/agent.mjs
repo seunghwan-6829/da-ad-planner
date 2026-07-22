@@ -210,13 +210,18 @@ const BODY_SEL = [
   'div[contenteditable="true"]',
   '[contenteditable="true"]',
 ].join(', ')
+/* ⚠️ 등록 버튼은 "정확히 등록"인 것만 잡아야 한다.
+   네이버 카페 에디터에는 [임시등록]과 [등록]이 나란히 있는데,
+   has-text("등록")는 부분 일치라 **임시등록에도 걸린다**. 그걸 누르면 글이 올라가지 않고
+   임시저장만 되어, 겉보기엔 "버튼이 안 눌린" 것처럼 보인다.
+   그래서 :text-is()(완전 일치)를 쓰고, 혹시 모를 경우를 위해 임시등록을 명시적으로 제외한다. */
 const SUBMIT_SEL = [
-  'a.BaseButton--skinGreen',
-  'button.BaseButton--skinGreen',
-  '[class*="write_footer"] a:has-text("등록")',
-  '[class*="WriteFooter"] button:has-text("등록")',
-  'a:has-text("등록")',
-  'button:has-text("등록")',
+  'a.BaseButton--skinGreen:not(:has-text("임시"))',
+  'button.BaseButton--skinGreen:not(:has-text("임시"))',
+  'a:text-is("등록")',
+  'button:text-is("등록")',
+  '[class*="write_footer"] a:text-is("등록")',
+  '[class*="WriteFooter"] button:text-is("등록")',
 ].join(', ')
 
 // 로그인 세션 만료 감지
@@ -284,8 +289,40 @@ async function publishPost(job) {
   }
   await sleep(500)
 
-  /* 발행 전 미리보기(안전장치).
-     서버가 require_preview 를 켜서 보내면, 여기서 등록을 누르지 않고 화면을 캡처해 올린 뒤
+  /* ── 등록 직전 내부 검수 ──
+     검수 대기에서 사람이 이미 승인한 글이므로, 여기서 또 확인을 받지는 않는다.
+     대신 "제대로 입력됐는지"만 기계가 확인하고, 이상하면 등록하지 않고 실패로 보고한다.
+     사람처럼 한 글자씩 치는 방식이라 중간에 씹히는 일이 실제로 생길 수 있는데,
+     그 상태로 올라가는 것이 가장 나쁘다. */
+  {
+    let tTitle = ''
+    let tBody = ''
+    try { tTitle = await page.locator(TITLE_SEL).first().inputValue({ timeout: 3000 }) } catch {
+      try { tTitle = (await page.locator(TITLE_SEL).first().innerText({ timeout: 2000 })).trim() } catch {}
+    }
+    try { tBody = (await page.locator(BODY_SEL).first().innerText({ timeout: 3000 })).trim() } catch {}
+
+    const squash = (s) => String(s || '').replace(/\s+/g, '')
+    const wantT = squash(job.title)
+    const gotT = squash(tTitle)
+    const wantB = squash(job.body)
+    const gotB = squash(tBody)
+
+    const problems = []
+    if (wantT && !gotT) problems.push('제목이 비어 있음')
+    else if (wantT && gotT !== wantT) problems.push(`제목이 원문과 다름(원문 ${wantT.length}자 / 입력 ${gotT.length}자)`)
+    if (wantB && !gotB) problems.push('본문이 비어 있음')
+    else if (wantB && gotB.length < wantB.length * 0.95) problems.push(`본문이 덜 입력됨(원문 ${wantB.length}자 / 입력 ${gotB.length}자)`)
+
+    if (problems.length) {
+      try { await page.screenshot({ path: join(LOGS, `${job.id}-check.png`), fullPage: true }) } catch {}
+      throw new Error(`입력 검수 실패로 등록하지 않았습니다 — ${problems.join(', ')}. logs/${job.id}-check.png 확인`)
+    }
+    log(`  ✓ 입력 검수 통과(제목 ${gotT.length}자 · 본문 ${gotB.length}자) — 등록합니다`)
+  }
+
+  /* 발행 전 미리보기(옵션).
+     기본은 꺼져 있다. 켜 두면 등록을 누르지 않고 화면을 캡처해 올린 뒤
      사람이 웹에서 '이대로 등록'을 누를 때까지 기다린다. 취소하면 아무것도 올리지 않는다. */
   if (job.require_preview) {
     log('  등록 직전 캡처를 올리고 확인을 기다립니다…')
@@ -331,11 +368,26 @@ async function publishPost(job) {
     log('  ✅ 확인됨 — 등록합니다.')
   }
 
-  // 등록
-  await page.locator(SUBMIT_SEL).first().click({ timeout: 8000 }).catch(() => {
+  // 등록 — 어떤 버튼을 눌렀는지 로그에 남긴다(임시등록을 잘못 누르는 사고를 바로 알아채기 위해).
+  const submit = page.locator(SUBMIT_SEL).first()
+  let btnText = ''
+  try { btnText = (await submit.innerText({ timeout: 3000 })).trim().replace(/\s+/g, ' ') } catch {}
+  if (btnText && /임시/.test(btnText)) {
+    throw new Error(`등록 버튼 대신 "${btnText}"이(가) 잡혔어요. 셀렉터 조정이 필요합니다(self-check.bat 확인).`)
+  }
+  await submit.click({ timeout: 8000 }).catch(() => {
     throw new Error('등록 버튼을 찾지 못했어요(네이버 화면 변경). self-check.bat 으로 확인해 주세요.')
   })
-  await page.waitForURL((u) => /articles\/\d+|articleid=\d+|ArticleRead/i.test(String(u)), { timeout: 20000 })
+  log(`  [${btnText || '등록'}] 클릭 — 게시 확인 중…`)
+
+  try {
+    await page.waitForURL((u) => /articles\/\d+|articleid=\d+|ArticleRead/i.test(String(u)), { timeout: 20000 })
+  } catch {
+    /* 눌렀는데 글 화면으로 안 넘어갔다 = 실제로는 안 올라간 것.
+       여기서 성공으로 보고하면 '올라갔다고 하는데 카페엔 없는' 최악의 상태가 된다. */
+    try { await page.screenshot({ path: join(LOGS, `${job.id}-submit.png`), fullPage: true }) } catch {}
+    throw new Error(`등록을 눌렀지만 글 화면으로 넘어가지 않았어요(현재 주소: ${page.url().slice(0, 80)}). 필수 항목 미입력이나 카페 규칙 때문일 수 있어요. logs/${job.id}-submit.png 확인`)
+  }
   return page.url()
 }
 
@@ -528,10 +580,18 @@ async function selfCheck() {
       const titleOk = await page.locator(TITLE_SEL).first().isVisible({ timeout: 6000 }).catch(() => false)
       const bodyOk = await page.locator(BODY_SEL).first().isVisible({ timeout: 6000 }).catch(() => false)
       const submitOk = await page.locator(SUBMIT_SEL).first().isVisible({ timeout: 6000 }).catch(() => false)
+      // 어떤 버튼이 잡혔는지까지 확인한다 — '임시등록'이 잡히면 글이 안 올라가고 임시저장만 된다.
+      let btnText = ''
+      if (submitOk) { try { btnText = (await page.locator(SUBMIT_SEL).first().innerText({ timeout: 2500 })).trim().replace(/\s+/g, ' ') } catch {} }
+      const btnWrong = !!btnText && /임시/.test(btnText)
       const shot = join(LOGS, `check-${String(label).replace(/[^\w가-힣]/g, '_')}.png`)
-      try { await page.screenshot({ path: shot }) } catch {}
-      const parts = [`제목 ${titleOk ? 'OK' : '실패'}`, `본문 ${bodyOk ? 'OK' : '실패'}`, `등록버튼 ${submitOk ? 'OK' : '실패'}`]
-      mark(`[${label}] 글쓰기 화면`, titleOk && bodyOk && submitOk, `${parts.join(' · ')} → ${shot}`)
+      try { await page.screenshot({ path: shot, fullPage: true }) } catch {}
+      const parts = [
+        `제목 ${titleOk ? 'OK' : '실패'}`,
+        `본문 ${bodyOk ? 'OK' : '실패'}`,
+        `등록버튼 ${submitOk ? (btnWrong ? `⚠ "${btnText}" 가 잡힘` : `OK${btnText ? `("${btnText}")` : ''}`) : '실패'}`,
+      ]
+      mark(`[${label}] 글쓰기 화면`, titleOk && bodyOk && submitOk && !btnWrong, `${parts.join(' · ')} → ${shot}`)
     } catch (e) {
       mark(`[${label}] 글쓰기 화면`, false, String((e && e.message) || e).slice(0, 100))
     }

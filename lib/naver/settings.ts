@@ -28,7 +28,10 @@ export interface NaverOptions {
 }
 
 export const DEFAULT_OPTIONS: NaverOptions = {
-  preview_before_publish: true, // 첫 발행 안전장치. 익숙해지면 화면에서 끌 수 있다.
+  /* 기본은 끔. 검수 대기에서 사람이 이미 승인한 글이라 등록 직전에 또 확인받는 건 과하다.
+     대신 에이전트가 "입력이 온전한지"를 기계적으로 검수하고, 이상하면 등록하지 않고 실패로 보고한다.
+     켜면 예전처럼 캡처를 올리고 사람 확인을 기다린다. */
+  preview_before_publish: false,
   halt_after_failures: 2,
   dup_window_days: 14,
   dup_similarity: 0.6,
