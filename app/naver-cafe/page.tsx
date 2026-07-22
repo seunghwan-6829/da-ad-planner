@@ -424,7 +424,8 @@ export default function NaverCafePage() {
     if (cafe) setCafeForm({
       brand_id: cafe.brand_id ?? null, cafe_url: cafe.cafe_url, tone: cafe.tone, selling_point: cafe.selling_point || "",
       topics: cafe.topics, notes: cafe.notes, publish_slot: cafe.publish_slot, daily_drafts: cafe.daily_drafts ?? 3,
-      club_id: cafe.club_id || "", board_id: cafe.board_id || "", require_prefix: !!cafe.require_prefix, prefix: cafe.prefix || "",
+      club_id: cafe.club_id || "", board_id: cafe.board_id || "", board_name: cafe.board_name || "",
+      require_prefix: !!cafe.require_prefix, prefix: cafe.prefix || "",
       emphasis: cafe.emphasis || [], allow_post: cafe.allow_post !== false, allow_comment: cafe.allow_comment !== false,
       auto_mode: !!cafe.auto_mode, interval_days: cafe.interval_days ?? 3, auto_publish: !!cafe.auto_publish,
     });
@@ -1299,6 +1300,17 @@ export default function NaverCafePage() {
                 <div>
                   <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">게시판 board_id(선택)</label>
                   <input value={(cafeForm.board_id as string) || ""} onChange={(e) => setCafeForm({ ...cafeForm, board_id: e.target.value })} placeholder="메뉴 ID" className={inputCls} />
+                </div>
+                <div>
+                  {/* 게시판 이름 — 발행 시 글쓰기 화면에서 이 이름으로 게시판을 고른다.
+                      ID 만으로는 못 고르는 경우가 있어(실측), 이름을 넣어두면 확실하다. */}
+                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">게시판 이름 <span className="text-primary">(권장)</span></label>
+                  <input
+                    value={(cafeForm.board_name as string) || ""}
+                    onChange={(e) => setCafeForm({ ...cafeForm, board_name: e.target.value })}
+                    placeholder="예: 자유게시판 — 카페 글쓰기 화면에 뜨는 그대로"
+                    className={inputCls}
+                  />
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">활동 컨셉</label>
