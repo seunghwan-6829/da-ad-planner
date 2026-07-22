@@ -84,10 +84,30 @@ export async function PATCH(req: Request) {
       patch.error = null // 재승인 시 이전 오류/실패 제거
       patch.fail_count = 0
     }
+    // 대기 취소(초안 복귀) 시 '지금 발행' 예약도 함께 푼다 — 취소했는데 바로 나가면 안 되니까.
+    if (b.status === 'draft' || b.status === 'saved' || b.status === 'rejected') patch.force_publish = false
   }
+  /* 지금 바로 발행 — 페이스 게이트(활동시간·간격·상한)를 이 글 하나에 한해 건너뛴다.
+     not_before 도 같이 풀어 예약 대기 상태를 해제한다. 승인 상태가 아니면 의미가 없으므로 함께 승인한다. */
+  if (typeof b.force_publish === 'boolean') {
+    patch.force_publish = b.force_publish
+    if (b.force_publish) {
+      patch.not_before = null
+      patch.status = 'approved'
+      patch.approved_at = new Date().toISOString()
+      patch.error = null
+      patch.fail_count = 0
+    }
+  }
+
   let res = await supabaseAdmin.from('nc_posts').update(patch).eq('id', id)
-  if (res.error && /approved_at|fail_count/.test(res.error.message)) {
-    delete patch.approved_at; delete patch.fail_count
+  // force_publish 컬럼 미존재(마이그레이션 전) 폴백
+  if (res.error && /force_publish/.test(res.error.message)) {
+    delete patch.force_publish
+    res = await supabaseAdmin.from('nc_posts').update(patch).eq('id', id)
+  }
+  if (res.error && /approved_at|fail_count|not_before/.test(res.error.message)) {
+    delete patch.approved_at; delete patch.fail_count; delete patch.not_before
     res = await supabaseAdmin.from('nc_posts').update(patch).eq('id', id)
   }
   if (res.error) return NextResponse.json({ error: res.error.message }, { status: 500 })

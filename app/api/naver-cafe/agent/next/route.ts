@@ -40,11 +40,13 @@ export async function GET(req: Request) {
     .in('status', ['approved', 'queued']) // queued = v2 호환(승인과 동일 취급)
     .order('created_at', { ascending: true })
     .limit(50)
-  let item = (cands || []).find((r) => {
+  const ready = (cands || []).filter((r) => {
     const nb = (r as { not_before?: string | null }).not_before
     const ms = nb ? Date.parse(nb) : NaN
     return Number.isNaN(ms) || ms <= nowMs
   })
+  // '지금 바로 발행'으로 찍힌 글이 있으면 그것부터. (페이스 게이트도 이 건만 건너뛴다)
+  let item = ready.find((r) => (r as { force_publish?: boolean }).force_publish === true) || ready[0]
 
   let simulated = false
   if (!item && dry) {
@@ -94,9 +96,12 @@ export async function GET(req: Request) {
   }
   note('발행 허용', true, kind === 'post' ? '글 발행 켜짐' : '댓글 켜짐')
 
-  const gate = await canAct(kind, item.cafe_id, pacing, nowMs)
+  /* 페이스 게이트. '지금 바로 발행'(force_publish)로 찍힌 글은 이 게이트를 건너뛴다.
+     ⚠️ 계정 보호 장치를 일부러 우회하는 것이라, 화면에서 경고하고 발행 후 자동으로 해제한다. */
+  const forced = (item as { force_publish?: boolean }).force_publish === true
+  const gate = forced ? { ok: true, reason: '' } : await canAct(kind, item.cafe_id, pacing, nowMs)
   // 점검 모드에서는 게이트가 닫혀 있어도 멈추지 않고, 왜 닫혔는지 알려준 뒤 나머지도 계속 본다.
-  if (dry) note('페이스 게이트(계정 밴 방지)', gate.ok, gate.ok ? '지금 발행 가능한 시간대·한도입니다' : String(gate.reason || ''))
+  if (dry) note('페이스 게이트(계정 밴 방지)', gate.ok, forced ? '지금 바로 발행 지정 — 페이스 규칙을 건너뜁니다' : gate.ok ? '지금 발행 가능한 시간대·한도입니다' : String(gate.reason || ''))
   else if (!gate.ok) return NextResponse.json({ none: true, reason: gate.reason })
 
   // 3) 말머리 검증(post)
@@ -114,13 +119,14 @@ export async function GET(req: Request) {
   // 4) 낙관적 잠금: approved/queued → publishing. 경합(0행)이면 none.
   //    ⚠️ 점검 모드는 여기부터 전부 건너뛴다 — 잠금·간격예약 같은 상태 변경을 하지 않는다.
   if (!dry) {
-    const { data: locked } = await supabaseAdmin
-      .from('nc_posts')
-      .update({ status: 'publishing', updated_at: nowISO })
-      .eq('id', item.id)
-      .in('status', ['approved', 'queued'])
-      .select('id')
-    if (!locked?.length) return NextResponse.json({ none: true, reason: '다른 작업이 선점됨' })
+    // 배정과 동시에 force_publish 를 내린다 — '지금 바로 발행'은 1회용이라 재시도까지 게이트를 뚫으면 안 된다.
+    const lockPatch: Record<string, unknown> = { status: 'publishing', updated_at: nowISO, force_publish: false }
+    let lockRes = await supabaseAdmin.from('nc_posts').update(lockPatch).eq('id', item.id).in('status', ['approved', 'queued']).select('id')
+    if (lockRes.error && /force_publish/.test(lockRes.error.message)) {
+      delete lockPatch.force_publish // 컬럼 미존재(마이그레이션 전) 폴백
+      lockRes = await supabaseAdmin.from('nc_posts').update(lockPatch).eq('id', item.id).in('status', ['approved', 'queued']).select('id')
+    }
+    if (!lockRes.data?.length) return NextResponse.json({ none: true, reason: '다른 작업이 선점됨' })
 
     // 배정 즉시 다음 동작 간격 예약(페이스 예약) — 발행 실패/동시 폴링에도 상한·간격이 유지되게.
     await scheduleNext(pacing)

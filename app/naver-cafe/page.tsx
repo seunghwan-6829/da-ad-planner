@@ -87,6 +87,9 @@ type Post = {
   error: string | null;
   note?: string | null;
   fail_count?: number | null;
+  approved_at?: string | null;
+  not_before?: string | null;
+  force_publish?: boolean | null; // 지금 바로 발행(페이스 규칙 1회 건너뛰기)
   track_due_at: string | null;
   tracked_at: string | null;
   views: number | null;
@@ -429,6 +432,16 @@ export default function NaverCafePage() {
     try { await api("/api/naver-cafe/posts", "PATCH", { id: p.id, status }); loadAll(); }
     catch (e) { alert(e instanceof Error ? e.message : "처리 실패"); }
   }
+  /* 지금 바로 발행 — 페이스 규칙(활동시간·간격·상한)을 이 글 하나만 건너뛴다.
+     계정 보호 장치를 일부러 우회하는 것이라 반드시 한 번 확인받는다. */
+  async function publishNow(p: Post) {
+    if (!agentOnline && !confirm("발행 에이전트가 꺼져 있어요.\n지금 지정해두면 publish-agent.bat 을 켜는 즉시 올라갑니다.\n계속할까요?")) return;
+    if (!confirm(`"${p.title}"\n\n페이스 규칙(활동시간·발행 간격·일일 상한)을 건너뛰고 바로 올립니다.\n자주 쓰면 계정 제재 위험이 올라가니 테스트나 급할 때만 써주세요.\n\n진행할까요?`)) return;
+    try {
+      await api("/api/naver-cafe/posts", "PATCH", { id: p.id, force_publish: true });
+      loadAll();
+    } catch (e) { alert(e instanceof Error ? e.message : "처리 실패"); }
+  }
   async function removePost(p: Post) {
     if (!confirm("이 글을 삭제할까요?")) return;
     await fetch(`/api/naver-cafe/posts?id=${p.id}`, { method: "DELETE" });
@@ -467,6 +480,11 @@ export default function NaverCafePage() {
     return s;
   }, [posts]);
   const reviewQueue = useMemo(() => posts.filter((p) => p.status === "draft").slice(0, 20), [posts]);
+  // 승인됐지만 아직 안 올라간 글 — 여기서 수정/취소/즉시발행을 한다.
+  const publishQueue = useMemo(
+    () => posts.filter((p) => p.status === "approved" || p.status === "queued" || p.status === "publishing"),
+    [posts]
+  );
   const trackQueue = useMemo(() => posts.filter((p) => p.published_url && !p.tracked_at && p.track_due_at && new Date(p.track_due_at) <= new Date()), [posts]);
   const dash = useMemo(() => {
     const weekAgo = Date.now() - 7 * 86400_000;
@@ -637,6 +655,54 @@ export default function NaverCafePage() {
               ) : (
                 <div className="divide-y dark:divide-gray-800">
                   {reviewQueue.map((p) => <QueueRow key={p.id} p={p} showCafe onOpen={() => setPostModal(p)} onAction={(s) => patchStatus(p, s)} onDelete={() => removePost(p)} />)}
+                </div>
+              )}
+            </div>
+
+            {/* 발행 대기(승인) 보드 — 승인 후에도 수정·취소할 수 있고, 급하면 즉시 발행한다. */}
+            <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-sm font-bold dark:text-gray-100">
+                  발행 대기 ({publishQueue.length})
+                  <span className="ml-1 text-[11px] font-normal text-gray-400">— 올라가기 전이라 지금도 고치거나 취소할 수 있어요</span>
+                </h2>
+                {publishQueue.length > 0 && (
+                  <p className={`text-[11px] ${agentOnline ? "text-gray-400" : "font-semibold text-amber-600 dark:text-amber-300"}`}>
+                    {agentOnline ? "에이전트가 페이스 규칙에 맞춰 순서대로 올려요" : "⚠ 발행 에이전트 오프라인 — publish-agent.bat 을 켜야 올라갑니다"}
+                  </p>
+                )}
+              </div>
+              {publishQueue.length === 0 ? (
+                <p className="py-4 text-center text-xs text-gray-400">발행 대기 중인 글이 없어요. 검수 대기에서 승인하면 여기로 옵니다.</p>
+              ) : (
+                <div className="divide-y dark:divide-gray-800">
+                  {publishQueue.map((p) => (
+                    <div key={p.id} className="flex flex-wrap items-center gap-2 py-2">
+                      <button onClick={() => setPostModal(p)} className="min-w-0 flex-1 text-left">
+                        <p className="truncate text-sm font-medium dark:text-gray-200">
+                          {p.force_publish && <span className="mr-1 rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-700 dark:bg-rose-900/40 dark:text-rose-300">즉시</span>}
+                          {p.status === "publishing" && <span className="mr-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">발행 중</span>}
+                          {p.title}
+                        </p>
+                        <p className="truncate text-[11px] text-gray-400">
+                          {p.nc_cafes?.name} · 승인 {p.approved_at ? new Date(p.approved_at).toLocaleString("ko-KR") : "—"}
+                          {p.not_before && new Date(p.not_before) > new Date() ? ` · ${new Date(p.not_before).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })} 이후 발행 예정` : ""}
+                        </p>
+                      </button>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <button onClick={() => setPostModal(p)} title="내용 수정" className="rounded-lg border border-gray-200 px-2 py-1 text-[11px] font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">수정</button>
+                        {p.status !== "publishing" && (
+                          <>
+                            <button onClick={() => patchStatus(p, "draft")} title="발행 대기 취소(초안으로 되돌리기)" className="rounded-lg border border-gray-200 px-2 py-1 text-[11px] font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">대기 취소</button>
+                            <button onClick={() => publishNow(p)} title="페이스 규칙을 건너뛰고 지금 바로 올립니다" className="rounded-lg bg-rose-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-rose-700">지금 발행</button>
+                          </>
+                        )}
+                        {p.status === "publishing" && (
+                          <button onClick={() => patchStatus(p, "approved")} title="발행 중 상태로 멈춰 있으면 되돌리기" className="rounded-lg border border-gray-200 px-2 py-1 text-[11px] font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">되돌리기</button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
