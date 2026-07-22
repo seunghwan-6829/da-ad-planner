@@ -1,37 +1,43 @@
 @echo off
 chcp 65001 >nul
+title Deploy - da-ad-planner
+
+REM ASCII only. cmd.exe reads .bat with the OEM codepage (CP949 on Korean
+REM Windows), so UTF-8 Korean here becomes mojibake and can even break
+REM command parsing (broken bytes may contain & or |).
+
 echo ========================================
-echo   DA 광고 플래너 - 원클릭 배포
+echo   da-ad-planner - one click deploy
 echo ========================================
 echo.
 
 cd /d "%~dp0"
 
-echo [1/3] 변경 파일 추가 중...
+echo [1/3] git add ...
 git add .
 if errorlevel 1 (
-  echo 오류: git add 실패
+  echo ERROR: git add failed
   pause
   exit /b 1
 )
 
-echo [2/3] 커밋 중...
+echo [2/3] git commit ...
 git commit -m "Deploy: %date% %time%" --allow-empty
 if errorlevel 1 (
-  echo 커밋할 변경이 없거나 오류가 발생했습니다.
+  echo Nothing to commit, or commit failed. Continuing.
 )
 
-echo [3/3] GitHub에 push 중... (Vercel 자동 배포 트리거)
+echo [3/3] git push origin main ... (triggers Vercel deploy)
 git push origin main
 if errorlevel 1 (
   echo.
-  echo 오류: push 실패. 원격 저장소(origin)와 브랜치(main)를 확인하세요.
+  echo ERROR: push failed. Check remote "origin" and branch "main".
   pause
   exit /b 1
 )
 
 echo.
 echo ========================================
-echo   배포 요청 완료. Vercel에서 빌드가 진행됩니다.
+echo   Pushed. Vercel is building now.
 echo ========================================
 pause

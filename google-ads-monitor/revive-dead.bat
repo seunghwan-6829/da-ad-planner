@@ -2,11 +2,12 @@
 setlocal
 cd /d "%~dp0"
 chcp 65001 >nul
-echo ==========================================
-echo   재생불가(dead)로 잘못 표시된 광고 복구
-echo   유튜브에 한 건씩 확인해서 멀쩡한 것만 되살립니다.
-echo ==========================================
-echo.
+title Google Ads - Revive wrongly dead ads
+
+REM ASCII only. cmd.exe reads .bat with the OEM codepage (CP949 on Korean
+REM Windows), so UTF-8 Korean here becomes mojibake and can even break
+REM command parsing. Korean output is printed by revive-dead.mjs instead.
+
 node revive-dead.mjs
 echo.
 pause
