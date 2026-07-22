@@ -87,7 +87,7 @@ export async function GET(req: Request) {
       note('발행처 연결', false, '이 글에 연결된 카페 설정이 없습니다(실제 배정 시 반려됨)')
       return NextResponse.json({ dry: true, simulated, none: true, reason: '카페 설정 없음', checks })
     }
-    await supabaseAdmin.from('nc_posts').update({ status: 'rejected', note: '카페 설정 없음', updated_at: nowISO }).eq('id', item.id)
+    await supabaseAdmin.from('nc_posts').update({ status: 'rejected', note: '카페 설정 없음', updated_at: nowISO }).eq('id', item.id).in('status', ['approved', 'queued'])
     return NextResponse.json({ none: true, reason: '카페 설정 없음' })
   }
   note('발행처 연결', true, String(cafe.name || ''))
@@ -102,7 +102,7 @@ export async function GET(req: Request) {
       note('발행 허용', false, kind === 'post' ? '이 발행처는 글 발행이 꺼져 있습니다' : '이 발행처는 댓글이 꺼져 있습니다')
       return NextResponse.json({ dry: true, simulated, none: true, reason: '발행 미허용', checks })
     }
-    await supabaseAdmin.from('nc_posts').update({ status: 'rejected', note: kind === 'post' ? '글 발행 미허용' : '댓글 미허용', updated_at: nowISO }).eq('id', item.id)
+    await supabaseAdmin.from('nc_posts').update({ status: 'rejected', note: kind === 'post' ? '글 발행 미허용' : '댓글 미허용', updated_at: nowISO }).eq('id', item.id).in('status', ['approved', 'queued'])
     return NextResponse.json({ none: true, reason: '발행 미허용' })
   }
   note('발행 허용', true, kind === 'post' ? '글 발행 켜짐' : '댓글 켜짐')
@@ -122,7 +122,7 @@ export async function GET(req: Request) {
       note('말머리', false, '말머리가 필수인데 설정돼 있지 않습니다(실제 배정 시 반려됨)')
       return NextResponse.json({ dry: true, simulated, none: true, reason: '말머리 미설정', checks })
     }
-    await supabaseAdmin.from('nc_posts').update({ status: 'rejected', note: '말머리 미설정', updated_at: nowISO }).eq('id', item.id)
+    await supabaseAdmin.from('nc_posts').update({ status: 'rejected', note: '말머리 미설정', updated_at: nowISO }).eq('id', item.id).in('status', ['approved', 'queued'])
     return NextResponse.json({ none: true, reason: '말머리 미설정' })
   }
   if (dry) note('말머리', true, cafe.require_prefix ? `필수 · "${cafe.prefix}"` : '필요 없음')
@@ -138,11 +138,14 @@ export async function GET(req: Request) {
         note('중복 검사', false, `${detail} — 실제 배정 시 보류됩니다`)
         return NextResponse.json({ dry: true, simulated, none: true, reason: '비슷한 글이 최근에 발행됨', checks })
       }
-      // 지우지 않고 초안으로 되돌려 사람이 판단하게 한다(자동 반려는 과하다).
+      /* 지우지 않고 초안으로 되돌려 사람이 판단하게 한다(자동 반려는 과하다).
+         ⚠️ 상태 조건을 붙여, 그 사이 다른 폴링이 이미 publishing 으로 잠근 글을 되돌리지 않게 한다.
+         force_publish 도 함께 내린다 — 보류된 글이 나중에 재승인될 때 페이스 우회를 물고 가면 안 된다. */
       await supabaseAdmin
         .from('nc_posts')
-        .update({ status: 'draft', note: `중복 보류 — ${detail}`, updated_at: nowISO })
+        .update({ status: 'draft', force_publish: false, note: `중복 보류 — ${detail}`, updated_at: nowISO })
         .eq('id', item.id)
+        .in('status', ['approved', 'queued'])
       return NextResponse.json({ none: true, reason: `중복 보류 — ${detail}` })
     }
     if (dry) note('중복 검사', true, `최근 ${options.dup_window_days}일 내 비슷한 글 없음`)

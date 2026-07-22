@@ -77,7 +77,9 @@ function normalizePacing(raw: Partial<NaverPacing> | null | undefined): NaverPac
 
 function normalizeOptions(raw: Partial<NaverOptions> | null | undefined): NaverOptions {
   const o = { ...DEFAULT_OPTIONS, ...(raw || {}) }
-  o.preview_before_publish = o.preview_before_publish !== false
+  // 기본이 false 이므로 "명시적으로 true 일 때만" 켠다.
+  // (!== false 로 두면 저장된 값이 null/undefined 일 때 켜져 버려, 아무도 기다리지 않는 확인 대기에 빠진다)
+  o.preview_before_publish = o.preview_before_publish === true
   for (const k of ['halt_after_failures', 'dup_window_days', 'dup_similarity'] as const) {
     const v = Number((o as Record<string, unknown>)[k])
     ;(o as Record<string, unknown>)[k] = Number.isFinite(v) ? v : DEFAULT_OPTIONS[k]

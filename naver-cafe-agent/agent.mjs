@@ -204,35 +204,48 @@ async function humanType(page, text) {
 /* 네이버 카페 글쓰기 화면 요소 — 발행과 자가검사가 "같은 셀렉터"를 쓰도록 한곳에서 관리한다.
    (예전엔 검사 수단이 없어서, 셀렉터가 깨졌는지는 실제 발행이 실패해야만 알 수 있었다.)
    네이버가 화면을 바꾸면 여기만 고치면 되고, self-check.bat 으로 즉시 확인할 수 있다. */
+/* ⚠️ 셀렉터는 "배열"로 두고 하나씩 순서대로 시도한다.
+   쉼표로 이어 붙여 locator(...).first() 를 쓰면 우선순위가 무시되고 **문서 순서**로 잡힌다.
+   그래서 의도한 요소가 아니라 페이지 앞쪽의 엉뚱한 요소가 선택되는 사고가 난다. */
 const TITLE_SEL = [
   'textarea[placeholder*="제목"]',
   'input[placeholder*="제목"]',
-  '.textarea_input',
   'textarea.textarea_input',
+  '.textarea_input',
   '[class*="Subject"] textarea',
   '[class*="subject"] textarea',
-].join(', ')
+]
 const BODY_SEL = [
-  '.se-component-content [contenteditable="true"]',
   '.se-content [contenteditable="true"]',
-  '.se-text-paragraph',
-  '[class*="Editor"] [contenteditable="true"]',
+  '.se-component-content [contenteditable="true"]',
+  '.se-main-container [contenteditable="true"]',
   'div[contenteditable="true"]',
-  '[contenteditable="true"]',
-].join(', ')
+]
+
+/** 후보를 순서대로 시도해 처음 "보이는" 것을 돌려준다. 못 찾으면 null. */
+async function firstVisible(scope, selectors, timeout = 4000) {
+  for (const sel of selectors) {
+    const loc = scope.locator(sel).first()
+    if (await loc.isVisible({ timeout }).catch(() => false)) return loc
+  }
+  return null
+}
 /* ⚠️ 등록 버튼은 "정확히 등록"인 것만 잡아야 한다.
    네이버 카페 에디터에는 [임시등록]과 [등록]이 나란히 있는데,
    has-text("등록")는 부분 일치라 **임시등록에도 걸린다**. 그걸 누르면 글이 올라가지 않고
    임시저장만 되어, 겉보기엔 "버튼이 안 눌린" 것처럼 보인다.
    그래서 :text-is()(완전 일치)를 쓰고, 혹시 모를 경우를 위해 임시등록을 명시적으로 제외한다. */
+/* 등록 버튼. "정확히 등록"인 것만 잡는다 —
+   has-text 는 부분 일치라 [임시등록]에도 걸리고, 그걸 누르면 임시저장만 되어
+   겉보기엔 "버튼이 안 눌린" 것처럼 보인다(실측한 실패 원인). */
 const SUBMIT_SEL = [
-  'a.BaseButton--skinGreen:not(:has-text("임시"))',
-  'button.BaseButton--skinGreen:not(:has-text("임시"))',
   'a:text-is("등록")',
   'button:text-is("등록")',
   '[class*="write_footer"] a:text-is("등록")',
   '[class*="WriteFooter"] button:text-is("등록")',
-].join(', ')
+  'a.BaseButton--skinGreen:not(:has-text("임시"))',
+  'button.BaseButton--skinGreen:not(:has-text("임시"))',
+]
 
 /* 에디터에 실제로 들어간 본문을 읽는다.
    ⚠️ SE 에디터는 문단마다 별도의 contenteditable 로 쪼개진다. 그래서 셀렉터에 .first() 를 쓰면
@@ -247,8 +260,10 @@ async function readEditorBody(page) {
           const t = ((el && el.innerText) || '').trim()
           if (t.length > best.length) best = t
         }
-        // 문단이 쪼개져 있어도 컨테이너 단위로 읽으면 전체가 잡힌다.
-        for (const sel of ['.se-content', '.se-viewer', '[class*="se-content"]', '[class*="Editor"]']) {
+        /* 문단이 쪼개져 있어도 컨테이너 단위로 읽으면 전체가 잡힌다.
+           ⚠️ [class*="Editor"] 같은 큰 래퍼는 넣지 않는다 — 제목·툴바·플레이스홀더까지 섞여
+              본문 길이가 부풀고, 그러면 검수가 통과해도 의미가 없어진다. */
+        for (const sel of ['.se-content', '.se-main-container', '[class*="se-content"]']) {
           document.querySelectorAll(sel).forEach(take)
         }
         document.querySelectorAll('[contenteditable="true"]').forEach(take)
@@ -268,50 +283,132 @@ async function readEditorBody(page) {
    ⚠️ 글쓰기 URL 에 menuId 를 넣어도 게시판이 자동 선택되지 않는 경우가 있다(실측).
       그 상태로는 [등록]이 비활성이라 눌러도 아무 일이 없다 — "버튼이 안 눌린다"의 진짜 원인.
    그래서 화면에서 직접 골라주고, 실제로 선택됐는지 확인까지 한다. */
-async function ensureBoardSelected(page, menuId, boardName) {
-  const label = () =>
-    page
-      .locator('[class*="Select"], [class*="select"], select')
-      .filter({ hasText: /게시판|선택/ })
-      .first()
-      .innerText({ timeout: 2000 })
-      .catch(() => '')
+/** 임시저장 복원 팝업 닫기. 모달 안으로 한정한다 — 페이지 전체에서 "취소"를 찾으면 엉뚱한 버튼을 누른다. */
+async function dismissRestoreDialog(page) {
+  const dialog = page.locator('[role="dialog"], [class*="Modal"], [class*="layer_popup"]').first()
+  if (!(await dialog.isVisible({ timeout: 1500 }).catch(() => false))) return
+  const btn = await firstVisible(dialog, ['button:text-is("취소")', 'a:text-is("취소")', 'button:has-text("새로 작성")'], 1200)
+  if (btn) { try { await btn.click({ timeout: 2000 }); await sleep(400) } catch {} }
+}
 
-  const unselected = async () => /선택해\s*주세요|게시판을\s*선택/.test(await label())
-  if (!(await unselected())) return true // 이미 선택돼 있음
+/**
+ * 방금 올린 글을 게시판 목록에서 찾아 URL 을 돌려준다(없으면 null).
+ * 등록 후 리다이렉트가 늦거나 목록으로 돌아가는 카페에서 "실패로 오판 → 재발행 → 중복"을 막는 장치다.
+ */
+async function findPostedArticle(page, clubId, menuId, title) {
+  const needle = String(title || '').replace(/\s+/g, '').slice(0, 20)
+  if (!needle) return null
+  const listUrl = `https://cafe.naver.com/ca-fe/cafes/${clubId}/menus/${menuId || 0}?viewType=L`
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 25000 })
+      await sleep(2500)
+      const href = await page.evaluate((n) => {
+        const links = [...document.querySelectorAll('a[href*="articles/"], a[href*="articleid="]')]
+        for (const a of links) {
+          if ((a.textContent || '').replace(/\s+/g, '').includes(n)) return a.href
+        }
+        return null
+      }, needle)
+      if (href) return href
+    } catch {}
+    await sleep(3000) // 목록 반영이 늦을 수 있어 한 번 더
+  }
+  return null
+}
 
-  // 1) 네이티브 select 라면 값/이름으로 바로 고른다.
-  for (const sel of ['select[name*="menu" i]', 'select[class*="board" i]', 'select']) {
-    const el = page.locator(sel).first()
-    if (!(await el.isVisible({ timeout: 800 }).catch(() => false))) continue
-    if (menuId) { try { await el.selectOption({ value: String(menuId) }); if (!(await unselected())) return true } catch {} }
-    if (boardName) { try { await el.selectOption({ label: boardName }); if (!(await unselected())) return true } catch {} }
+/** 게시판 선택 컨트롤(트리거)을 찾는다. 못 찾으면 null. */
+async function findBoardControl(page) {
+  return await firstVisible(page, [
+    'select[name*="menu" i]',
+    'select[class*="board" i]',
+    'button[class*="board" i]',
+    '[class*="BoardSelect"] button',
+    '[class*="board_select"] button',
+    'button:has-text("게시판을 선택")',
+    '[role="button"]:has-text("게시판을 선택")',
+  ], 2500)
+}
+
+/**
+ * 지금 게시판이 골라져 있는지 3가지로 판정한다.
+ *   'selected' | 'unselected' | 'unreadable'
+ * ⚠️ 못 읽은 것을 '선택됨'으로 넘기면, 비활성 등록 버튼을 누르고 엉뚱한 데서 실패한다.
+ *    반대로 조상 요소를 읽으면 숨은 옵션 목록의 플레이스홀더까지 딸려와 영원히 '미선택'이 된다.
+ *    그래서 트리거 "자기 자신"의 텍스트만 읽는다.
+ */
+async function boardState(page) {
+  const el = await findBoardControl(page)
+  if (!el) return { state: 'unreadable', text: '' }
+  let text = ''
+  try {
+    text = (await el.evaluate((n) => (n.tagName === 'SELECT' ? (n.selectedOptions[0]?.label ?? '') : (n.textContent || '')))).trim()
+  } catch { return { state: 'unreadable', text: '' } }
+  if (!text) return { state: 'unreadable', text: '' }
+  return { state: /선택해\s*주세요|게시판을?\s*선택/.test(text) ? 'unselected' : 'selected', text }
+}
+
+/**
+ * 게시판을 고른다. URL 의 menuId 만 믿지 않는다 —
+ * 자동 선택이 안 된 채로 두면 [등록]이 비활성이라 눌러도 아무 일이 없다(실측한 실패 원인).
+ * ⚠️ 아는 게시판(이름/ID)이 아니면 **절대 아무거나 고르지 않는다**.
+ *    엉뚱한 게시판에 글이 올라가는 것이 발행 실패보다 훨씬 나쁘다.
+ * @param {boolean} readOnly 자가검사용 — 클릭하지 않고 현재 상태만 본다.
+ * @returns {{ok:boolean, detail:string}}
+ */
+async function ensureBoardSelected(page, menuId, boardName, readOnly = false) {
+  // SPA 라 목록이 늦게 채워질 수 있어 잠깐 기다려 본다.
+  let st = await boardState(page)
+  for (let i = 0; i < 6 && st.state !== 'selected'; i++) {
+    await sleep(800)
+    st = await boardState(page)
+    if (st.state === 'selected') break
+  }
+  if (st.state === 'selected') return { ok: true, detail: `이미 선택됨(${st.text})` }
+  if (readOnly) return { ok: false, detail: st.state === 'unreadable' ? '게시판 선택 칸을 찾지 못함' : `미선택(${st.text})` }
+  if (st.state === 'unreadable') return { ok: false, detail: '게시판 선택 칸을 찾지 못했습니다(화면 구조 변경 가능성)' }
+
+  if (!menuId && !boardName) {
+    return { ok: false, detail: '어느 게시판인지 알 수 없습니다 — 발행처 설정에 게시판 이름을 넣어주세요' }
   }
 
-  // 2) 커스텀 드롭다운: 열고 → menuId/이름이 맞는 항목 클릭.
-  const trigger = page
-    .locator('button, [role="button"], [class*="Select"], [class*="select"]')
-    .filter({ hasText: /게시판을?\s*선택/ })
-    .first()
-  try { await trigger.click({ timeout: 4000 }) } catch {}
-  await sleep(700)
-
-  const candidates = []
-  if (menuId) candidates.push(`[data-menuid="${menuId}"]`, `[data-value="${menuId}"]`, `[value="${menuId}"]`, `li[data-id="${menuId}"]`)
-  if (boardName) candidates.push(`li:has-text("${boardName}")`, `[role="option"]:has-text("${boardName}")`)
-  for (const c of candidates) {
-    const item = page.locator(c).first()
-    if (await item.isVisible({ timeout: 1200 }).catch(() => false)) {
-      try { await item.click({ timeout: 2500 }); await sleep(500); if (!(await unselected())) return true } catch {}
+  // 1) 네이티브 select 면 값/이름으로 바로 고른다.
+  const nativeSel = await firstVisible(page, ['select[name*="menu" i]', 'select[class*="board" i]'], 1200)
+  if (nativeSel) {
+    for (const opt of [menuId ? { value: String(menuId) } : null, boardName ? { label: boardName } : null].filter(Boolean)) {
+      try {
+        await nativeSel.selectOption(opt)
+        await sleep(400)
+        const after = await boardState(page)
+        if (after.state === 'selected') return { ok: true, detail: `선택함(${after.text})` }
+      } catch {}
     }
   }
 
-  // 3) 이름도 id 도 못 찾으면, 열린 목록의 첫 실제 항목을 고른다(기본 게시판이라도 선택되게).
-  const first = page.locator('[role="option"], li[role="menuitem"], ul li').filter({ hasNotText: /게시판을?\s*선택/ }).first()
-  if (await first.isVisible({ timeout: 1200 }).catch(() => false)) {
-    try { await first.click({ timeout: 2500 }); await sleep(500); if (!(await unselected())) return true } catch {}
+  // 2) 커스텀 드롭다운: 열고 → 아는 값(menuId/이름)에 해당하는 항목만 클릭.
+  const trigger = await findBoardControl(page)
+  if (trigger) { try { await trigger.click({ timeout: 3000 }) } catch {} }
+  await sleep(800)
+
+  const candidates = []
+  if (menuId) candidates.push(`[role="option"][data-menuid="${menuId}"]`, `li[data-menuid="${menuId}"]`, `[data-value="${menuId}"]`, `li[data-id="${menuId}"]`)
+  if (boardName) candidates.push(`[role="option"]:text-is("${boardName}")`, `li:text-is("${boardName}")`, `[role="option"]:has-text("${boardName}")`, `li:has-text("${boardName}")`)
+  for (const c of candidates) {
+    const item = page.locator(c).first()
+    if (!(await item.isVisible({ timeout: 1000 }).catch(() => false))) continue
+    try {
+      await item.click({ timeout: 2500 })
+      await sleep(600)
+      const after = await boardState(page)
+      if (after.state === 'selected') return { ok: true, detail: `선택함(${after.text})` }
+    } catch {}
   }
-  return !(await unselected())
+
+  // 아는 값으로 못 찾으면 여기서 멈춘다. 임의 선택 금지.
+  return {
+    ok: false,
+    detail: `게시판을 찾지 못했습니다(${boardName ? `이름 "${boardName}"` : `menuId ${menuId}`}). 발행처 설정의 게시판 이름이 카페 화면과 정확히 같은지 확인해 주세요`,
+  }
 }
 
 // 로그인 세션 만료 감지
@@ -342,21 +439,18 @@ async function publishPost(job) {
   assertLoggedIn(page)
   await sleep(2500)
 
-  // 임시저장 복원 팝업 → 취소(새 글)
-  try { const c = page.locator('button:has-text("취소")').first(); if (await c.isVisible({ timeout: 1500 })) await c.click() } catch {}
+  // 임시저장 복원 팝업 → 취소(새 글). ⚠️ 모달 안으로 한정 — 페이지 전체에서 "취소"를 찾으면 엉뚱한 걸 누른다.
+  await dismissRestoreDialog(page)
 
   /* 게시판 선택 — URL 의 menuId 만 믿지 않는다.
      자동 선택이 안 된 채로 두면 [등록]이 비활성이라 눌러도 아무 일이 없다(실측으로 확인한 실패 원인). */
   const boardName = job.board?.name || ''
-  const boardOk = await ensureBoardSelected(page, menuId, boardName)
-  if (!boardOk) {
+  const board = await ensureBoardSelected(page, menuId, boardName)
+  if (!board.ok) {
     try { await page.screenshot({ path: join(LOGS, `${job.id}-board.png`), fullPage: true }) } catch {}
-    throw new Error(
-      `게시판을 선택하지 못했어요. 이 상태로는 등록 버튼이 눌리지 않습니다.` +
-        ` 발행처 설정에서 게시판 이름(board_name)을 채워주시면 확실해집니다. logs/${job.id}-board.png 확인`
-    )
+    throw new Error(`게시판을 선택하지 못해 등록하지 않았습니다 — ${board.detail}. logs/${job.id}-board.png 확인`)
   }
-  log(`  게시판 선택 완료${boardName ? `(${boardName})` : menuId ? `(menuId ${menuId})` : ''}`)
+  log(`  게시판 ${board.detail}`)
 
   // 말머리(선택) — best-effort
   if (job.prefix) {
@@ -366,16 +460,19 @@ async function publishPost(job) {
     } catch {}
   }
 
-  // 제목
-  await page.locator(TITLE_SEL).first().click({ timeout: 8000 }).catch(() => {
-    throw new Error('제목 입력칸을 찾지 못했어요(네이버 화면 변경). self-check.bat 으로 확인해 주세요.')
-  })
-  await humanType(page, job.title)
+  // 제목 — 필드의 maxlength 를 넘으면 잘려 들어가므로, 미리 맞춰 자른다(검수 오탐 방지).
+  const titleEl = await firstVisible(page, TITLE_SEL, 8000)
+  if (!titleEl) throw new Error('제목 입력칸을 찾지 못했어요(네이버 화면 변경). self-check.bat 으로 확인해 주세요.')
+  const maxLen = Number(await titleEl.getAttribute('maxlength').catch(() => null)) || 0
+  const titleToType = maxLen > 0 ? String(job.title).slice(0, maxLen) : String(job.title)
+  if (titleToType !== job.title) log(`  ⚠️ 제목이 카페 제한(${maxLen}자)에 맞춰 잘립니다`)
+  await titleEl.click({ timeout: 5000 })
+  await humanType(page, titleToType)
 
   // 본문
-  await page.locator(BODY_SEL).first().click({ timeout: 8000 }).catch(() => {
-    throw new Error('본문 입력칸을 찾지 못했어요(네이버 화면 변경). self-check.bat 으로 확인해 주세요.')
-  })
+  const bodyEl = await firstVisible(page, BODY_SEL, 8000)
+  if (!bodyEl) throw new Error('본문 입력칸을 찾지 못했어요(네이버 화면 변경). self-check.bat 으로 확인해 주세요.')
+  await bodyEl.click({ timeout: 5000 })
   const lines = String(job.body || '').replace(/\r\n/g, '\n').split('\n')
   for (let i = 0; i < lines.length; i++) {
     if (lines[i]) await humanType(page, lines[i])
@@ -389,33 +486,42 @@ async function publishPost(job) {
      사람처럼 한 글자씩 치는 방식이라 중간에 씹히는 일이 실제로 생길 수 있는데,
      그 상태로 올라가는 것이 가장 나쁘다. */
   {
-    let tTitle = ''
-    try { tTitle = await page.locator(TITLE_SEL).first().inputValue({ timeout: 3000 }) } catch {
-      try { tTitle = (await page.locator(TITLE_SEL).first().innerText({ timeout: 2000 })).trim() } catch {}
+    let tTitle = null // null = 못 읽음(빈 문자열과 구분한다)
+    try { tTitle = await titleEl.inputValue({ timeout: 3000 }) } catch {
+      try { tTitle = (await titleEl.innerText({ timeout: 2000 })).trim() } catch { tTitle = null }
     }
     const tBody = await readEditorBody(page)
 
     const squash = (s) => String(s || '').replace(/\s+/g, '')
-    const wantT = squash(job.title)
-    const gotT = squash(tTitle)
+    const wantT = squash(titleToType)
     const wantB = squash(job.body)
     const gotB = squash(tBody)
 
     const problems = []
-    if (wantT && gotT && gotT !== wantT) problems.push(`제목이 원문과 다름(원문 ${wantT.length}자 / 입력 ${gotT.length}자)`)
-    /* 본문 비교. 읽기가 아예 실패한 경우(0자)는 '입력이 안 됐다'가 아니라 '못 읽었다'일 가능성이 크므로
-       발행을 막지 않고 경고만 남긴다 — 검수 장치가 오히려 정상 발행을 막는 일이 없게. */
+    // 제목: 못 읽으면 통과시키지 않는다 — 엉뚱한 칸에 쳤을 가능성이 바로 이 경우다.
+    if (wantT) {
+      if (tTitle === null) problems.push('제목을 다시 읽지 못함(엉뚱한 칸에 입력됐을 수 있음)')
+      else if (squash(tTitle) !== wantT) problems.push(`제목이 원문과 다름(원문 ${wantT.length}자 / 입력 ${squash(tTitle).length}자)`)
+    }
+    /* 본문: 길이 비율 대신 "마지막 줄이 들어갔는가"로 본다.
+       ① 길이는 에디터가 링크를 카드로 바꾸거나 공백을 다르게 처리하면 쉽게 어긋나 오탐이 난다.
+       ② 실제 실패 모드는 '중간에 끊김'이라, 마지막 줄 존재 여부가 훨씬 정확한 신호다.
+       읽기 자체가 실패(빈 문자열)면 막지 않고 경고만 — 검수가 정상 발행을 막는 일이 없게. */
     if (wantB && !gotB) {
       log('  ⚠️ 본문을 읽지 못해 내용 검수를 건너뜁니다(입력 자체는 정상일 수 있음)')
-    } else if (wantB && gotB.length < wantB.length * 0.8) {
-      problems.push(`본문이 덜 입력됨(원문 ${wantB.length}자 / 입력 ${gotB.length}자)`)
+    } else if (wantB) {
+      const srcLines = String(job.body).replace(/\r\n/g, '\n').split('\n').map((l) => squash(l)).filter((l) => l.length >= 6)
+      const lastLine = srcLines[srcLines.length - 1]
+      if (lastLine && !gotB.includes(lastLine)) {
+        problems.push(`본문 끝부분이 들어가지 않았어요(마지막 줄 누락, 원문 ${wantB.length}자 / 읽힘 ${gotB.length}자)`)
+      }
     }
 
     if (problems.length) {
       try { await page.screenshot({ path: join(LOGS, `${job.id}-check.png`), fullPage: true }) } catch {}
       throw new Error(`입력 검수 실패로 등록하지 않았습니다 — ${problems.join(', ')}. logs/${job.id}-check.png 확인`)
     }
-    if (gotB) log(`  ✓ 입력 검수 통과(제목 ${gotT.length}자 · 본문 ${gotB.length}자) — 등록합니다`)
+    if (gotB) log(`  ✓ 입력 검수 통과(제목 ${wantT.length}자 · 본문 ${gotB.length}자) — 등록합니다`)
   }
 
   /* 발행 전 미리보기(옵션).
@@ -429,10 +535,10 @@ async function publishPost(job) {
        타이핑이 중간에 씹혔는지도 웹에서 원문과 비교해 바로 알 수 있다. */
     let typedTitle = ''
     let typedBody = ''
-    try { typedTitle = await page.locator(TITLE_SEL).first().inputValue({ timeout: 3000 }) } catch {
-      try { typedTitle = (await page.locator(TITLE_SEL).first().innerText({ timeout: 2000 })).trim() } catch {}
+    try { typedTitle = await titleEl.inputValue({ timeout: 3000 }) } catch {
+      try { typedTitle = (await titleEl.innerText({ timeout: 2000 })).trim() } catch {}
     }
-    try { typedBody = (await page.locator(BODY_SEL).first().innerText({ timeout: 3000 })).trim() } catch {}
+    typedBody = await readEditorBody(page)
 
     const shot = await page.screenshot({ type: 'png', fullPage: true })
     await http('/api/naver-cafe/agent/preview', 'POST', {
@@ -453,39 +559,53 @@ async function publishPost(job) {
       } catch { /* 일시적 통신 오류는 계속 대기 */ }
     }
     if (decision === 'cancel') {
+      // 서버가 이미 발행 대기로 되돌렸다. 실패가 아니므로 보고하지 않는다.
       const e = new Error('사람이 취소함')
-      e.cancelled = true // 실패가 아니라 '의도된 중단' — 실패 카운트에 넣지 않는다
+      e.cancelled = true
       throw e
     }
     if (decision !== 'approve') {
-      const e = new Error('미리보기 확인 시간(15분) 초과 — 등록하지 않았습니다')
-      e.cancelled = true
-      throw e
+      /* 시간 초과. ⚠️ 여기서 보고를 생략하면 글이 'preview' 상태로 영원히 남아
+         아무도 집어가지 못한다(next 는 approved/queued 만 본다). 반드시 실패로 보고해
+         서버가 발행 대기로 되돌리게 한다. */
+      throw new Error('등록 직전 확인이 15분 안에 이뤄지지 않아 등록하지 않았습니다(발행 대기로 되돌립니다)')
     }
     log('  ✅ 확인됨 — 등록합니다.')
   }
 
-  // 등록 — 어떤 버튼을 눌렀는지 로그에 남긴다(임시등록을 잘못 누르는 사고를 바로 알아채기 위해).
-  const submit = page.locator(SUBMIT_SEL).first()
+  /* 등록.
+     ⚠️ "정확히 등록"인 버튼만 누른다. 글자를 못 읽으면 누르지 않는다 —
+        확인 못 한 버튼을 누르는 건 임시등록을 누르는 것만큼 위험하다. */
+  const submit = await firstVisible(page, SUBMIT_SEL, 8000)
+  if (!submit) throw new Error('등록 버튼을 찾지 못했어요(네이버 화면 변경). self-check.bat 으로 확인해 주세요.')
   let btnText = ''
   try { btnText = (await submit.innerText({ timeout: 3000 })).trim().replace(/\s+/g, ' ') } catch {}
-  if (btnText && /임시/.test(btnText)) {
-    throw new Error(`등록 버튼 대신 "${btnText}"이(가) 잡혔어요. 셀렉터 조정이 필요합니다(self-check.bat 확인).`)
-  }
-  await submit.click({ timeout: 8000 }).catch(() => {
-    throw new Error('등록 버튼을 찾지 못했어요(네이버 화면 변경). self-check.bat 으로 확인해 주세요.')
-  })
-  log(`  [${btnText || '등록'}] 클릭 — 게시 확인 중…`)
+  if (!btnText) throw new Error('등록 버튼의 글자를 읽지 못해 누르지 않았어요(오클릭 방지). self-check.bat 으로 확인해 주세요.')
+  if (btnText !== '등록') throw new Error(`등록 버튼 대신 "${btnText}"이(가) 잡혔어요. 누르지 않았습니다(self-check.bat 확인).`)
+  // <a> 는 disabled 속성이 없어 Playwright 가 막아주지 못한다 — 비활성 표시를 직접 본다.
+  const disabled = await submit.evaluate((n) => n.getAttribute('aria-disabled') === 'true' || n.classList.contains('is-disabled') || n.disabled === true).catch(() => false)
+  if (disabled) throw new Error('등록 버튼이 아직 비활성 상태예요(필수 항목 미입력 가능성). 등록하지 않았습니다.')
+
+  await submit.click({ timeout: 8000 })
+  log(`  [등록] 클릭 — 게시 확인 중…`)
 
   try {
     await page.waitForURL((u) => /articles\/\d+|articleid=\d+|ArticleRead/i.test(String(u)), { timeout: 20000 })
+    return page.url()
   } catch {
-    /* 눌렀는데 글 화면으로 안 넘어갔다 = 실제로는 안 올라간 것.
-       여기서 성공으로 보고하면 '올라갔다고 하는데 카페엔 없는' 최악의 상태가 된다. */
+    /* 주소가 안 바뀌었다고 해서 "안 올라갔다"고 단정하면 안 된다.
+       느린 리다이렉트, 승인제 게시판, 목록으로 돌아가는 카페 설정 등에서는 글이 실제로 올라간다.
+       여기서 실패로 보고하면 서버가 재시도해 **같은 글이 여러 번 올라간다** — 가장 나쁜 결과.
+       그래서 목록에서 방금 쓴 제목을 직접 찾아보고 판단한다. */
+    log('  주소가 바뀌지 않아 목록에서 직접 확인합니다…')
+    const found = await findPostedArticle(page, clubId, menuId, titleToType)
+    if (found) {
+      log('  ✅ 목록에서 방금 올린 글을 확인했습니다(리다이렉트만 늦었던 것)')
+      return found
+    }
     try { await page.screenshot({ path: join(LOGS, `${job.id}-submit.png`), fullPage: true }) } catch {}
-    throw new Error(`등록을 눌렀지만 글 화면으로 넘어가지 않았어요(현재 주소: ${page.url().slice(0, 80)}). 필수 항목 미입력이나 카페 규칙 때문일 수 있어요. logs/${job.id}-submit.png 확인`)
+    throw new Error(`등록을 눌렀지만 글이 확인되지 않았어요(현재 주소: ${page.url().slice(0, 80)}). 필수 항목이나 카페 규칙 때문일 수 있어요. logs/${job.id}-submit.png 확인`)
   }
-  return page.url()
 }
 
 // ── 댓글 등록(job.kind==='comment') — best-effort DOM ──
@@ -503,16 +623,26 @@ async function publishComment(job) {
       const box = t.locator('textarea.comment_inbox_text, textarea[placeholder*="댓글"], .comment_inbox textarea, [class*="CommentWrite"] textarea').first()
       if (await box.isVisible({ timeout: 2000 })) {
         await box.click()
-        await humanType(page, job.body)
+        // ⚠️ 줄바꿈은 그대로 치면 Enter 로 들어가 댓글이 중간에 등록돼 버린다. 한 줄로 합친다.
+        await humanType(page, String(job.body || '').replace(/\s*\n+\s*/g, ' ').trim())
         typed = true
-        // 등록 버튼
-        try { await t.locator('a.button_comment, button:has-text("등록"), a:has-text("등록")').first().click({ timeout: 4000 }) } catch {}
+        // 등록 버튼 — 실패를 삼키지 않는다(삼키면 안 올라갔는데 성공으로 보고된다).
+        const btn = await firstVisible(t, ['a.button_comment', 'button:text-is("등록")', 'a:text-is("등록")'], 3000)
+        if (!btn) throw new Error('댓글 등록 버튼을 찾지 못했어요(페이지 구조 변경).')
+        await btn.click({ timeout: 4000 })
         break
       }
-    } catch {}
+    } catch (e) {
+      if (typed) throw e // 입력까지 됐는데 등록에서 막힌 경우는 그대로 실패로 올린다
+    }
   }
   if (!typed) throw new Error('댓글 입력창을 찾지 못했어요(페이지 구조 변경).')
-  await sleep(1500)
+
+  // 실제로 달렸는지 확인한다 — 클릭만으로 성공을 단정하면 '올렸다는데 없는' 상태가 된다.
+  await sleep(2500)
+  const needle = String(job.body || '').replace(/\s+/g, '').slice(0, 15)
+  const ok = await page.evaluate((n) => (document.body?.innerText || '').replace(/\s+/g, '').includes(n), needle).catch(() => false)
+  if (!ok) throw new Error('댓글을 등록했지만 화면에서 확인되지 않았어요(등록 실패 가능성).')
   return null // 댓글은 별도 URL/24h 추적 없음
 }
 
@@ -556,8 +686,10 @@ async function publishTick() {
     // 실패로 보고하면 연속 실패 카운터가 올라가 엉뚱하게 자동 중단된다.
     if (e && e.cancelled) { log(`⏹ 등록하지 않았습니다: ${msg}`); return }
     log(`❌ 발행 실패: ${msg}`)
-    try { const p = context?.pages()[0]; if (p) await p.screenshot({ path: join(LOGS, `${job.id}.png`), fullPage: false }) } catch {}
-    await reportResult({ id: job.id, ok: false, kind: job.kind, cafe_id: job.cafe_id, note: msg })
+    try { const p = context?.pages()[0]; if (p) await p.screenshot({ path: join(LOGS, `${job.id}.png`), fullPage: true }) } catch {}
+    const reported = await reportResult({ id: job.id, ok: false, kind: job.kind, cafe_id: job.cafe_id, note: msg })
+    // 실패 보고마저 실패하면 글이 '발행 중'으로 남아 아무도 집어가지 못한다 — 크게 알린다.
+    if (!reported) log(`⚠️ 실패 보고를 전송하지 못했습니다. 이 글은 서버에 '발행 중'으로 남습니다 — 대시보드에서 [되돌리기]를 눌러주세요.`)
     return
   }
 
@@ -672,27 +804,29 @@ async function selfCheck() {
       await page.goto(`https://cafe.naver.com/ca-fe/cafes/${clubId}/articles/write?boardType=L${menuId ? `&menuId=${menuId}` : ''}`, { waitUntil: 'domcontentloaded', timeout: 30000 })
       await sleep(3000)
       if (page.url().includes('nid.naver.com')) { mark(`[${label}] 글쓰기 화면`, false, '로그인 요구됨'); continue }
-      try { const btn = page.locator('button:has-text("취소")').first(); if (await btn.isVisible({ timeout: 1200 })) await btn.click() } catch {}
+      await dismissRestoreDialog(page)
 
-      const titleOk = await page.locator(TITLE_SEL).first().isVisible({ timeout: 6000 }).catch(() => false)
-      const bodyOk = await page.locator(BODY_SEL).first().isVisible({ timeout: 6000 }).catch(() => false)
-      const submitOk = await page.locator(SUBMIT_SEL).first().isVisible({ timeout: 6000 }).catch(() => false)
+      const titleEl = await firstVisible(page, TITLE_SEL, 6000)
+      const bodyEl = await firstVisible(page, BODY_SEL, 6000)
+      const submitEl = await firstVisible(page, SUBMIT_SEL, 6000)
       // 어떤 버튼이 잡혔는지까지 확인한다 — '임시등록'이 잡히면 글이 안 올라가고 임시저장만 된다.
       let btnText = ''
-      if (submitOk) { try { btnText = (await page.locator(SUBMIT_SEL).first().innerText({ timeout: 2500 })).trim().replace(/\s+/g, ' ') } catch {} }
-      const btnWrong = !!btnText && /임시/.test(btnText)
+      if (submitEl) { try { btnText = (await submitEl.innerText({ timeout: 2500 })).trim().replace(/\s+/g, ' ') } catch {} }
+      const btnWrong = !!submitEl && btnText !== '등록'
+      /* 게시판이 선택돼 있는지 — 이게 안 되면 등록 버튼이 비활성이라 눌러도 안 올라간다.
+         ⚠️ 자가검사는 "글을 절대 등록하지 않는다"가 약속이므로 읽기 전용으로만 본다(클릭 금지). */
+      const board = await ensureBoardSelected(page, menuId, c.board_name || '', true)
+      // 캡처는 모든 확인이 끝난 뒤에 — 보고된 상태와 이미지가 일치하도록.
       const shot = join(LOGS, `check-${String(label).replace(/[^\w가-힣]/g, '_')}.png`)
       try { await page.screenshot({ path: shot, fullPage: true }) } catch {}
-      /* 게시판이 선택돼 있는지 — 이게 안 되면 등록 버튼이 비활성이라 눌러도 안 올라간다.
-         (실측으로 확인한 실패 원인) 발행 때는 에이전트가 직접 골라주지만, 여기서 미리 알려준다. */
-      const boardPicked = await ensureBoardSelected(page, menuId, c.board_name || '')
       const parts = [
-        `제목 ${titleOk ? 'OK' : '실패'}`,
-        `본문 ${bodyOk ? 'OK' : '실패'}`,
-        `등록버튼 ${submitOk ? (btnWrong ? `⚠ "${btnText}" 가 잡힘` : `OK${btnText ? `("${btnText}")` : ''}`) : '실패'}`,
-        `게시판 ${boardPicked ? 'OK' : '⚠ 선택 실패 — 발행처 설정에 게시판 이름을 넣어주세요'}`,
+        `제목 ${titleEl ? 'OK' : '실패'}`,
+        `본문 ${bodyEl ? 'OK' : '실패'}`,
+        `등록버튼 ${submitEl ? (btnWrong ? `⚠ "${btnText || '글자 못읽음'}" 가 잡힘` : 'OK') : '실패'}`,
+        `게시판 ${board.ok ? 'OK' : `⚠ ${board.detail}`}`,
       ]
-      mark(`[${label}] 글쓰기 화면`, titleOk && bodyOk && submitOk && !btnWrong && boardPicked, `${parts.join(' · ')} → ${shot}`)
+      // 게시판은 발행 시 에이전트가 직접 고르므로, 여기서 미선택이어도 치명적 실패로 보지 않고 경고만 한다.
+      mark(`[${label}] 글쓰기 화면`, !!titleEl && !!bodyEl && !!submitEl && !btnWrong, `${parts.join(' · ')} → ${shot}`)
     } catch (e) {
       mark(`[${label}] 글쓰기 화면`, false, String((e && e.message) || e).slice(0, 100))
     }
