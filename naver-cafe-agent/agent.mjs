@@ -11,6 +11,8 @@
 //   node agent.mjs           발행 루프(기본). = publish-agent.bat
 //   node agent.mjs --login   네이버 로그인 세션 만들기(최초 1회). = login-setup.bat
 //   node agent.mjs --check   자가검사 — 로그인/카페접근/글쓰기 화면 요소를 점검만 하고 절대 등록하지 않음. = self-check.bat
+//   node agent.mjs --dry-run 모의발행 — 브라우저도 안 열고, DB도 안 바꾸고, "지금 발행하면 무엇이 어디로
+//                            나가는지"만 계산해 보여준다. 네이버 로그인 전에도 확인 가능. = dry-run.bat
 
 import { chromium } from 'playwright-core'
 import { execSync } from 'node:child_process'
@@ -19,7 +21,13 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join, resolve } from 'node:path'
 
 const ARGS = process.argv.slice(2)
-const MODE = ARGS.includes('--login') ? 'login' : ARGS.includes('--check') ? 'check' : 'run'
+const MODE = ARGS.includes('--login')
+  ? 'login'
+  : ARGS.includes('--check')
+    ? 'check'
+    : ARGS.includes('--dry-run')
+      ? 'dry'
+      : 'run'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const LOGS = join(HERE, 'logs')
@@ -485,9 +493,50 @@ async function finish(code) {
   process.exitCode = code
 }
 
+// ── 모의발행: 브라우저도 DB도 건드리지 않고 "무엇이 어디로 나갈지"만 확인 ──
+async function dryRun() {
+  log('모의발행 — 글을 등록하지 않고, 데이터도 바꾸지 않습니다.')
+  log(`  서버: ${SERVER}\n`)
+  let res
+  try {
+    res = await http('/api/naver-cafe/agent/next?dry=1', 'GET')
+  } catch (e) {
+    log(`❌ 서버 조회 실패: ${String((e && e.message) || e).slice(0, 140)}`)
+    return 1
+  }
+
+  for (const c of res.checks || []) log(`  ${c.ok ? '✅' : '❌'} ${c.name}${c.detail ? ` — ${c.detail}` : ''}`)
+
+  if (res.none || !res.job) {
+    log(`\n발행할 대상이 없습니다: ${res.reason || ''}`)
+    return 1
+  }
+
+  const j = res.job
+  log('\n── 지금 발행한다면 ──')
+  if (res.simulated) log('  ⚠️ 승인된 글이 없어 최신 "초안"으로 대신 계산했습니다(실제 발행 대상 아님)')
+  log(`  발행처 : ${j.cafe?.name || '-'}`)
+  log(`  종류   : ${j.kind === 'comment' ? '댓글' : '게시글'}${j.prefix ? ` (말머리 "${j.prefix}")` : ''}`)
+  log(`  주소   : ${res.writeUrl || '(계산 실패)'}`)
+  log(`  제목   : ${j.title || '(없음)'}`)
+  const lines = String(j.body || '').split('\n').filter(Boolean)
+  log(`  본문   : ${String(j.body || '').length}자 / ${lines.length}줄`)
+  for (const ln of lines.slice(0, 3)) log(`           ${ln.slice(0, 68)}${ln.length > 68 ? '…' : ''}`)
+  if (lines.length > 3) log(`           … 외 ${lines.length - 3}줄`)
+
+  const bad = (res.checks || []).filter((c) => !c.ok)
+  log(`\n── 결과: ${(res.checks || []).length - bad.length}/${(res.checks || []).length} 통과 ──`)
+  if (bad.length) for (const b of bad) log(`  ❌ ${b.name} — ${b.detail}`)
+  else log('  🎉 서버 쪽 준비는 끝났습니다. 남은 건 네이버 로그인(login-setup.bat)뿐이에요.')
+  return bad.length ? 1 : 0
+}
+
 if (MODE === 'login') {
   const ok = await loginSetup()
   await finish(ok ? 0 : 1)
+} else if (MODE === 'dry') {
+  const code = await dryRun()
+  await finish(code)
 } else if (MODE === 'check') {
   log('네이버 카페 자동화 자가검사 — 글은 절대 등록하지 않습니다.')
   log(`  서버: ${SERVER}`)
