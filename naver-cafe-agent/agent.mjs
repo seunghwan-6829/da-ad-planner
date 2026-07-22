@@ -215,11 +215,14 @@ const TITLE_SEL = [
   '[class*="Subject"] textarea',
   '[class*="subject"] textarea',
 ]
+/* 본문 셀렉터. ⚠️ 스마트에디터에는 클립보드용 "숨김(aria-hidden) contenteditable" 이 있어서
+   그냥 div[contenteditable] 을 잡으면 그 숨김칸이 걸려 클릭이 타임아웃난다(실측한 실패 원인).
+   그래서 aria-hidden 을 제외하고, 실제 본문 영역은 아래 clickBodyEditor 로 좌표 클릭한다. */
 const BODY_SEL = [
-  '.se-content [contenteditable="true"]',
-  '.se-component-content [contenteditable="true"]',
-  '.se-main-container [contenteditable="true"]',
-  'div[contenteditable="true"]',
+  '.se-content [contenteditable="true"]:not([aria-hidden="true"])',
+  '.se-section-text [contenteditable="true"]:not([aria-hidden="true"])',
+  '.se-main-container [contenteditable="true"]:not([aria-hidden="true"])',
+  'div[contenteditable="true"]:not([aria-hidden="true"])',
 ]
 
 /** 후보를 순서대로 시도해 처음 "보이는" 것을 돌려준다. 못 찾으면 null. */
@@ -229,6 +232,44 @@ async function firstVisible(scope, selectors, timeout = 4000) {
     if (await loc.isVisible({ timeout }).catch(() => false)) return loc
   }
   return null
+}
+
+/** 본문 편집칸을 찾아 실제로 포커스한다.
+ *  숨김(aria-hidden)·초소형 편집칸을 걸러내고, "보이는 것 중 가장 큰" contenteditable 을 좌표로 클릭한다.
+ *  좌표 클릭이라 aria-hidden 같은 attribute 판정과 무관하게 실제 편집 영역에 커서가 들어간다. */
+async function bodyFocused(page) {
+  // 커서가 "보이는 편집 가능한" 요소에 실제로 들어갔는지 확인. 여기 안 들어가면 타이핑이 허공에 간다.
+  return await page.evaluate(() => {
+    const a = document.activeElement
+    if (!a || a.getAttribute?.('aria-hidden') === 'true') return false
+    if (a.getAttribute?.('contenteditable') === 'true') return true
+    return !!a.closest?.('[contenteditable="true"]:not([aria-hidden="true"])')
+  }).catch(() => false)
+}
+
+async function clickBodyEditor(page) {
+  const centerOf = () => page.evaluate(() => {
+    const cands = [...document.querySelectorAll('[contenteditable="true"]')]
+      .filter((el) => el.getAttribute('aria-hidden') !== 'true')
+      .map((el) => el.getBoundingClientRect())
+      .filter((r) => r.width > 80 && r.height > 30)
+      .sort((a, b) => b.width * b.height - a.width * a.height)
+    const r = cands[0]
+    if (!r) return null
+    return { x: Math.round(r.x + Math.min(40, r.width / 2)), y: Math.round(r.y + Math.min(24, r.height / 2)) }
+  }).catch(() => null)
+
+  // 1) 보이는 본문 영역 좌표를 눌러 커서를 넣고, 실제로 포커스됐는지 확인한다.
+  for (let i = 0; i < 2; i++) {
+    const box = await centerOf()
+    if (!box) break
+    try { await page.mouse.click(box.x, box.y); await sleep(400) } catch {}
+    if (await bodyFocused(page)) return true
+  }
+  // 2) 폴백: 보이는 에디터 컨테이너를 직접 클릭 후 재확인.
+  const area = await firstVisible(page, ['.se-content', '.se-viewer', '.se-section-text', '[class*="se-content"]'], 4000)
+  if (area) { try { await area.click({ timeout: 4000 }); await sleep(400) } catch {} }
+  return await bodyFocused(page)
 }
 /* ⚠️ 등록 버튼은 "정확히 등록"인 것만 잡아야 한다.
    네이버 카페 에디터에는 [임시등록]과 [등록]이 나란히 있는데,
@@ -639,10 +680,10 @@ async function publishPost(job) {
   await titleEl.click({ timeout: 5000 })
   await humanType(page, titleToType)
 
-  // 본문
-  const bodyEl = await firstVisible(page, BODY_SEL, 8000)
-  if (!bodyEl) throw new Error('본문 입력칸을 찾지 못했어요(네이버 화면 변경). self-check.bat 으로 확인해 주세요.')
-  await bodyEl.click({ timeout: 5000 })
+  // 본문 — 숨김(aria-hidden) 클립보드 칸을 피해 "보이는 본문 영역"에 좌표로 커서를 넣는다.
+  if (!(await clickBodyEditor(page))) {
+    throw new Error('본문 입력칸을 찾지 못했어요(네이버 화면 변경). self-check.bat 으로 확인해 주세요.')
+  }
   const lines = String(job.body || '').replace(/\r\n/g, '\n').split('\n')
   for (let i = 0; i < lines.length; i++) {
     if (lines[i]) await humanType(page, lines[i])
