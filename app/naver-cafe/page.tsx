@@ -529,7 +529,9 @@ export default function NaverCafePage() {
         c.email ? `메일(${c.to}): ${r.email === "sent" ? "발송됨 ✅" : r.email}` : "메일: 미설정",
         c.slack ? `슬랙: ${r.slack === "sent" ? "발송됨 ✅" : r.slack}` : "슬랙: 미설정",
       ];
-      alert(`알림 테스트 결과\n\n${lines.join("\n")}\n\n메일함(스팸함도)을 확인해 주세요.`);
+      const hint = j.hint ? `\n\n💡 ${j.hint}` : "";
+      const tail = r.email === "sent" ? "\n\n메일함(스팸함도) 확인해 주세요." : "";
+      alert(`알림 테스트 결과\n\n${lines.join("\n")}${hint}${tail}`);
     } catch (e) { alert(e instanceof Error ? e.message : "테스트 실패"); }
   }
 
