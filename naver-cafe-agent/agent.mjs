@@ -317,6 +317,71 @@ async function findPostedArticle(page, clubId, menuId, title) {
   return null
 }
 
+/** 카페/게시판 화면의 [글쓰기] 버튼을 찾는다(구형 카페는 iframe 안에 있어 프레임까지 훑는다). */
+async function findWriteButton(page) {
+  const sels = [
+    'a:has-text("글쓰기")',
+    'button:has-text("글쓰기")',
+    'a[href*="articles/write"]',
+    'a[href*="ArticleWrite"]',
+    '[class*="write"] a:has-text("글쓰기")',
+  ]
+  const found = await firstVisible(page, sels, 2500)
+  if (found) return found
+  for (const f of page.frames()) {
+    const inFrame = await firstVisible(f, sels, 1500)
+    if (inFrame) return inFrame
+  }
+  return null
+}
+
+/**
+ * 글쓰기 화면을 연다.
+ * ★ 기본 경로: 사장님이 설정해둔 카페/게시판 주소로 가서 [글쓰기]를 누른다.
+ *   이렇게 들어가면 **게시판이 자동으로 선택된 채로** 열려서 따로 고를 필요가 없다.
+ *   (글쓰기 URL 로 바로 들어가면 menuId 를 붙여도 "게시판을 선택해 주세요" 로 남는 카페가 있다 — 실측)
+ * 폴백: 그래도 안 되면 예전처럼 글쓰기 주소로 직접 이동한 뒤 게시판을 직접 고른다.
+ * @returns 'from-board' | 'direct'
+ */
+async function openWriteForm(page, cafeUrl, clubId, menuId) {
+  if (cafeUrl) {
+    try {
+      await page.goto(cafeUrl, { waitUntil: 'domcontentloaded', timeout: 30000 })
+      assertLoggedIn(page)
+      await sleep(2500)
+      const btn = await findWriteButton(page)
+      if (btn) {
+        await btn.click({ timeout: 8000 })
+        await page.waitForURL((u) => /articles\/write|ArticleWrite/i.test(String(u)), { timeout: 20000 }).catch(() => {})
+        await sleep(2000)
+        if (/articles\/write|ArticleWrite/i.test(page.url())) return 'from-board'
+      }
+    } catch { /* 폴백으로 넘어간다 */ }
+  }
+  await page.goto(`https://cafe.naver.com/ca-fe/cafes/${clubId}/articles/write?boardType=L${menuId ? `&menuId=${menuId}` : ''}`, {
+    waitUntil: 'domcontentloaded',
+    timeout: 30000,
+  })
+  assertLoggedIn(page)
+  await sleep(2500)
+  return 'direct'
+}
+
+/** 게시판 드롭다운에 어떤 게시판들이 있는지 읽어온다(실패 안내에 그대로 보여주기 위해). */
+async function listBoardOptions(page) {
+  try {
+    const names = await page.evaluate(() => {
+      const out = []
+      for (const el of document.querySelectorAll('[role="option"], li')) {
+        const t = (el.textContent || '').trim()
+        if (t && t.length <= 30 && !/게시판을?\s*선택/.test(t)) out.push(t)
+      }
+      return [...new Set(out)].slice(0, 20)
+    })
+    return names || []
+  } catch { return [] }
+}
+
 /** 게시판 선택 컨트롤(트리거)을 찾는다. 못 찾으면 null. */
 async function findBoardControl(page) {
   return await firstVisible(page, [
@@ -435,22 +500,29 @@ async function publishPost(job) {
     if (!clubId) throw new Error('카페 ID를 찾지 못했어요(미가입이거나 페이지 구조 변경).')
   }
 
-  await page.goto(`https://cafe.naver.com/ca-fe/cafes/${clubId}/articles/write?boardType=L${menuId ? `&menuId=${menuId}` : ''}`, { waitUntil: 'domcontentloaded', timeout: 30000 })
-  assertLoggedIn(page)
-  await sleep(2500)
+  /* ★ 설정해둔 카페/게시판 주소에서 [글쓰기]를 눌러 들어간다 → 게시판이 자동 선택된 채로 열린다.
+     실패하면 예전처럼 글쓰기 주소로 직접 들어간 뒤 게시판을 고른다. */
+  const how = await openWriteForm(page, cafeUrl, clubId, menuId)
+  log(how === 'from-board' ? '  게시판 화면에서 [글쓰기]로 진입' : '  글쓰기 주소로 직접 진입(폴백)')
 
   // 임시저장 복원 팝업 → 취소(새 글). ⚠️ 모달 안으로 한정 — 페이지 전체에서 "취소"를 찾으면 엉뚱한 걸 누른다.
   await dismissRestoreDialog(page)
 
-  /* 게시판 선택 — URL 의 menuId 만 믿지 않는다.
-     자동 선택이 안 된 채로 두면 [등록]이 비활성이라 눌러도 아무 일이 없다(실측으로 확인한 실패 원인). */
+  /* 게시판 확인. 위 경로로 들어왔으면 대개 이미 잡혀 있고, 아니면 여기서 직접 고른다.
+     자동 선택이 안 된 채로 두면 [등록]이 비활성이라 눌러도 아무 일이 없다(실측한 실패 원인). */
   const boardName = job.board?.name || ''
   const board = await ensureBoardSelected(page, menuId, boardName)
   if (!board.ok) {
     try { await page.screenshot({ path: join(LOGS, `${job.id}-board.png`), fullPage: true }) } catch {}
-    throw new Error(`게시판을 선택하지 못해 등록하지 않았습니다 — ${board.detail}. logs/${job.id}-board.png 확인`)
+    const options = await listBoardOptions(page)
+    const hint = options.length
+      ? `\n    이 카페의 게시판: ${options.join(' / ')}\n    → 발행처 설정의 [게시판 이름]에 위 이름 중 하나를 그대로 넣어주세요.`
+      : ''
+    throw new Error(`게시판을 선택하지 못해 등록하지 않았습니다 — ${board.detail}.${hint} logs/${job.id}-board.png 확인`)
   }
   log(`  게시판 ${board.detail}`)
+  // 자동으로 잡힌 게시판 이름을 서버에 알려 다음부터 확실해지게 한다(설정이 비어 있을 때만 채운다).
+  const detectedBoard = (board.detail.match(/\(([^)]+)\)\s*$/)?.[1] || '').trim()
 
   // 말머리(선택) — best-effort
   if (job.prefix) {
@@ -591,7 +663,7 @@ async function publishPost(job) {
 
   try {
     await page.waitForURL((u) => /articles\/\d+|articleid=\d+|ArticleRead/i.test(String(u)), { timeout: 20000 })
-    return page.url()
+    return { url: page.url(), boardName: detectedBoard }
   } catch {
     /* 주소가 안 바뀌었다고 해서 "안 올라갔다"고 단정하면 안 된다.
        느린 리다이렉트, 승인제 게시판, 목록으로 돌아가는 카페 설정 등에서는 글이 실제로 올라간다.
@@ -601,7 +673,7 @@ async function publishPost(job) {
     const found = await findPostedArticle(page, clubId, menuId, titleToType)
     if (found) {
       log('  ✅ 목록에서 방금 올린 글을 확인했습니다(리다이렉트만 늦었던 것)')
-      return found
+      return { url: found, boardName: detectedBoard }
     }
     try { await page.screenshot({ path: join(LOGS, `${job.id}-submit.png`), fullPage: true }) } catch {}
     throw new Error(`등록을 눌렀지만 글이 확인되지 않았어요(현재 주소: ${page.url().slice(0, 80)}). 필수 항목이나 카페 규칙 때문일 수 있어요. logs/${job.id}-submit.png 확인`)
@@ -643,7 +715,7 @@ async function publishComment(job) {
   const needle = String(job.body || '').replace(/\s+/g, '').slice(0, 15)
   const ok = await page.evaluate((n) => (document.body?.innerText || '').replace(/\s+/g, '').includes(n), needle).catch(() => false)
   if (!ok) throw new Error('댓글을 등록했지만 화면에서 확인되지 않았어요(등록 실패 가능성).')
-  return null // 댓글은 별도 URL/24h 추적 없음
+  return { url: null, boardName: '' } // 댓글은 별도 URL/24h 추적 없음
 }
 
 // ── 하트비트 ──
@@ -677,9 +749,9 @@ async function publishTick() {
   log(`발행 시작: [${job.cafe?.name}] (${job.kind}) ${job.title || job.source_url || ''}`)
 
   // 1) 발행 시도 — 여기서 던지면 '진짜 미발행 실패'. 실패 보고 → 서버가 재시도용으로 approved 복귀(+간격 예약).
-  let url
+  let result = null
   try {
-    url = job.kind === 'comment' ? await publishComment(job) : await publishPost(job)
+    result = job.kind === 'comment' ? await publishComment(job) : await publishPost(job)
   } catch (e) {
     const msg = String((e && e.message) || e).slice(0, 300)
     // 사람이 미리보기에서 취소한 건 '실패'가 아니다 — 서버가 이미 발행 대기로 되돌렸고,
@@ -694,7 +766,16 @@ async function publishTick() {
   }
 
   // 2) 발행 확정됨 — 성공 보고는 재시도만 하고 절대 실패로 낮추지 않는다(이중발행 방지).
-  const ok = await reportResult({ id: job.id, ok: true, kind: job.kind, cafe_id: job.cafe_id, published_url: url || undefined })
+  const url = result?.url || null
+  const ok = await reportResult({
+    id: job.id,
+    ok: true,
+    kind: job.kind,
+    cafe_id: job.cafe_id,
+    published_url: url || undefined,
+    // 이번에 실제로 쓰인 게시판 이름 — 서버가 설정이 비어 있을 때만 채워 다음부터 확실해진다.
+    board_name: result?.boardName || undefined,
+  })
   if (ok) log(`✅ 발행 완료${url ? `: ${url}` : ''}`)
   else log(`⚠️ 발행은 됐지만 결과 보고 실패 — 서버에 '발행 중'으로 남습니다. 웹에서 확인 후 처리하세요(중복 발행 방지).`)
 }

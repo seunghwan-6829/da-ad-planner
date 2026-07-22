@@ -58,6 +58,16 @@ export async function POST(req: Request) {
       // 알림 + 연속 실패 카운터 초기화
       const row = flipped[0] as { title?: string; nc_cafes?: { name?: string } }
       await onPublishSuccess(row.title || '', row.nc_cafes?.name || '', typeof b.published_url === 'string' ? b.published_url : null)
+
+      /* 이번에 실제로 쓰인 게시판 이름을 발행처 설정에 채운다(비어 있을 때만).
+         한 번 성공하면 다음부터는 이름으로 정확히 고를 수 있어, 새 카페를 추가해도 저절로 자리를 잡는다. */
+      const detected = (b.board_name || '').toString().trim().slice(0, 60)
+      if (detected && cafeId) {
+        try {
+          const { data: cafe } = await supabaseAdmin.from('nc_cafes').select('board_name').eq('id', cafeId).maybeSingle()
+          if (cafe && !cafe.board_name) await supabaseAdmin.from('nc_cafes').update({ board_name: detected }).eq('id', cafeId)
+        } catch {}
+      }
     }
     // 이미 처리된 항목이면 조용히 ok(에이전트가 재시도를 멈추도록)
   } else {
