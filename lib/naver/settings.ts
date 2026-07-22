@@ -42,7 +42,8 @@ export interface NaverSettings {
 
 // 리뉴얼 원본 settings.yaml 라이브 기본값과 동일.
 export const DEFAULT_PACING: NaverPacing = {
-  active_hours: [9, 23],
+  // [0,24] = 시간 제한 없음(언제든 발행). 계정 보호는 아래 간격·상한 규칙이 맡는다.
+  active_hours: [0, 24],
   daily_post_limit: 2,
   daily_comment_limit: 8,
   per_cafe_post_weekly: 2,

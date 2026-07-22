@@ -19,8 +19,13 @@ function kstParts(nowMs: number) {
   return { y: d.getUTCFullYear(), m: d.getUTCMonth(), day: d.getUTCDate(), hour: d.getUTCHours() }
 }
 
+/* 활동 시간대 제한.
+   [0, 24] 이면 "제한 없음"으로 본다 — 24시간 언제든 발행. 화면의 시간 제한 토글이 이 값을 쓴다.
+   (새벽 테스트나 즉시 발행이 필요할 때 이 게이트가 걸리면 답답하기만 하고,
+    계정 보호는 발행 간격·일일 상한·카페별 주간 상한이 더 크게 맡는다) */
 export function inActiveHours(pacing: NaverPacing, nowMs: number = Date.now()): boolean {
   const [lo, hi] = pacing.active_hours
+  if (lo <= 0 && hi >= 24) return true // 제한 없음
   const { hour } = kstParts(nowMs)
   return lo <= hour && hour < hi
 }

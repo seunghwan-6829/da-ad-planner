@@ -48,12 +48,23 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: `캡처 저장 실패: ${String((e as Error).message || e)}` }, { status: 500 })
   }
 
-  const { error } = await supabaseAdmin
-    .from('nc_posts')
-    .update({ status: 'preview', preview_url: publicUrl, preview_at: new Date().toISOString(), preview_decision: null, updated_at: new Date().toISOString() })
-    .eq('id', id)
-    .eq('status', 'publishing')
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  // 에디터에 실제로 들어간 글자도 함께 저장한다(캡처가 잘려도 전체 내용을 확인할 수 있게).
+  const patch: Record<string, unknown> = {
+    status: 'preview',
+    preview_url: publicUrl,
+    preview_at: new Date().toISOString(),
+    preview_decision: null,
+    updated_at: new Date().toISOString(),
+    typed_title: (b.typed_title ?? '').toString().slice(0, 500),
+    typed_body: (b.typed_body ?? '').toString().slice(0, 20000),
+  }
+  let upd = await supabaseAdmin.from('nc_posts').update(patch).eq('id', id).eq('status', 'publishing')
+  if (upd.error && /typed_title|typed_body/.test(upd.error.message)) {
+    // 컬럼 미존재(마이그레이션 전) — 캡처만이라도 저장해 확인은 되게 한다.
+    delete patch.typed_title; delete patch.typed_body
+    upd = await supabaseAdmin.from('nc_posts').update(patch).eq('id', id).eq('status', 'publishing')
+  }
+  if (upd.error) return NextResponse.json({ error: upd.error.message }, { status: 500 })
 
   const cafeName = (post as { nc_cafes?: { name?: string } }).nc_cafes?.name || ''
   await recordEvent(`미리보기 대기 · ${cafeName} · ${post.title}`)

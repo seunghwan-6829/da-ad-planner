@@ -289,8 +289,24 @@ async function publishPost(job) {
      사람이 웹에서 '이대로 등록'을 누를 때까지 기다린다. 취소하면 아무것도 올리지 않는다. */
   if (job.require_preview) {
     log('  등록 직전 캡처를 올리고 확인을 기다립니다…')
-    const shot = await page.screenshot({ type: 'png', fullPage: false })
-    await http('/api/naver-cafe/agent/preview', 'POST', { id: job.id, image: shot.toString('base64') })
+    /* 화면 전체를 담는다(fullPage). 뷰포트만 찍으면 위아래가 잘려서 확인의 의미가 없다.
+       추가로 "에디터에 실제로 들어간 글자"를 그대로 읽어 함께 보낸다 —
+       캡처는 스크롤/레이아웃에 따라 일부가 안 보일 수 있지만, 이 텍스트는 항상 전체가 남는다.
+       타이핑이 중간에 씹혔는지도 웹에서 원문과 비교해 바로 알 수 있다. */
+    let typedTitle = ''
+    let typedBody = ''
+    try { typedTitle = await page.locator(TITLE_SEL).first().inputValue({ timeout: 3000 }) } catch {
+      try { typedTitle = (await page.locator(TITLE_SEL).first().innerText({ timeout: 2000 })).trim() } catch {}
+    }
+    try { typedBody = (await page.locator(BODY_SEL).first().innerText({ timeout: 3000 })).trim() } catch {}
+
+    const shot = await page.screenshot({ type: 'png', fullPage: true })
+    await http('/api/naver-cafe/agent/preview', 'POST', {
+      id: job.id,
+      image: shot.toString('base64'),
+      typed_title: typedTitle,
+      typed_body: typedBody,
+    })
     log('  ⏸ 웹 대시보드에서 [이대로 등록] 또는 [취소]를 눌러주세요. (최대 15분 대기)')
 
     const deadline = Date.now() + 15 * 60 * 1000

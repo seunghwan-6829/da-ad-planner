@@ -113,6 +113,10 @@ type Post = {
   approved_at?: string | null;
   not_before?: string | null;
   force_publish?: boolean | null; // 지금 바로 발행(페이스 규칙 1회 건너뛰기)
+  preview_url?: string | null;
+  preview_at?: string | null;
+  typed_title?: string | null; // 등록 직전 에디터에서 그대로 읽어온 값(캡처가 잘려도 확인 가능)
+  typed_body?: string | null;
   track_due_at: string | null;
   tracked_at: string | null;
   views: number | null;
@@ -835,11 +839,42 @@ export default function NaverCafePage() {
                           <button onClick={() => decidePreview(p, "approve")} className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white">이대로 등록</button>
                         </div>
                       </div>
+                      {/* 실제로 에디터에 들어간 글자 — 캡처가 잘려도 전문을 여기서 읽을 수 있다.
+                          원문과 다르면(타이핑 누락 등) 경고한다. */}
+                      {(p.typed_body || p.typed_title) && (() => {
+                        const norm = (s: string) => (s || "").replace(/\s+/g, " ").trim();
+                        const titleOk = !p.typed_title || norm(p.typed_title) === norm(p.title);
+                        const bodyOk = !p.typed_body || norm(p.typed_body) === norm(p.body);
+                        return (
+                          <div className="mb-3">
+                            {(!titleOk || !bodyOk) && (
+                              <p className="mb-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-[11px] font-semibold text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                                ⚠ 원문과 다르게 입력됐어요({!titleOk ? "제목" : ""}{!titleOk && !bodyOk ? "·" : ""}{!bodyOk ? "본문" : ""}). 아래 내용을 꼭 확인하고 등록해 주세요.
+                              </p>
+                            )}
+                            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/60">
+                              <p className="mb-1 text-[11px] font-bold text-gray-500 dark:text-gray-400">실제 입력된 내용 (에디터에서 그대로 읽음)</p>
+                              {p.typed_title && <p className="mb-1.5 text-sm font-bold dark:text-gray-100">{p.typed_title}</p>}
+                              {p.typed_body && (
+                                <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words font-sans text-[13px] leading-relaxed text-gray-700 dark:text-gray-300">{p.typed_body}</pre>
+                              )}
+                              <p className="mt-1.5 text-[11px] text-gray-400">{(p.typed_body || "").length}자</p>
+                            </div>
+                          </div>
+                        );
+                      })()}
+
                       {p.preview_url && (
-                        <a href={p.preview_url} target="_blank" rel="noopener noreferrer" title="새 탭에서 원본 크기로 보기">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={p.preview_url} alt="등록 직전 화면" className="max-h-[420px] w-full rounded-lg border border-gray-200 object-contain object-top dark:border-gray-700" />
-                        </a>
+                        <details open>
+                          <summary className="mb-1.5 cursor-pointer text-[11px] font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400">화면 캡처 보기 (클릭하면 접기 · 이미지를 누르면 원본 크기)</summary>
+                          <a href={p.preview_url} target="_blank" rel="noopener noreferrer" title="새 탭에서 원본 크기로 보기">
+                            {/* 잘림 방지: 높이 제한을 두되 스크롤로 전체를 볼 수 있게. 캡처 자체는 전체 화면(fullPage). */}
+                            <div className="max-h-[520px] overflow-y-auto rounded-lg border border-gray-200 dark:border-gray-700">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={p.preview_url} alt="등록 직전 화면" className="w-full" />
+                            </div>
+                          </a>
+                        </details>
                       )}
                       <p className="mt-2 text-[11px] text-gray-400">에이전트가 브라우저를 열어둔 채 기다리는 중이에요. 15분 안에 결정하지 않으면 등록하지 않고 대기로 돌아갑니다.</p>
                     </div>
@@ -1375,14 +1410,32 @@ export default function NaverCafePage() {
             <div className="flex-1 space-y-3 overflow-y-auto p-4">
               <p className="rounded-lg bg-gray-50 p-2.5 text-[11px] text-gray-500 dark:bg-gray-800 dark:text-gray-400">사람처럼 보이게 하는 안전장치예요. 값을 낮게(보수적으로) 둘수록 안전합니다.</p>
               <div className="grid grid-cols-2 gap-3">
-                <div className="col-span-2">
-                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">활동 시간대(시작 ~ 끝, 24시간)</label>
-                  <div className="flex items-center gap-2">
-                    <input type="number" min={0} max={23} value={pacing.active_hours[0]} onChange={(e) => setPacing({ ...pacing, active_hours: [Number(e.target.value), pacing.active_hours[1]] })} className={inputCls} />
-                    <span className="text-gray-400">~</span>
-                    <input type="number" min={1} max={24} value={pacing.active_hours[1]} onChange={(e) => setPacing({ ...pacing, active_hours: [pacing.active_hours[0], Number(e.target.value)] })} className={inputCls} />
-                  </div>
-                </div>
+                {/* 시간 제한은 기본으로 끈다(새벽에도 발행). 필요하면 켜서 시간대를 정할 수 있게 남겨둠. */}
+                {(() => {
+                  const unlimited = pacing.active_hours[0] <= 0 && pacing.active_hours[1] >= 24;
+                  return (
+                    <div className="col-span-2 rounded-lg border border-gray-200 p-2.5 dark:border-gray-700">
+                      <label className="flex cursor-pointer items-center gap-2 text-xs font-medium dark:text-gray-200">
+                        <input
+                          type="checkbox"
+                          checked={!unlimited}
+                          onChange={(e) => setPacing({ ...pacing, active_hours: e.target.checked ? [9, 23] : [0, 24] })}
+                          className="h-3.5 w-3.5"
+                        />
+                        발행 시간 제한 두기
+                        <span className="font-normal text-gray-400">{unlimited ? "— 지금은 24시간 언제든 발행" : "— 정한 시간대에만 발행"}</span>
+                      </label>
+                      {!unlimited && (
+                        <div className="mt-2 flex items-center gap-2">
+                          <input type="number" min={0} max={23} value={pacing.active_hours[0]} onChange={(e) => setPacing({ ...pacing, active_hours: [Number(e.target.value), pacing.active_hours[1]] })} className={inputCls} />
+                          <span className="text-gray-400">~</span>
+                          <input type="number" min={1} max={24} value={pacing.active_hours[1]} onChange={(e) => setPacing({ ...pacing, active_hours: [pacing.active_hours[0], Number(e.target.value)] })} className={inputCls} />
+                          <span className="shrink-0 text-[11px] text-gray-400">시</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
                 {([
                   ["daily_post_limit", "하루 글 상한"],
                   ["daily_comment_limit", "하루 댓글 상한"],
