@@ -903,11 +903,22 @@ export default function NaverCafePage() {
                   발행 대기 ({publishQueue.length})
                   <span className="ml-1 text-[11px] font-normal text-gray-400">— 올라가기 전이라 지금도 고치거나 취소할 수 있어요</span>
                 </h2>
-                {publishQueue.length > 0 && (
-                  <p className={`text-[11px] ${agentOnline ? "text-gray-400" : "font-semibold text-amber-600 dark:text-amber-300"}`}>
-                    {agentOnline ? "에이전트가 페이스 규칙에 맞춰 순서대로 올려요" : "⚠ 발행 에이전트 오프라인 — publish-agent.bat 을 켜야 올라갑니다"}
-                  </p>
-                )}
+                {/* 왜 안 올라가는지 그 자리에서 알려준다 — 승인만 해놓고 기다리는 상황을 없애기 위해. */}
+                {publishQueue.length > 0 && (() => {
+                  if (!agentOnline)
+                    return <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-300">⚠ 발행 에이전트 오프라인 — publish-agent.bat 을 켜야 올라갑니다</p>;
+                  if (pacingStat && !pacingStat.active)
+                    return (
+                      <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-300">
+                        ⏸ 지금은 휴면 시간이라 대기 중 — 바로 올리려면 [지금 발행], 시간대를 바꾸려면 상단 페이스 설정
+                      </p>
+                    );
+                  if (pacingStat && pacingStat.wait_min > 0)
+                    return <p className="text-[11px] text-amber-600 dark:text-amber-300">⏱ 다음 발행까지 {pacingStat.wait_min}분 대기 중(발행 간격 규칙)</p>;
+                  if (pacingStat && pacingStat.post_today >= pacingStat.daily_post_limit)
+                    return <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-300">📌 오늘 글 상한({pacingStat.daily_post_limit}건)을 다 채웠어요 — 내일 이어서 올라갑니다</p>;
+                  return <p className="text-[11px] text-gray-400">에이전트가 페이스 규칙에 맞춰 순서대로 올려요</p>;
+                })()}
               </div>
               {publishQueue.length === 0 ? (
                 <p className="py-4 text-center text-xs text-gray-400">발행 대기 중인 글이 없어요. 검수 대기에서 승인하면 여기로 옵니다.</p>

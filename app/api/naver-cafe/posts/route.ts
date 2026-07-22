@@ -131,8 +131,17 @@ export async function PATCH(req: Request) {
 
   const run = () => supabaseAdmin.from('nc_posts').update(patch).in('id', ids)
   let res = await run()
-  // force_publish 컬럼 미존재(마이그레이션 전) 폴백
+  /* force_publish 컬럼 미존재(마이그레이션 전).
+     ⚠️ 사용자가 '지금 발행'을 명시적으로 눌렀을 때는 조용히 건너뛰면 안 된다 —
+        경고까지 읽고 눌렀는데 아무 일도 안 일어나고 이유도 모르게 된다.
+        요청하지 않은 경우(다른 수정과 함께 딸려온 경우)에만 조용히 무시한다. */
   if (res.error && /force_publish/.test(res.error.message)) {
+    if (b.force_publish === true) {
+      return NextResponse.json(
+        { error: "'지금 발행'을 쓰려면 db/naver-cafe-force-publish.sql 을 Supabase 에서 한 번 실행해 주세요. (force_publish 컬럼이 아직 없어요)" },
+        { status: 409 }
+      )
+    }
     delete patch.force_publish
     res = await run()
   }
