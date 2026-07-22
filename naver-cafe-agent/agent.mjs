@@ -424,57 +424,51 @@ async function listBoardOptions(page) {
   } catch { return [] }
 }
 
-/** 게시판 선택 컨트롤(트리거)을 찾는다. 못 찾으면 null. */
+/** 지금 화면에 "게시판을 선택해 주세요" 안내가 보이는가? (= 아직 게시판을 골라야 하는가)
+ *  ★ 핵심: 게시판 [글쓰기]로 들어오면 게시판이 이미 고정돼 이 안내 자체가 없다 → 고를 필요 없음. */
+async function boardNeedsSelection(page) {
+  try {
+    return await page.evaluate(() => {
+      for (const el of document.querySelectorAll('button, [role="button"], a, div, span')) {
+        const own = [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join('').trim()
+        if (/게시판을?\s*선택/.test(own) && !/말머리/.test(own)) {
+          const r = el.getBoundingClientRect()
+          if (r.width > 0 && r.height > 0) return true
+        }
+      }
+      return false
+    })
+  } catch {
+    return false
+  }
+}
+
+/** 게시판 선택 드롭다운 트리거(안내 텍스트가 있을 때만 존재). 못 찾으면 null. */
 async function findBoardControl(page) {
   return await firstVisible(page, [
     'select[name*="menu" i]',
     'select[class*="board" i]',
-    'button[class*="board" i]',
-    '[class*="BoardSelect"] button',
-    '[class*="board_select"] button',
     'button:has-text("게시판을 선택")',
     '[role="button"]:has-text("게시판을 선택")',
-  ], 2500)
+    '[class*="BoardSelect"] button',
+    '[class*="board_select"] button',
+  ], 1500)
 }
 
 /**
- * 지금 게시판이 골라져 있는지 3가지로 판정한다.
- *   'selected' | 'unselected' | 'unreadable'
- * ⚠️ 못 읽은 것을 '선택됨'으로 넘기면, 비활성 등록 버튼을 누르고 엉뚱한 데서 실패한다.
- *    반대로 조상 요소를 읽으면 숨은 옵션 목록의 플레이스홀더까지 딸려와 영원히 '미선택'이 된다.
- *    그래서 트리거 "자기 자신"의 텍스트만 읽는다.
- */
-async function boardState(page) {
-  const el = await findBoardControl(page)
-  if (!el) return { state: 'unreadable', text: '' }
-  let text = ''
-  try {
-    text = (await el.evaluate((n) => (n.tagName === 'SELECT' ? (n.selectedOptions[0]?.label ?? '') : (n.textContent || '')))).trim()
-  } catch { return { state: 'unreadable', text: '' } }
-  if (!text) return { state: 'unreadable', text: '' }
-  return { state: /선택해\s*주세요|게시판을?\s*선택/.test(text) ? 'unselected' : 'selected', text }
-}
-
-/**
- * 게시판을 고른다. URL 의 menuId 만 믿지 않는다 —
- * 자동 선택이 안 된 채로 두면 [등록]이 비활성이라 눌러도 아무 일이 없다(실측한 실패 원인).
- * ⚠️ 아는 게시판(이름/ID)이 아니면 **절대 아무거나 고르지 않는다**.
- *    엉뚱한 게시판에 글이 올라가는 것이 발행 실패보다 훨씬 나쁘다.
+ * 게시판이 정해졌는지 확인하고, 안 됐으면 골라준다.
+ *  ① 게시판 [글쓰기]로 들어오면 게시판이 이미 고정 → "게시판을 선택" 안내가 없음 → 그대로 OK.
+ *  ② 안내가 보이면(직접 URL 진입 등) 아는 이름/menuId 로만 고른다. 임의 선택은 절대 안 한다.
  * @param {boolean} readOnly 자가검사용 — 클릭하지 않고 현재 상태만 본다.
  * @returns {{ok:boolean, detail:string}}
  */
 async function ensureBoardSelected(page, menuId, boardName, readOnly = false) {
-  // SPA 라 목록이 늦게 채워질 수 있어 잠깐 기다려 본다.
-  let st = await boardState(page)
-  for (let i = 0; i < 6 && st.state !== 'selected'; i++) {
-    await sleep(800)
-    st = await boardState(page)
-    if (st.state === 'selected') break
-  }
-  if (st.state === 'selected') return { ok: true, detail: `이미 선택됨(${st.text})` }
-  if (readOnly) return { ok: false, detail: st.state === 'unreadable' ? '게시판 선택 칸을 찾지 못함' : `미선택(${st.text})` }
-  if (st.state === 'unreadable') return { ok: false, detail: '게시판 선택 칸을 찾지 못했습니다(화면 구조 변경 가능성)' }
+  // SPA 라 안내가 늦게 뜰 수 있어 잠깐 지켜본다. "안내 없음"이 곧 "게시판 정해짐".
+  let needs = await boardNeedsSelection(page)
+  for (let i = 0; i < 5 && needs; i++) { await sleep(700); needs = await boardNeedsSelection(page) }
+  if (!needs) return { ok: true, detail: '게시판 고정됨(선택 불필요)' }
 
+  if (readOnly) return { ok: false, detail: '게시판 미선택 상태(발행 시 이름/ID로 선택 시도)' }
   if (!menuId && !boardName) {
     return { ok: false, detail: '어느 게시판인지 알 수 없습니다 — 발행처 설정에 게시판 이름을 넣어주세요' }
   }
@@ -486,8 +480,7 @@ async function ensureBoardSelected(page, menuId, boardName, readOnly = false) {
       try {
         await nativeSel.selectOption(opt)
         await sleep(400)
-        const after = await boardState(page)
-        if (after.state === 'selected') return { ok: true, detail: `선택함(${after.text})` }
+        if (!(await boardNeedsSelection(page))) return { ok: true, detail: '선택함(native select)' }
       } catch {}
     }
   }
@@ -537,8 +530,7 @@ async function ensureBoardSelected(page, menuId, boardName, readOnly = false) {
 
     if (clicked) {
       await sleep(700)
-      const after = await boardState(page)
-      if (after.state === 'selected') return { ok: true, detail: `선택함(${after.text})` }
+      if (!(await boardNeedsSelection(page))) return { ok: true, detail: `선택함(${clicked})` }
     }
   }
 
