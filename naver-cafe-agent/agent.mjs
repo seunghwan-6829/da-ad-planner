@@ -284,6 +284,37 @@ async function publishPost(job) {
   }
   await sleep(500)
 
+  /* 발행 전 미리보기(안전장치).
+     서버가 require_preview 를 켜서 보내면, 여기서 등록을 누르지 않고 화면을 캡처해 올린 뒤
+     사람이 웹에서 '이대로 등록'을 누를 때까지 기다린다. 취소하면 아무것도 올리지 않는다. */
+  if (job.require_preview) {
+    log('  등록 직전 캡처를 올리고 확인을 기다립니다…')
+    const shot = await page.screenshot({ type: 'png', fullPage: false })
+    await http('/api/naver-cafe/agent/preview', 'POST', { id: job.id, image: shot.toString('base64') })
+    log('  ⏸ 웹 대시보드에서 [이대로 등록] 또는 [취소]를 눌러주세요. (최대 15분 대기)')
+
+    const deadline = Date.now() + 15 * 60 * 1000
+    let decision = null
+    while (Date.now() < deadline) {
+      await sleep(5000)
+      try {
+        const r = await http(`/api/naver-cafe/agent/preview?id=${encodeURIComponent(job.id)}`, 'GET')
+        if (r.decision === 'approve' || r.decision === 'cancel') { decision = r.decision; break }
+      } catch { /* 일시적 통신 오류는 계속 대기 */ }
+    }
+    if (decision === 'cancel') {
+      const e = new Error('사람이 취소함')
+      e.cancelled = true // 실패가 아니라 '의도된 중단' — 실패 카운트에 넣지 않는다
+      throw e
+    }
+    if (decision !== 'approve') {
+      const e = new Error('미리보기 확인 시간(15분) 초과 — 등록하지 않았습니다')
+      e.cancelled = true
+      throw e
+    }
+    log('  ✅ 확인됨 — 등록합니다.')
+  }
+
   // 등록
   await page.locator(SUBMIT_SEL).first().click({ timeout: 8000 }).catch(() => {
     throw new Error('등록 버튼을 찾지 못했어요(네이버 화면 변경). self-check.bat 으로 확인해 주세요.')
@@ -334,13 +365,18 @@ async function reportResult(payload) {
 
 // ── 발행 틱: 서버가 넘겨준 job 하나 처리 ──
 let idleReason = ''
+let halted = false // 서버가 자동 중단한 상태인지(로그 도배 방지용)
 async function publishTick() {
   let res
   try { res = await http('/api/naver-cafe/agent/next', 'GET') } catch (e) { log('next 조회 실패:', String(e.message || e).slice(0, 120)); return }
   if (res.none || !res.job) {
+    // 서버가 연속 실패로 자동 중단한 상태 — 조용히 기다린다(웹에서 [재개]하면 풀린다).
+    if (res.halted && !halted) { halted = true; log(`🛑 ${res.reason}`) }
+    if (!res.halted) halted = false
     if (res.reason && res.reason !== idleReason) { log(`대기: ${res.reason}`); idleReason = res.reason }
     return
   }
+  halted = false
   idleReason = ''
   const job = res.job
   log(`발행 시작: [${job.cafe?.name}] (${job.kind}) ${job.title || job.source_url || ''}`)
@@ -351,6 +387,9 @@ async function publishTick() {
     url = job.kind === 'comment' ? await publishComment(job) : await publishPost(job)
   } catch (e) {
     const msg = String((e && e.message) || e).slice(0, 300)
+    // 사람이 미리보기에서 취소한 건 '실패'가 아니다 — 서버가 이미 발행 대기로 되돌렸고,
+    // 실패로 보고하면 연속 실패 카운터가 올라가 엉뚱하게 자동 중단된다.
+    if (e && e.cancelled) { log(`⏹ 등록하지 않았습니다: ${msg}`); return }
     log(`❌ 발행 실패: ${msg}`)
     try { const p = context?.pages()[0]; if (p) await p.screenshot({ path: join(LOGS, `${job.id}.png`), fullPage: false }) } catch {}
     await reportResult({ id: job.id, ok: false, kind: job.kind, cafe_id: job.cafe_id, note: msg })

@@ -72,7 +72,19 @@ type Cafe = {
   rules?: { promo_banned?: boolean; notes?: string } | null;
 };
 
-type PostStatus = "draft" | "approved" | "queued" | "publishing" | "published" | "rejected" | "failed" | "saved";
+type PostStatus = "draft" | "approved" | "queued" | "publishing" | "preview" | "published" | "rejected" | "failed" | "saved";
+
+/* 에이전트 상태 상세 — "왜 안 올라가지?"를 화면에서 바로 알 수 있게. */
+type AgentState = {
+  online: boolean;
+  last_seen: string | null;
+  halted: boolean;
+  halt_reason: string | null;
+  fail_streak: number;
+  last_event: string | null;
+  last_event_at: string | null;
+  next_action_at: string | null;
+};
 
 /* 대시보드 상단 카드로 고르는 화면 필터. '모두'가 기본이고 나머지는 해당 섹션만 보여준다. */
 type DashView = "all" | "draft" | "approved" | "published" | "week" | "track";
@@ -367,6 +379,9 @@ export default function NaverCafePage() {
   const [cafes, setCafes] = useState<Cafe[]>(() => ncMemCache?.cafes ?? []);
   const [posts, setPosts] = useState<Post[]>(() => ncMemCache?.posts ?? []);
   const [agentOnline, setAgentOnline] = useState<boolean | null>(() => ncMemCache?.agentOnline ?? null);
+  const [agentState, setAgentState] = useState<AgentState | null>(null);
+  const [picked, setPicked] = useState<Set<string>>(new Set()); // 일괄 승인/반려용 선택
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [pacing, setPacing] = useState<Pacing | null>(null);
   const [pacingStat, setPacingStat] = useState<PacingStatus | null>(null);
   const [loadErr, setLoadErr] = useState("");
@@ -390,7 +405,11 @@ export default function NaverCafePage() {
       .then(async (r) => { const j = await r.json().catch(() => []); if (!r.ok) throw new Error(); setCafes(j as Cafe[]); setLoadErr(""); })
       .catch(() => setLoadErr("데이터를 불러오지 못했어요. db/naver-cafe.sql(v3 마이그레이션 포함)이 실행됐는지 확인해 주세요."));
     fetch("/api/naver-cafe/posts").then((r) => (r.ok ? r.json() : [])).then((j) => setPosts(j as Post[])).catch(() => {});
-    fetch("/api/naver-cafe/agent").then((r) => (r.ok ? r.json() : null)).then((j) => j && setAgentOnline(!!j.online)).catch(() => {});
+    // 상태 상세(마지막 동작·다음 예정·자동 중단)까지 한 번에. 실패해도 온라인 표시만 못 할 뿐.
+    fetch("/api/naver-cafe/agent/state")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (j) { setAgentOnline(!!j.online); setAgentState(j as AgentState); } })
+      .catch(() => {});
     fetch("/api/naver-cafe/settings").then((r) => (r.ok ? r.json() : null)).then((j) => { if (j) { setPacing(j.pacing); setPacingStat(j.status); } }).catch(() => {});
   }, []);
   useEffect(() => { loadAll(); const t = setInterval(loadAll, 15_000); return () => clearInterval(t); }, [loadAll]);
@@ -455,6 +474,56 @@ export default function NaverCafePage() {
       loadAll();
     } catch (e) { alert(e instanceof Error ? e.message : "처리 실패"); }
   }
+  // ── 일괄 승인/반려 ──
+  function togglePick(id: string) {
+    setPicked((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  }
+  async function bulkPatch(status: PostStatus) {
+    const ids = [...picked];
+    if (!ids.length) return;
+    const label = status === "approved" ? "승인" : status === "rejected" ? "반려" : "보관";
+    if (!confirm(`선택한 ${ids.length}건을 ${label}할까요?`)) return;
+    setBulkBusy(true);
+    try {
+      await api("/api/naver-cafe/posts", "PATCH", { ids, status });
+      setPicked(new Set());
+      loadAll();
+    } catch (e) { alert(e instanceof Error ? e.message : "처리 실패"); } finally { setBulkBusy(false); }
+  }
+
+  // ── 발행 전 미리보기 결정 ──
+  async function decidePreview(p: Post, decision: "approve" | "cancel") {
+    if (decision === "cancel" && !confirm("등록하지 않고 발행 대기로 되돌릴까요?")) return;
+    try {
+      await api("/api/naver-cafe/posts", "PATCH", { id: p.id, preview_decision: decision });
+      loadAll();
+    } catch (e) { alert(e instanceof Error ? e.message : "처리 실패"); }
+  }
+
+  // ── 예약 발행 (not_before) ──
+  async function schedule(p: Post) {
+    const cur = p.not_before ? new Date(p.not_before) : new Date(Date.now() + 3600_000);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const def = `${cur.getFullYear()}-${pad(cur.getMonth() + 1)}-${pad(cur.getDate())} ${pad(cur.getHours())}:${pad(cur.getMinutes())}`;
+    const input = prompt("이 시각 이후에 발행합니다.\n형식: YYYY-MM-DD HH:MM  (비우면 예약 해제)", def);
+    if (input === null) return;
+    const v = input.trim();
+    if (v && Number.isNaN(new Date(v.replace(" ", "T")).getTime())) { alert("시각 형식이 올바르지 않아요. 예) 2026-07-22 14:30"); return; }
+    try {
+      await api("/api/naver-cafe/posts", "PATCH", { id: p.id, not_before: v ? new Date(v.replace(" ", "T")).toISOString() : null });
+      loadAll();
+    } catch (e) { alert(e instanceof Error ? e.message : "처리 실패"); }
+  }
+
+  // ── 자동 중단 해제 ──
+  async function resumeAgent() {
+    if (!confirm("자동 중단을 해제하고 발행을 재개할까요?\n실패 원인을 먼저 확인하셨는지 점검해 주세요.")) return;
+    try {
+      await api("/api/naver-cafe/agent/state", "POST", { resume: true });
+      loadAll();
+    } catch (e) { alert(e instanceof Error ? e.message : "처리 실패"); }
+  }
+
   async function removePost(p: Post) {
     if (!confirm("이 글을 삭제할까요?")) return;
     await fetch(`/api/naver-cafe/posts?id=${p.id}`, { method: "DELETE" });
@@ -493,6 +562,8 @@ export default function NaverCafePage() {
     return s;
   }, [posts]);
   const reviewQueue = useMemo(() => posts.filter((p) => p.status === "draft").slice(0, 20), [posts]);
+  // 등록 직전 사람 확인을 기다리는 글(에이전트가 브라우저를 열어둔 채 대기 중).
+  const previewQueue = useMemo(() => posts.filter((p) => p.status === "preview"), [posts]);
   // 승인됐지만 아직 안 올라간 글 — 여기서 수정/취소/즉시발행을 한다.
   const publishQueue = useMemo(
     () => posts.filter((p) => p.status === "approved" || p.status === "queued" || p.status === "publishing"),
@@ -566,7 +637,31 @@ export default function NaverCafePage() {
   const agentBadge = (
     <div className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium ${agentOnline ? "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300" : "border-gray-200 bg-gray-50 text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400"}`}
       title={agentOnline ? "승인된 글을 페이스 규칙에 맞춰 실제 타이핑으로 등록하고, 24시간 후 반응을 측정합니다" : "내 PC에서 naver-cafe-agent 를 실행하면 발행·반응측정이 자동으로 돌아요"}>
-      <Bot className="h-4 w-4" /> 발행 에이전트 {agentOnline == null ? "확인 중…" : agentOnline ? "온라인" : "오프라인"}
+      <Bot className="h-4 w-4" /> 발행 에이전트 {agentOnline == null ? "확인 중…" : agentState?.halted ? "중단됨" : agentOnline ? "온라인" : "오프라인"}
+    </div>
+  );
+
+  /* 에이전트 상태 상세 — 마지막 동작 / 다음 발행 예정 / 연속 실패.
+     "켜져 있는데 왜 안 올라가지?"를 화면에서 바로 판단할 수 있게. */
+  const agentDetail = agentState && (
+    <div className="mb-5 flex flex-wrap items-center gap-x-5 gap-y-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-[11px] dark:border-gray-800 dark:bg-gray-900">
+      <span className="flex items-center gap-1.5 font-semibold dark:text-gray-200">
+        <span className={`h-1.5 w-1.5 rounded-full ${agentState.halted ? "bg-rose-500" : agentState.online ? "bg-emerald-500" : "bg-gray-300"}`} />
+        {agentState.halted ? "자동 중단됨" : agentState.online ? "에이전트 동작 중" : "에이전트 꺼짐"}
+      </span>
+      <span className="text-gray-500 dark:text-gray-400">마지막 신호 {agentState.last_seen ? new Date(agentState.last_seen).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }) : "—"}</span>
+      <span className="text-gray-500 dark:text-gray-400">
+        다음 발행 가능 {agentState.next_action_at && new Date(agentState.next_action_at) > new Date()
+          ? new Date(agentState.next_action_at).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })
+          : "지금"}
+      </span>
+      {agentState.fail_streak > 0 && <span className="font-semibold text-amber-600 dark:text-amber-300">연속 실패 {agentState.fail_streak}회</span>}
+      {agentState.last_event && (
+        <span className="min-w-0 flex-1 truncate text-gray-400" title={agentState.last_event}>
+          최근: {agentState.last_event}
+          {agentState.last_event_at ? ` (${new Date(agentState.last_event_at).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })})` : ""}
+        </span>
+      )}
     </div>
   );
 
@@ -679,10 +774,56 @@ export default function NaverCafePage() {
                 );
               })}
             </div>
+            {agentDetail}
             {view !== "all" && (
               <div className="mb-4 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
                 <span>필터: <b className="text-primary">{VIEW_LABEL[view]}</b>만 보는 중</span>
                 <button onClick={() => setView("all")} className="rounded-full border border-gray-200 px-2 py-0.5 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800">전체 보기</button>
+              </div>
+            )}
+
+            {/* 자동 중단 배너 — 연속 실패로 멈췄을 때. 원인 확인 후 재개. */}
+            {agentState?.halted && (
+              <div className="mb-4 flex flex-wrap items-center gap-3 rounded-2xl border-2 border-rose-300 bg-rose-50 p-4 dark:border-rose-800 dark:bg-rose-950/30">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-bold text-rose-800 dark:text-rose-200">🛑 발행이 자동으로 중단됐어요</p>
+                  <p className="mt-0.5 text-xs text-rose-700 dark:text-rose-300">{agentState.halt_reason}</p>
+                  <p className="mt-1 text-[11px] text-rose-600/80 dark:text-rose-400/80">같은 실패를 반복하지 않으려고 멈춘 거예요. 원인을 확인한 뒤 재개해 주세요.</p>
+                </div>
+                <button onClick={resumeAgent} className="shrink-0 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rose-700">재개</button>
+              </div>
+            )}
+
+            {/* 등록 직전 확인 — 에이전트가 화면을 다 채우고 사람 확인을 기다리는 중 */}
+            {previewQueue.length > 0 && (
+              <div className="mb-5 rounded-2xl border-2 border-primary/40 bg-primary/5 p-4">
+                <h2 className="mb-2 text-sm font-bold dark:text-gray-100">
+                  ⏸ 등록 직전 확인 ({previewQueue.length})
+                  <span className="ml-1 text-[11px] font-normal text-gray-500 dark:text-gray-400">— 지금 카페 글쓰기 화면이 이렇게 채워져 있어요. 확인해야 등록됩니다</span>
+                </h2>
+                <div className="space-y-4">
+                  {previewQueue.map((p) => (
+                    <div key={p.id} className="rounded-xl border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-900">
+                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold dark:text-gray-100">{p.title}</p>
+                          <p className="text-[11px] text-gray-400">{p.nc_cafes?.name} · 대기 시작 {p.preview_at ? new Date(p.preview_at).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }) : "—"}</p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <button onClick={() => decidePreview(p, "cancel")} className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">취소</button>
+                          <button onClick={() => decidePreview(p, "approve")} className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white">이대로 등록</button>
+                        </div>
+                      </div>
+                      {p.preview_url && (
+                        <a href={p.preview_url} target="_blank" rel="noopener noreferrer" title="새 탭에서 원본 크기로 보기">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={p.preview_url} alt="등록 직전 화면" className="max-h-[420px] w-full rounded-lg border border-gray-200 object-contain object-top dark:border-gray-700" />
+                        </a>
+                      )}
+                      <p className="mt-2 text-[11px] text-gray-400">에이전트가 브라우저를 열어둔 채 기다리는 중이에요. 15분 안에 결정하지 않으면 등록하지 않고 대기로 돌아갑니다.</p>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -693,11 +834,41 @@ export default function NaverCafePage() {
                 <h2 className="text-sm font-bold dark:text-gray-100">검수 대기 <span className="ml-1 text-[11px] font-normal text-gray-400">— 승인하면 페이스 규칙에 맞춰 자동 발행돼요</span></h2>
                 <button onClick={() => setCompose({ fixed: null })} disabled={!cafes.length} className="flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"><PenLine className="h-3.5 w-3.5" /> 직접 기획</button>
               </div>
+              {/* 일괄 처리 바 — 초안이 100건 넘게 쌓여 하나씩 누르기 힘들어서. */}
+              {reviewQueue.length > 0 && (
+                <div className="mb-2 flex flex-wrap items-center gap-2 rounded-xl bg-gray-50 px-3 py-2 dark:bg-gray-800/60">
+                  <label className="flex cursor-pointer items-center gap-1.5 text-xs text-gray-600 dark:text-gray-300">
+                    <input
+                      type="checkbox"
+                      checked={picked.size > 0 && reviewQueue.every((p) => picked.has(p.id))}
+                      onChange={(e) => setPicked(e.target.checked ? new Set(reviewQueue.map((p) => p.id)) : new Set())}
+                      className="h-3.5 w-3.5"
+                    />
+                    이 목록 전체 선택
+                  </label>
+                  <span className="text-xs text-gray-400">{picked.size > 0 ? `${picked.size}건 선택됨` : "체크해서 여러 건을 한 번에 처리할 수 있어요"}</span>
+                  {picked.size > 0 && (
+                    <div className="ml-auto flex items-center gap-1.5">
+                      <button onClick={() => bulkPatch("approved")} disabled={bulkBusy} className="rounded-lg bg-primary px-2.5 py-1 text-[11px] font-medium text-white disabled:opacity-50">일괄 승인</button>
+                      <button onClick={() => bulkPatch("saved")} disabled={bulkBusy} className="rounded-lg border border-gray-200 px-2.5 py-1 text-[11px] font-medium text-gray-600 hover:bg-white disabled:opacity-50 dark:border-gray-700 dark:text-gray-300">일괄 보관</button>
+                      <button onClick={() => bulkPatch("rejected")} disabled={bulkBusy} className="rounded-lg border border-gray-200 px-2.5 py-1 text-[11px] font-medium text-gray-600 hover:bg-white disabled:opacity-50 dark:border-gray-700 dark:text-gray-300">일괄 반려</button>
+                      <button onClick={() => setPicked(new Set())} className="text-[11px] text-gray-400 underline">선택 해제</button>
+                    </div>
+                  )}
+                </div>
+              )}
               {reviewQueue.length === 0 ? (
                 <p className="py-4 text-center text-xs text-gray-400">검수할 초안이 없어요. 발행처에서 [오늘 초안 생성]을 눌러보세요.</p>
               ) : (
                 <div className="divide-y dark:divide-gray-800">
-                  {reviewQueue.map((p) => <QueueRow key={p.id} p={p} showCafe onOpen={() => setPostModal(p)} onAction={(s) => patchStatus(p, s)} onDelete={() => removePost(p)} />)}
+                  {reviewQueue.map((p) => (
+                    <div key={p.id} className="flex items-center gap-2">
+                      <input type="checkbox" checked={picked.has(p.id)} onChange={() => togglePick(p.id)} className="h-3.5 w-3.5 shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <QueueRow p={p} showCafe onOpen={() => setPostModal(p)} onAction={(s) => patchStatus(p, s)} onDelete={() => removePost(p)} />
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -738,6 +909,7 @@ export default function NaverCafePage() {
                         <button onClick={() => setPostModal(p)} title="내용 수정" className="rounded-lg border border-gray-200 px-2 py-1 text-[11px] font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">수정</button>
                         {p.status !== "publishing" && (
                           <>
+                            <button onClick={() => schedule(p)} title="이 시각 이후에 발행되도록 예약" className="rounded-lg border border-gray-200 px-2 py-1 text-[11px] font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">{p.not_before && new Date(p.not_before) > new Date() ? "예약 변경" : "예약"}</button>
                             <button onClick={() => patchStatus(p, "draft")} title="발행 대기 취소(초안으로 되돌리기)" className="rounded-lg border border-gray-200 px-2 py-1 text-[11px] font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">대기 취소</button>
                             <button onClick={() => publishNow(p)} title="페이스 규칙을 건너뛰고 지금 바로 올립니다" className="rounded-lg bg-rose-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-rose-700">지금 발행</button>
                           </>

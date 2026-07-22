@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getNaverSettings } from '@/lib/naver/settings'
 import { logActivity, scheduleNext } from '@/lib/naver/pacing'
+import { onPublishSuccess, onPublishFailure } from '@/lib/naver/notify'
 
 export const dynamic = 'force-dynamic'
 
@@ -42,16 +43,19 @@ export async function POST(req: Request) {
       patch.track_due_at = new Date(Date.now() + 24 * 3600 * 1000).toISOString() // 발행 +24h → 반응 측정
     }
     // ★ publishing 상태일 때만 flip → 중복 성공 보고(재시도)에도 활동 이중 카운트/간격 재-roll 방지(멱등).
-    const { data: flipped } = await supabaseAdmin.from('nc_posts').update(patch).eq('id', id).eq('status', 'publishing').select('id')
+    const { data: flipped } = await supabaseAdmin.from('nc_posts').update(patch).eq('id', id).eq('status', 'publishing').select('id, title, nc_cafes(name)')
     if (flipped?.length) {
       await logActivity(kind, cafeId) // 페이스 카운트 원천(성공 1회당 1행)
       const { pacing } = await getNaverSettings()
       await scheduleNext(pacing) // 다음 동작 허용 시각 랜덤 예약
+      // 알림 + 연속 실패 카운터 초기화
+      const row = flipped[0] as { title?: string; nc_cafes?: { name?: string } }
+      await onPublishSuccess(row.title || '', row.nc_cafes?.name || '', typeof b.published_url === 'string' ? b.published_url : null)
     }
     // 이미 처리된 항목이면 조용히 ok(에이전트가 재시도를 멈추도록)
   } else {
     // ★ publishing 상태일 때만 실패 처리(중복/지연 실패 보고 무시).
-    const { data: cur } = await supabaseAdmin.from('nc_posts').select('fail_count, status').eq('id', id).maybeSingle()
+    const { data: cur } = await supabaseAdmin.from('nc_posts').select('fail_count, status, title, nc_cafes(name)').eq('id', id).maybeSingle()
     if (cur?.status === 'publishing') {
       const fc = (((cur?.fail_count as number) || 0) + 1)
       await supabaseAdmin
@@ -59,8 +63,12 @@ export async function POST(req: Request) {
         .update({ status: fc >= MAX_FAIL ? 'failed' : 'approved', fail_count: fc, error: note || null, note: note || null, updated_at: nowISO })
         .eq('id', id)
         .eq('status', 'publishing')
-      const { pacing } = await getNaverSettings()
+      const { pacing, options } = await getNaverSettings()
       await scheduleNext(pacing) // 재시도도 사람처럼 간격(25~90분) — 20초 재시도 폭주 방지
+      // 알림 + 연속 실패 누적 → 상한에 닿으면 에이전트 자동 중단(같은 실패 반복 방지)
+      const cafeName = (cur as { nc_cafes?: { name?: string } }).nc_cafes?.name || ''
+      const halted = await onPublishFailure(cur.title || '', cafeName, note || '알 수 없는 오류', options.halt_after_failures)
+      return NextResponse.json({ ok: true, halted })
     }
   }
   return NextResponse.json({ ok: true })

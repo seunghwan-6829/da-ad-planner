@@ -71,9 +71,38 @@ export async function POST(req: Request) {
 
 export async function PATCH(req: Request) {
   const b = await req.json().catch(() => ({}))
-  const id = (b.id || '').toString()
-  if (!id) return NextResponse.json({ error: 'id 필요' }, { status: 400 })
+  // 단건(id) 또는 일괄(ids[]) — 일괄 승인/반려용. 최대 200건.
+  const ids: string[] = Array.isArray(b.ids)
+    ? b.ids.map((x: unknown) => String(x)).filter(Boolean).slice(0, 200)
+    : (b.id ? [String(b.id)] : [])
+  if (!ids.length) return NextResponse.json({ error: 'id 또는 ids 필요' }, { status: 400 })
+  const id = ids[0]
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
+
+  /* 발행 전 미리보기 결정 — 'approve' 면 등록을 진행하도록 publishing 으로 되돌리고,
+     'cancel' 이면 발행 대기(approved)로 되돌린다. 에이전트가 이 값을 폴링해서 움직인다. */
+  if (b.preview_decision === 'approve' || b.preview_decision === 'cancel') {
+    const decided = await supabaseAdmin
+      .from('nc_posts')
+      .update({
+        preview_decision: b.preview_decision,
+        status: b.preview_decision === 'approve' ? 'publishing' : 'approved',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+      .eq('status', 'preview') // 미리보기 대기 상태에서만 (중복 클릭 방지)
+      .select('id')
+    if (decided.error) return NextResponse.json({ error: decided.error.message }, { status: 500 })
+    if (!decided.data?.length) return NextResponse.json({ error: '이미 처리된 글이에요.' }, { status: 409 })
+    return NextResponse.json({ ok: true })
+  }
+
+  /* 예약 발행 — not_before 이전에는 에이전트가 집어가지 않는다(기존 로직 그대로 활용).
+     빈 문자열/null 이면 예약 해제. */
+  if ('not_before' in b) {
+    const v = b.not_before
+    patch.not_before = v ? new Date(String(v)).toISOString() : null
+  }
   if (typeof b.title === 'string') patch.title = b.title
   if (typeof b.body === 'string') patch.body = b.body
   if (typeof b.status === 'string') {
@@ -100,18 +129,19 @@ export async function PATCH(req: Request) {
     }
   }
 
-  let res = await supabaseAdmin.from('nc_posts').update(patch).eq('id', id)
+  const run = () => supabaseAdmin.from('nc_posts').update(patch).in('id', ids)
+  let res = await run()
   // force_publish 컬럼 미존재(마이그레이션 전) 폴백
   if (res.error && /force_publish/.test(res.error.message)) {
     delete patch.force_publish
-    res = await supabaseAdmin.from('nc_posts').update(patch).eq('id', id)
+    res = await run()
   }
   if (res.error && /approved_at|fail_count|not_before/.test(res.error.message)) {
     delete patch.approved_at; delete patch.fail_count; delete patch.not_before
-    res = await supabaseAdmin.from('nc_posts').update(patch).eq('id', id)
+    res = await run()
   }
   if (res.error) return NextResponse.json({ error: res.error.message }, { status: 500 })
-  return NextResponse.json({ ok: true })
+  return NextResponse.json({ ok: true, count: ids.length })
 }
 
 export async function DELETE(req: Request) {

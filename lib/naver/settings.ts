@@ -19,9 +19,25 @@ export interface NaverClaude {
   max_tokens: number
 }
 
+/* 운영 옵션(v4) — 페이스와 별개로, 사고를 막는 안전장치들. */
+export interface NaverOptions {
+  preview_before_publish: boolean // 등록 직전 캡처를 사람이 확인해야 실제 등록
+  halt_after_failures: number     // 연속 N회 실패하면 에이전트 자동 중단(0=끄기)
+  dup_window_days: number         // 최근 N일 안의 발행글과 비교
+  dup_similarity: number          // 제목 유사도 이 값 이상이면 중복으로 보고 보류(0~1)
+}
+
+export const DEFAULT_OPTIONS: NaverOptions = {
+  preview_before_publish: true, // 첫 발행 안전장치. 익숙해지면 화면에서 끌 수 있다.
+  halt_after_failures: 2,
+  dup_window_days: 14,
+  dup_similarity: 0.6,
+}
+
 export interface NaverSettings {
   pacing: NaverPacing
   claude: NaverClaude
+  options: NaverOptions
 }
 
 // 리뉴얼 원본 settings.yaml 라이브 기본값과 동일.
@@ -55,16 +71,43 @@ function normalizePacing(raw: Partial<NaverPacing> | null | undefined): NaverPac
   return p
 }
 
+function normalizeOptions(raw: Partial<NaverOptions> | null | undefined): NaverOptions {
+  const o = { ...DEFAULT_OPTIONS, ...(raw || {}) }
+  o.preview_before_publish = o.preview_before_publish !== false
+  for (const k of ['halt_after_failures', 'dup_window_days', 'dup_similarity'] as const) {
+    const v = Number((o as Record<string, unknown>)[k])
+    ;(o as Record<string, unknown>)[k] = Number.isFinite(v) ? v : DEFAULT_OPTIONS[k]
+  }
+  o.dup_similarity = Math.min(1, Math.max(0, o.dup_similarity))
+  return o
+}
+
 export async function getNaverSettings(): Promise<NaverSettings> {
   try {
-    const { data } = await supabaseAdmin.from('nc_settings').select('pacing, claude').eq('id', 1).single()
+    // options 컬럼이 아직 없을 수 있어(마이그레이션 전) 실패하면 pacing/claude 만 읽는다.
+    let data: { pacing?: unknown; claude?: unknown; options?: unknown } | null = null
+    const withOpts = await supabaseAdmin.from('nc_settings').select('pacing, claude, options').eq('id', 1).single()
+    if (withOpts.error) {
+      const legacy = await supabaseAdmin.from('nc_settings').select('pacing, claude').eq('id', 1).single()
+      data = legacy.data
+    } else data = withOpts.data
+
     return {
-      pacing: normalizePacing(data?.pacing),
-      claude: { ...DEFAULT_CLAUDE, ...(data?.claude || {}) },
+      pacing: normalizePacing(data?.pacing as Partial<NaverPacing>),
+      claude: { ...DEFAULT_CLAUDE, ...((data?.claude as object) || {}) },
+      options: normalizeOptions(data?.options as Partial<NaverOptions>),
     }
   } catch {
-    return { pacing: DEFAULT_PACING, claude: DEFAULT_CLAUDE }
+    return { pacing: DEFAULT_PACING, claude: DEFAULT_CLAUDE, options: DEFAULT_OPTIONS }
   }
+}
+
+/** 운영 옵션 일부만 수정. */
+export async function saveNaverOptions(patch: Partial<NaverOptions>): Promise<NaverOptions> {
+  const cur = await getNaverSettings()
+  const merged = normalizeOptions({ ...cur.options, ...patch })
+  await supabaseAdmin.from('nc_settings').upsert({ id: 1, options: merged, updated_at: new Date().toISOString() })
+  return merged
 }
 
 // 페이스 일부만 수정(나머지는 유지). claude 컬럼은 건드리지 않음.

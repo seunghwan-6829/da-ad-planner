@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getNaverSettings } from '@/lib/naver/settings'
 import { canAct, scheduleNext } from '@/lib/naver/pacing'
+import { findRecentDuplicate } from '@/lib/naver/dedupe'
+import { getAgentState } from '@/lib/naver/notify'
 
 export const dynamic = 'force-dynamic'
 
@@ -32,6 +34,15 @@ export async function GET(req: Request) {
   const dry = new URL(req.url).searchParams.get('dry') === '1'
   const checks: { name: string; ok: boolean; detail: string }[] = []
   const note = (name: string, ok: boolean, detail = '') => checks.push({ name, ok, detail })
+
+  // 연속 실패로 자동 중단된 상태면 아무것도 넘기지 않는다(같은 실패 반복 방지). 웹에서 [재개]해야 풀린다.
+  const agentState = await getAgentState()
+  if (agentState.halted) {
+    const reason = `자동 중단됨 — ${agentState.halt_reason || '연속 실패'}. 대시보드에서 재개해 주세요.`
+    if (dry) { note('에이전트 상태', false, reason); return NextResponse.json({ dry: true, none: true, reason, checks, halted: true }) }
+    return NextResponse.json({ none: true, reason, halted: true })
+  }
+  if (dry) note('에이전트 상태', true, '정상(중단 아님)')
 
   // 1) 발행할 승인 항목(오래된 순). not_before 는 JS 에서 필터(PostgREST .or() 의 dot 파싱 이슈 회피).
   const { data: cands } = await supabaseAdmin
@@ -82,7 +93,7 @@ export async function GET(req: Request) {
   note('발행처 연결', true, String(cafe.name || ''))
 
   // 2) 페이스 게이트(활동시간·일/주 상한·랜덤 간격)
-  const { pacing } = await getNaverSettings()
+  const { pacing, options } = await getNaverSettings()
   const kind: 'post' | 'comment' = item.kind === 'comment' ? 'comment' : 'post'
   // 발행 미허용 발행처면 반려(헤드블록 방지)
   const notAllowed = (kind === 'post' && cafe.allow_post === false) || (kind === 'comment' && cafe.allow_comment === false)
@@ -115,6 +126,27 @@ export async function GET(req: Request) {
     return NextResponse.json({ none: true, reason: '말머리 미설정' })
   }
   if (dry) note('말머리', true, cafe.require_prefix ? `필수 · "${cafe.prefix}"` : '필요 없음')
+
+  /* 3-2) 중복 발행 방지 — 같은 카페에 최근 N일 안에 비슷한 제목이 이미 나갔으면 보류한다.
+     자동 초안이 하루 여러 건 만들어져 주제가 겹치기 쉽고, 비슷한 글이 연달아 올라가면
+     사람 눈에도 티가 나고 카페에서 도배로 볼 위험이 있다. */
+  if (kind === 'post') {
+    const dup = await findRecentDuplicate(item.cafe_id, item.title || '', options.dup_window_days, options.dup_similarity, item.id)
+    if (dup) {
+      const detail = `"${dup.title}"(${dup.published_at ? new Date(dup.published_at).toLocaleDateString('ko-KR') : '최근'})와 ${Math.round(dup.similarity * 100)}% 유사`
+      if (dry) {
+        note('중복 검사', false, `${detail} — 실제 배정 시 보류됩니다`)
+        return NextResponse.json({ dry: true, simulated, none: true, reason: '비슷한 글이 최근에 발행됨', checks })
+      }
+      // 지우지 않고 초안으로 되돌려 사람이 판단하게 한다(자동 반려는 과하다).
+      await supabaseAdmin
+        .from('nc_posts')
+        .update({ status: 'draft', note: `중복 보류 — ${detail}`, updated_at: nowISO })
+        .eq('id', item.id)
+      return NextResponse.json({ none: true, reason: `중복 보류 — ${detail}` })
+    }
+    if (dry) note('중복 검사', true, `최근 ${options.dup_window_days}일 내 비슷한 글 없음`)
+  }
 
   // 4) 낙관적 잠금: approved/queued → publishing. 경합(0행)이면 none.
   //    ⚠️ 점검 모드는 여기부터 전부 건너뛴다 — 잠금·간격예약 같은 상태 변경을 하지 않는다.
@@ -160,6 +192,9 @@ export async function GET(req: Request) {
     cafe: { club_id: (cafe.club_id as string) || '', name: (cafe.name as string) || '', url: (cafe.cafe_url as string) || '' },
     board,
     prefix: kind === 'post' && cafe.require_prefix ? ((cafe.prefix as string) || '') : '',
+    // 켜져 있으면 에이전트가 글쓰기 화면을 다 채운 뒤 등록을 누르지 않고 캡처만 올린다.
+    // 사람이 웹에서 '이대로 등록'을 눌러야 실제 등록으로 넘어간다.
+    require_preview: options.preview_before_publish === true,
   }
 
   if (dry) {
