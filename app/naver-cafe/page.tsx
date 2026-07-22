@@ -515,6 +515,24 @@ export default function NaverCafePage() {
     } catch (e) { alert(e instanceof Error ? e.message : "처리 실패"); }
   }
 
+  // ── 알림 테스트 발송 ── 설정이 맞는지 발행 없이 확인.
+  async function testNotify() {
+    try {
+      const j = await api("/api/naver-cafe/notify-test", "POST", {});
+      const c = j.configured as { email: boolean; slack: boolean; to: string | null };
+      const r = j.result as { email: string; slack: string };
+      if (!c.email && !c.slack) {
+        alert("알림이 아직 설정되지 않았어요.\n\nVercel 환경변수에 아래 두 개를 넣어주세요:\n· RESEND_API_KEY\n· NC_NOTIFY_EMAIL (받을 메일 주소)");
+        return;
+      }
+      const lines = [
+        c.email ? `메일(${c.to}): ${r.email === "sent" ? "발송됨 ✅" : r.email}` : "메일: 미설정",
+        c.slack ? `슬랙: ${r.slack === "sent" ? "발송됨 ✅" : r.slack}` : "슬랙: 미설정",
+      ];
+      alert(`알림 테스트 결과\n\n${lines.join("\n")}\n\n메일함(스팸함도)을 확인해 주세요.`);
+    } catch (e) { alert(e instanceof Error ? e.message : "테스트 실패"); }
+  }
+
   // ── 자동 중단 해제 ──
   async function resumeAgent() {
     if (!confirm("자동 중단을 해제하고 발행을 재개할까요?\n실패 원인을 먼저 확인하셨는지 점검해 주세요.")) return;
@@ -656,6 +674,7 @@ export default function NaverCafePage() {
           : "지금"}
       </span>
       {agentState.fail_streak > 0 && <span className="font-semibold text-amber-600 dark:text-amber-300">연속 실패 {agentState.fail_streak}회</span>}
+      <button onClick={testNotify} className="rounded-full border border-gray-200 px-2 py-0.5 text-gray-500 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-800" title="알림이 실제로 오는지 지금 확인">알림 테스트</button>
       {agentState.last_event && (
         <span className="min-w-0 flex-1 truncate text-gray-400" title={agentState.last_event}>
           최근: {agentState.last_event}
