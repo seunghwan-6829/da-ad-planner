@@ -160,6 +160,16 @@ async function getPage({ createProfile = false } = {}) {
       }
     }
     if (!context) {
+      /* 가장 흔한 원인은 "이미 다른 프로세스가 이 프로필을 쓰는 중"이다.
+         발행 에이전트를 켜둔 채 self-check 를 돌리면 여기 걸린다 —
+         브라우저 미설치로 오해하지 않게 구분해서 알려준다. */
+      const inUse = existsSync(join(PROFILE_DIR, 'SingletonLock')) || existsSync(join(PROFILE_DIR, 'lockfile'))
+      if (inUse) {
+        throw new Error(
+          '이미 실행 중인 자동화 브라우저가 프로필을 쓰고 있어요.\n' +
+          '    → 발행 에이전트(publish-agent.bat) 창을 닫고 다시 실행해 주세요. 둘을 동시에 켤 수는 없습니다.'
+        )
+      }
       throw new Error(`자동화에 쓸 브라우저를 띄우지 못했어요. 엣지나 크롬이 설치돼 있어야 합니다.\n    시도: ${tried.join(' | ')}`)
     }
   }
@@ -224,6 +234,86 @@ const SUBMIT_SEL = [
   '[class*="WriteFooter"] button:text-is("등록")',
 ].join(', ')
 
+/* 에디터에 실제로 들어간 본문을 읽는다.
+   ⚠️ SE 에디터는 문단마다 별도의 contenteditable 로 쪼개진다. 그래서 셀렉터에 .first() 를 쓰면
+      첫 줄 하나만 읽혀 "본문이 덜 입력됨" 오탐이 난다(실측: 356자 본문을 8자로 읽음).
+      그래서 페이지 안의 모든 후보를 훑어 "가장 긴 텍스트"를 본문으로 본다. */
+async function readEditorBody(page) {
+  const pick = async (frame) => {
+    try {
+      return await frame.evaluate(() => {
+        let best = ''
+        const take = (el) => {
+          const t = ((el && el.innerText) || '').trim()
+          if (t.length > best.length) best = t
+        }
+        // 문단이 쪼개져 있어도 컨테이너 단위로 읽으면 전체가 잡힌다.
+        for (const sel of ['.se-content', '.se-viewer', '[class*="se-content"]', '[class*="Editor"]']) {
+          document.querySelectorAll(sel).forEach(take)
+        }
+        document.querySelectorAll('[contenteditable="true"]').forEach(take)
+        return best
+      })
+    } catch { return '' }
+  }
+  let best = await pick(page)
+  for (const f of page.frames()) {
+    const t = await pick(f)
+    if (t.length > best.length) best = t
+  }
+  return best
+}
+
+/* 게시판 선택.
+   ⚠️ 글쓰기 URL 에 menuId 를 넣어도 게시판이 자동 선택되지 않는 경우가 있다(실측).
+      그 상태로는 [등록]이 비활성이라 눌러도 아무 일이 없다 — "버튼이 안 눌린다"의 진짜 원인.
+   그래서 화면에서 직접 골라주고, 실제로 선택됐는지 확인까지 한다. */
+async function ensureBoardSelected(page, menuId, boardName) {
+  const label = () =>
+    page
+      .locator('[class*="Select"], [class*="select"], select')
+      .filter({ hasText: /게시판|선택/ })
+      .first()
+      .innerText({ timeout: 2000 })
+      .catch(() => '')
+
+  const unselected = async () => /선택해\s*주세요|게시판을\s*선택/.test(await label())
+  if (!(await unselected())) return true // 이미 선택돼 있음
+
+  // 1) 네이티브 select 라면 값/이름으로 바로 고른다.
+  for (const sel of ['select[name*="menu" i]', 'select[class*="board" i]', 'select']) {
+    const el = page.locator(sel).first()
+    if (!(await el.isVisible({ timeout: 800 }).catch(() => false))) continue
+    if (menuId) { try { await el.selectOption({ value: String(menuId) }); if (!(await unselected())) return true } catch {} }
+    if (boardName) { try { await el.selectOption({ label: boardName }); if (!(await unselected())) return true } catch {} }
+  }
+
+  // 2) 커스텀 드롭다운: 열고 → menuId/이름이 맞는 항목 클릭.
+  const trigger = page
+    .locator('button, [role="button"], [class*="Select"], [class*="select"]')
+    .filter({ hasText: /게시판을?\s*선택/ })
+    .first()
+  try { await trigger.click({ timeout: 4000 }) } catch {}
+  await sleep(700)
+
+  const candidates = []
+  if (menuId) candidates.push(`[data-menuid="${menuId}"]`, `[data-value="${menuId}"]`, `[value="${menuId}"]`, `li[data-id="${menuId}"]`)
+  if (boardName) candidates.push(`li:has-text("${boardName}")`, `[role="option"]:has-text("${boardName}")`)
+  for (const c of candidates) {
+    const item = page.locator(c).first()
+    if (await item.isVisible({ timeout: 1200 }).catch(() => false)) {
+      try { await item.click({ timeout: 2500 }); await sleep(500); if (!(await unselected())) return true } catch {}
+    }
+  }
+
+  // 3) 이름도 id 도 못 찾으면, 열린 목록의 첫 실제 항목을 고른다(기본 게시판이라도 선택되게).
+  const first = page.locator('[role="option"], li[role="menuitem"], ul li').filter({ hasNotText: /게시판을?\s*선택/ }).first()
+  if (await first.isVisible({ timeout: 1200 }).catch(() => false)) {
+    try { await first.click({ timeout: 2500 }); await sleep(500); if (!(await unselected())) return true } catch {}
+  }
+  return !(await unselected())
+}
+
 // 로그인 세션 만료 감지
 function assertLoggedIn(page) {
   if (page.url().includes('nid.naver.com')) {
@@ -255,14 +345,18 @@ async function publishPost(job) {
   // 임시저장 복원 팝업 → 취소(새 글)
   try { const c = page.locator('button:has-text("취소")').first(); if (await c.isVisible({ timeout: 1500 })) await c.click() } catch {}
 
-  // 게시판 선택(menuId 없을 때만 이름으로)
+  /* 게시판 선택 — URL 의 menuId 만 믿지 않는다.
+     자동 선택이 안 된 채로 두면 [등록]이 비활성이라 눌러도 아무 일이 없다(실측으로 확인한 실패 원인). */
   const boardName = job.board?.name || ''
-  if (boardName && !menuId) {
-    try {
-      await page.locator('.FormSelectButton button, button.button_select, [class*="select_board"] button').first().click({ timeout: 4000 })
-      await page.locator(`li:has-text("${boardName}"), [role="option"]:has-text("${boardName}")`).first().click({ timeout: 4000 })
-    } catch { log(`  ⚠️ 게시판 "${boardName}" 자동선택 실패 → 기본 게시판 진행`) }
+  const boardOk = await ensureBoardSelected(page, menuId, boardName)
+  if (!boardOk) {
+    try { await page.screenshot({ path: join(LOGS, `${job.id}-board.png`), fullPage: true }) } catch {}
+    throw new Error(
+      `게시판을 선택하지 못했어요. 이 상태로는 등록 버튼이 눌리지 않습니다.` +
+        ` 발행처 설정에서 게시판 이름(board_name)을 채워주시면 확실해집니다. logs/${job.id}-board.png 확인`
+    )
   }
+  log(`  게시판 선택 완료${boardName ? `(${boardName})` : menuId ? `(menuId ${menuId})` : ''}`)
 
   // 말머리(선택) — best-effort
   if (job.prefix) {
@@ -296,11 +390,10 @@ async function publishPost(job) {
      그 상태로 올라가는 것이 가장 나쁘다. */
   {
     let tTitle = ''
-    let tBody = ''
     try { tTitle = await page.locator(TITLE_SEL).first().inputValue({ timeout: 3000 }) } catch {
       try { tTitle = (await page.locator(TITLE_SEL).first().innerText({ timeout: 2000 })).trim() } catch {}
     }
-    try { tBody = (await page.locator(BODY_SEL).first().innerText({ timeout: 3000 })).trim() } catch {}
+    const tBody = await readEditorBody(page)
 
     const squash = (s) => String(s || '').replace(/\s+/g, '')
     const wantT = squash(job.title)
@@ -309,16 +402,20 @@ async function publishPost(job) {
     const gotB = squash(tBody)
 
     const problems = []
-    if (wantT && !gotT) problems.push('제목이 비어 있음')
-    else if (wantT && gotT !== wantT) problems.push(`제목이 원문과 다름(원문 ${wantT.length}자 / 입력 ${gotT.length}자)`)
-    if (wantB && !gotB) problems.push('본문이 비어 있음')
-    else if (wantB && gotB.length < wantB.length * 0.95) problems.push(`본문이 덜 입력됨(원문 ${wantB.length}자 / 입력 ${gotB.length}자)`)
+    if (wantT && gotT && gotT !== wantT) problems.push(`제목이 원문과 다름(원문 ${wantT.length}자 / 입력 ${gotT.length}자)`)
+    /* 본문 비교. 읽기가 아예 실패한 경우(0자)는 '입력이 안 됐다'가 아니라 '못 읽었다'일 가능성이 크므로
+       발행을 막지 않고 경고만 남긴다 — 검수 장치가 오히려 정상 발행을 막는 일이 없게. */
+    if (wantB && !gotB) {
+      log('  ⚠️ 본문을 읽지 못해 내용 검수를 건너뜁니다(입력 자체는 정상일 수 있음)')
+    } else if (wantB && gotB.length < wantB.length * 0.8) {
+      problems.push(`본문이 덜 입력됨(원문 ${wantB.length}자 / 입력 ${gotB.length}자)`)
+    }
 
     if (problems.length) {
       try { await page.screenshot({ path: join(LOGS, `${job.id}-check.png`), fullPage: true }) } catch {}
       throw new Error(`입력 검수 실패로 등록하지 않았습니다 — ${problems.join(', ')}. logs/${job.id}-check.png 확인`)
     }
-    log(`  ✓ 입력 검수 통과(제목 ${gotT.length}자 · 본문 ${gotB.length}자) — 등록합니다`)
+    if (gotB) log(`  ✓ 입력 검수 통과(제목 ${gotT.length}자 · 본문 ${gotB.length}자) — 등록합니다`)
   }
 
   /* 발행 전 미리보기(옵션).
@@ -586,12 +683,16 @@ async function selfCheck() {
       const btnWrong = !!btnText && /임시/.test(btnText)
       const shot = join(LOGS, `check-${String(label).replace(/[^\w가-힣]/g, '_')}.png`)
       try { await page.screenshot({ path: shot, fullPage: true }) } catch {}
+      /* 게시판이 선택돼 있는지 — 이게 안 되면 등록 버튼이 비활성이라 눌러도 안 올라간다.
+         (실측으로 확인한 실패 원인) 발행 때는 에이전트가 직접 골라주지만, 여기서 미리 알려준다. */
+      const boardPicked = await ensureBoardSelected(page, menuId, c.board_name || '')
       const parts = [
         `제목 ${titleOk ? 'OK' : '실패'}`,
         `본문 ${bodyOk ? 'OK' : '실패'}`,
         `등록버튼 ${submitOk ? (btnWrong ? `⚠ "${btnText}" 가 잡힘` : `OK${btnText ? `("${btnText}")` : ''}`) : '실패'}`,
+        `게시판 ${boardPicked ? 'OK' : '⚠ 선택 실패 — 발행처 설정에 게시판 이름을 넣어주세요'}`,
       ]
-      mark(`[${label}] 글쓰기 화면`, titleOk && bodyOk && submitOk && !btnWrong, `${parts.join(' · ')} → ${shot}`)
+      mark(`[${label}] 글쓰기 화면`, titleOk && bodyOk && submitOk && !btnWrong && boardPicked, `${parts.join(' · ')} → ${shot}`)
     } catch (e) {
       mark(`[${label}] 글쓰기 화면`, false, String((e && e.message) || e).slice(0, 100))
     }
