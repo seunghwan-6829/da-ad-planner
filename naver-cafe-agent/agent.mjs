@@ -317,14 +317,41 @@ async function findPostedArticle(page, clubId, menuId, title) {
   return null
 }
 
-/** 카페/게시판 화면의 [글쓰기] 버튼을 찾는다(구형 카페는 iframe 안에 있어 프레임까지 훑는다). */
-async function findWriteButton(page) {
+/** 게시판 목록 페이지에서 지금 보고 있는 게시판 이름을 읽는다(설정에 이름이 없어도 학습하기 위해). */
+async function readActiveBoardName(page) {
+  try {
+    return await page.evaluate(() => {
+      const clean = (s) => (s || '').replace(/\s+/g, ' ').trim()
+      // 1) 활성 메뉴/게시판 제목 후보
+      const sels = [
+        '[class*="BoardTitle"]',
+        '[class*="board_title"]',
+        '.ArticleBoard h2',
+        '.menu_list li.on a, .cafe-menu li.on a, li.on > a[href*="menus/"]',
+        'a[aria-current="page"]',
+      ]
+      for (const s of sels) {
+        const t = clean(document.querySelector(s)?.textContent)
+        if (t && t.length <= 30) return t
+      }
+      // 2) 문서 제목("게시판명 : 카페명" 형태)에서 앞부분
+      const dt = clean(document.title).split(/[:|｜]/)[0].trim()
+      if (dt && dt.length <= 30 && !/네이버\s*카페/.test(dt)) return dt
+      return ''
+    })
+  } catch {
+    return ''
+  }
+}
+
+/** 카페/게시판 화면의 [글쓰기] 버튼을 찾는다. menuId 를 담은 게시판 전용 버튼을 우선한다. */
+async function findWriteButton(page, menuId) {
   const sels = [
-    'a:has-text("글쓰기")',
-    'button:has-text("글쓰기")',
+    ...(menuId ? [`a[href*="articles/write"][href*="menuId=${menuId}"]`, `a[href*="menus/${menuId}"][href*="write"]`] : []),
     'a[href*="articles/write"]',
     'a[href*="ArticleWrite"]',
-    '[class*="write"] a:has-text("글쓰기")',
+    'a:has-text("글쓰기")',
+    'button:has-text("글쓰기")',
   ]
   const found = await firstVisible(page, sels, 2500)
   if (found) return found
@@ -337,34 +364,49 @@ async function findWriteButton(page) {
 
 /**
  * 글쓰기 화면을 연다.
- * ★ 기본 경로: 사장님이 설정해둔 카페/게시판 주소로 가서 [글쓰기]를 누른다.
- *   이렇게 들어가면 **게시판이 자동으로 선택된 채로** 열려서 따로 고를 필요가 없다.
- *   (글쓰기 URL 로 바로 들어가면 menuId 를 붙여도 "게시판을 선택해 주세요" 로 남는 카페가 있다 — 실측)
- * 폴백: 그래도 안 되면 예전처럼 글쓰기 주소로 직접 이동한 뒤 게시판을 직접 고른다.
- * @returns 'from-board' | 'direct'
+ * ★ 기본 경로: 설정해둔 카페/게시판 주소로 가서 [글쓰기]를 누른다.
+ *   ⚠️ 이 버튼은 대개 **새 탭**에서 글쓰기를 연다. 그래서 새 탭을 붙잡아 그쪽으로 전환한다.
+ *      (예전엔 기존 탭에 남아 아무 동작도 못 하고 멈췄다 — 이번 실측 실패의 핵심 원인)
+ *   목록 페이지에서 게시판 이름도 미리 학습한다(설정이 비어 있어도 나중에 정확히 고르기 위해).
+ * 폴백: [글쓰기]를 못 찾으면 글쓰기 주소로 직접 이동한다.
+ * @returns {{ page, how:'from-board'|'direct', learnedBoardName:string }}
  */
-async function openWriteForm(page, cafeUrl, clubId, menuId) {
+async function openWriteForm(basePage, cafeUrl, clubId, menuId) {
+  let learnedBoardName = ''
   if (cafeUrl) {
     try {
-      await page.goto(cafeUrl, { waitUntil: 'domcontentloaded', timeout: 30000 })
-      assertLoggedIn(page)
+      await basePage.goto(cafeUrl, { waitUntil: 'domcontentloaded', timeout: 30000 })
+      assertLoggedIn(basePage)
       await sleep(2500)
-      const btn = await findWriteButton(page)
+      learnedBoardName = await readActiveBoardName(basePage)
+
+      const btn = await findWriteButton(basePage, menuId)
       if (btn) {
-        await btn.click({ timeout: 8000 })
-        await page.waitForURL((u) => /articles\/write|ArticleWrite/i.test(String(u)), { timeout: 20000 }).catch(() => {})
+        // 클릭과 동시에 "새 탭이 열리는지" 지켜본다. 열리면 그 탭이 진짜 글쓰기 화면이다.
+        const [popup] = await Promise.all([
+          context.waitForEvent('page', { timeout: 8000 }).catch(() => null),
+          btn.click({ timeout: 8000 }).catch(() => {}),
+        ])
+        const writePage = popup || basePage
+        // 글쓰기 화면이 뜰 때까지 기다린다(같은 탭이든 새 탭이든).
+        await writePage.waitForLoadState('domcontentloaded', { timeout: 20000 }).catch(() => {})
+        await writePage.waitForURL((u) => /articles\/write|ArticleWrite/i.test(String(u)), { timeout: 20000 }).catch(() => {})
         await sleep(2000)
-        if (/articles\/write|ArticleWrite/i.test(page.url())) return 'from-board'
+        if (/articles\/write|ArticleWrite/i.test(writePage.url())) {
+          // 기존(목록) 탭은 닫지 않는다 — 발행이 끝난 뒤 closeExtraTabs 가 남은 탭을 정리한다.
+          return { page: writePage, how: popup ? 'from-board(새 탭)' : 'from-board', learnedBoardName }
+        }
+        if (popup) { try { await popup.close() } catch {} } // 실패한 새 탭만 즉시 정리
       }
     } catch { /* 폴백으로 넘어간다 */ }
   }
-  await page.goto(`https://cafe.naver.com/ca-fe/cafes/${clubId}/articles/write?boardType=L${menuId ? `&menuId=${menuId}` : ''}`, {
+  await basePage.goto(`https://cafe.naver.com/ca-fe/cafes/${clubId}/articles/write?boardType=L${menuId ? `&menuId=${menuId}` : ''}`, {
     waitUntil: 'domcontentloaded',
     timeout: 30000,
   })
-  assertLoggedIn(page)
+  assertLoggedIn(basePage)
   await sleep(2500)
-  return 'direct'
+  return { page: basePage, how: 'direct', learnedBoardName }
 }
 
 /** 게시판 드롭다운에 어떤 게시판들이 있는지 읽어온다(실패 안내에 그대로 보여주기 위해). */
@@ -451,22 +493,53 @@ async function ensureBoardSelected(page, menuId, boardName, readOnly = false) {
   }
 
   // 2) 커스텀 드롭다운: 열고 → 아는 값(menuId/이름)에 해당하는 항목만 클릭.
-  const trigger = await findBoardControl(page)
-  if (trigger) { try { await trigger.click({ timeout: 3000 }) } catch {} }
-  await sleep(800)
+  //    ⚠️ 두 번 시도한다(첫 클릭에서 안 열리거나 늦게 뜨는 경우 대비).
+  const want = String(boardName || '').replace(/\s+/g, '')
+  for (let round = 0; round < 2; round++) {
+    const trigger = await findBoardControl(page)
+    if (trigger) { try { await trigger.click({ timeout: 3000 }) } catch {} }
+    await sleep(900)
 
-  const candidates = []
-  if (menuId) candidates.push(`[role="option"][data-menuid="${menuId}"]`, `li[data-menuid="${menuId}"]`, `[data-value="${menuId}"]`, `li[data-id="${menuId}"]`)
-  if (boardName) candidates.push(`[role="option"]:text-is("${boardName}")`, `li:text-is("${boardName}")`, `[role="option"]:has-text("${boardName}")`, `li:has-text("${boardName}")`)
-  for (const c of candidates) {
-    const item = page.locator(c).first()
-    if (!(await item.isVisible({ timeout: 1000 }).catch(() => false))) continue
-    try {
-      await item.click({ timeout: 2500 })
-      await sleep(600)
+    /* 열린 목록에서 항목을 브라우저 안에서 직접 찾아 클릭한다.
+       - menuId 가 붙은 항목을 최우선, 없으면 "공백 무시 이름 일치"로. 스크롤도 in-page 로 처리.
+       - 이름 매칭은 완전 일치를 우선하고, 없을 때만 시작-부분 일치(자유게시판 ⊃ 자유 게시판)를 쓴다. */
+    const clicked = await page.evaluate(({ menuId, want }) => {
+      const norm = (s) => (s || '').replace(/\s+/g, '')
+      const items = [...document.querySelectorAll('[role="option"], li[role="menuitem"], ul li, [class*="option"]')]
+        .filter((el) => {
+          const t = norm(el.textContent)
+          return t && t.length <= 30 && !/게시판을?선택/.test(t)
+        })
+      const tryClick = (el) => {
+        if (!el) return false
+        el.scrollIntoView({ block: 'center' })
+        el.click()
+        return true
+      }
+      // ① menuId 로
+      if (menuId) {
+        const byId = items.find((el) => {
+          const a = el.matches('a') ? el : el.querySelector('a')
+          const hay = `${el.getAttribute('data-menuid') || ''} ${el.getAttribute('data-value') || ''} ${a?.getAttribute('href') || ''}`
+          return new RegExp(`(^|[^\\d])${menuId}([^\\d]|$)`).test(hay)
+        })
+        if (tryClick(byId)) return 'menuId'
+      }
+      // ② 이름 완전 일치 → ③ 시작 부분 일치
+      if (want) {
+        const exact = items.find((el) => norm(el.textContent) === want)
+        if (tryClick(exact)) return 'name'
+        const starts = items.find((el) => { const t = norm(el.textContent); return t.startsWith(want) || want.startsWith(t) })
+        if (tryClick(starts)) return 'name~'
+      }
+      return ''
+    }, { menuId: menuId ? String(menuId) : '', want }).catch(() => '')
+
+    if (clicked) {
+      await sleep(700)
       const after = await boardState(page)
       if (after.state === 'selected') return { ok: true, detail: `선택함(${after.text})` }
-    } catch {}
+    }
   }
 
   // 아는 값으로 못 찾으면 여기서 멈춘다. 임의 선택 금지.
@@ -485,7 +558,8 @@ function assertLoggedIn(page) {
 
 // ── 글 등록(job.kind==='post') ──
 async function publishPost(job) {
-  const page = await getPage()
+  const basePage = await getPage()
+  let page = basePage // 새 탭에서 글쓰기가 열리면 이 값이 그 탭으로 바뀐다.
   const cafeUrl = job.cafe?.url || ''
   // clubId/menuId: job 값 우선 → URL 파싱 폴백
   const direct = cafeUrl.match(/cafe\.naver\.com\/(?:f-e\/|ca-fe\/)?cafes\/(\d+)(?:\/menus\/(\d+))?/i)
@@ -494,23 +568,24 @@ async function publishPost(job) {
   if (!clubId) {
     const slug = cafeUrl.match(/cafe\.naver\.com\/([^/?#]+)/i)?.[1]
     if (!slug) throw new Error(`카페 URL 형식이 이상해요: ${cafeUrl}`)
-    await page.goto(`https://cafe.naver.com/${slug}`, { waitUntil: 'domcontentloaded', timeout: 30000 })
-    assertLoggedIn(page)
-    clubId = (await page.content()).match(/g_sClubId\s*=\s*["'](\d+)["']/)?.[1] || null
+    await basePage.goto(`https://cafe.naver.com/${slug}`, { waitUntil: 'domcontentloaded', timeout: 30000 })
+    assertLoggedIn(basePage)
+    clubId = (await basePage.content()).match(/g_sClubId\s*=\s*["'](\d+)["']/)?.[1] || null
     if (!clubId) throw new Error('카페 ID를 찾지 못했어요(미가입이거나 페이지 구조 변경).')
   }
 
-  /* ★ 설정해둔 카페/게시판 주소에서 [글쓰기]를 눌러 들어간다 → 게시판이 자동 선택된 채로 열린다.
-     실패하면 예전처럼 글쓰기 주소로 직접 들어간 뒤 게시판을 고른다. */
-  const how = await openWriteForm(page, cafeUrl, clubId, menuId)
-  log(how === 'from-board' ? '  게시판 화면에서 [글쓰기]로 진입' : '  글쓰기 주소로 직접 진입(폴백)')
+  /* ★ 설정해둔 카페/게시판 주소에서 [글쓰기]를 눌러 들어간다.
+     이 버튼은 보통 새 탭을 여는데, openWriteForm 이 그 탭을 붙잡아 돌려준다 → 그 탭에서 이어서 작업한다. */
+  const opened = await openWriteForm(basePage, cafeUrl, clubId, menuId)
+  page = opened.page
+  log(`  진입: ${opened.how}${opened.learnedBoardName ? ` · 게시판 학습="${opened.learnedBoardName}"` : ''}`)
 
   // 임시저장 복원 팝업 → 취소(새 글). ⚠️ 모달 안으로 한정 — 페이지 전체에서 "취소"를 찾으면 엉뚱한 걸 누른다.
   await dismissRestoreDialog(page)
 
-  /* 게시판 확인. 위 경로로 들어왔으면 대개 이미 잡혀 있고, 아니면 여기서 직접 고른다.
-     자동 선택이 안 된 채로 두면 [등록]이 비활성이라 눌러도 아무 일이 없다(실측한 실패 원인). */
-  const boardName = job.board?.name || ''
+  /* 게시판 확인. [글쓰기]로 들어와도 자동 선택이 안 되는 카페가 있어(실측) 반드시 확인·선택한다.
+     설정에 이름이 없으면 목록에서 학습한 이름으로 고른다. */
+  const boardName = job.board?.name || opened.learnedBoardName || ''
   const board = await ensureBoardSelected(page, menuId, boardName)
   if (!board.ok) {
     try { await page.screenshot({ path: join(LOGS, `${job.id}-board.png`), fullPage: true }) } catch {}
@@ -721,6 +796,15 @@ async function publishComment(job) {
 // ── 하트비트 ──
 async function heartbeat() { try { await http('/api/naver-cafe/agent', 'POST', { info: 'pc-agent' }) } catch {} }
 
+/* 글쓰기가 새 탭에서 열리므로 처리마다 탭이 하나씩 쌓인다. 첫 탭만 남기고 나머지는 닫아
+   메모리·혼선을 막는다(발행 한 건이 완전히 끝난 뒤에만 호출한다). */
+async function closeExtraTabs() {
+  try {
+    const pages = context?.pages() || []
+    for (let i = 1; i < pages.length; i++) { try { await pages[i].close() } catch {} }
+  } catch {}
+}
+
 // 결과 보고(작은 호출). 실패 시 백오프 재시도. ★확정된 발행 성공을 절대 실패로 낮추지 않기 위해 분리.
 async function reportResult(payload) {
   for (let i = 0; i < 5; i++) {
@@ -756,12 +840,13 @@ async function publishTick() {
     const msg = String((e && e.message) || e).slice(0, 300)
     // 사람이 미리보기에서 취소한 건 '실패'가 아니다 — 서버가 이미 발행 대기로 되돌렸고,
     // 실패로 보고하면 연속 실패 카운터가 올라가 엉뚱하게 자동 중단된다.
-    if (e && e.cancelled) { log(`⏹ 등록하지 않았습니다: ${msg}`); return }
+    if (e && e.cancelled) { log(`⏹ 등록하지 않았습니다: ${msg}`); await closeExtraTabs(); return }
     log(`❌ 발행 실패: ${msg}`)
-    try { const p = context?.pages()[0]; if (p) await p.screenshot({ path: join(LOGS, `${job.id}.png`), fullPage: true }) } catch {}
+    try { const p = context?.pages().slice(-1)[0]; if (p) await p.screenshot({ path: join(LOGS, `${job.id}.png`), fullPage: true }) } catch {}
     const reported = await reportResult({ id: job.id, ok: false, kind: job.kind, cafe_id: job.cafe_id, note: msg })
     // 실패 보고마저 실패하면 글이 '발행 중'으로 남아 아무도 집어가지 못한다 — 크게 알린다.
     if (!reported) log(`⚠️ 실패 보고를 전송하지 못했습니다. 이 글은 서버에 '발행 중'으로 남습니다 — 대시보드에서 [되돌리기]를 눌러주세요.`)
+    await closeExtraTabs()
     return
   }
 
@@ -778,6 +863,7 @@ async function publishTick() {
   })
   if (ok) log(`✅ 발행 완료${url ? `: ${url}` : ''}`)
   else log(`⚠️ 발행은 됐지만 결과 보고 실패 — 서버에 '발행 중'으로 남습니다. 웹에서 확인 후 처리하세요(중복 발행 방지).`)
+  await closeExtraTabs()
 }
 
 // ── 24h 반응 측정: 서버가 준 대기 목록을 로그인 브라우저로 방문해 수집 ──
