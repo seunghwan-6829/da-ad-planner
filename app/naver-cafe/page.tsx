@@ -73,6 +73,17 @@ type Cafe = {
 };
 
 type PostStatus = "draft" | "approved" | "queued" | "publishing" | "published" | "rejected" | "failed" | "saved";
+
+/* 대시보드 상단 카드로 고르는 화면 필터. '모두'가 기본이고 나머지는 해당 섹션만 보여준다. */
+type DashView = "all" | "draft" | "approved" | "published" | "week" | "track";
+const VIEW_LABEL: Record<DashView, string> = {
+  all: "모두",
+  draft: "검수 대기(초안)",
+  approved: "발행 대기(승인)",
+  published: "발행 완료",
+  week: "이번 주 발행",
+  track: "반응 측정 대기",
+};
 type Post = {
   id: string;
   cafe_id: string;
@@ -360,6 +371,8 @@ export default function NaverCafePage() {
   const [pacingStat, setPacingStat] = useState<PacingStatus | null>(null);
   const [loadErr, setLoadErr] = useState("");
   const [sel, setSel] = useState<string | "dash">("dash");
+  // 대시보드 상단 카드 = 아래 목록의 필터. '모두'면 검수 대기부터 반응 측정까지 전부 보인다.
+  const [view, setView] = useState<DashView>("all");
   const [postModal, setPostModal] = useState<Post | null>(null);
   const [compose, setCompose] = useState<null | { fixed: string | null }>(null);
   const [addingCafe, setAddingCafe] = useState<null | { brand_id: string | null }>(null);
@@ -486,6 +499,14 @@ export default function NaverCafePage() {
     [posts]
   );
   const trackQueue = useMemo(() => posts.filter((p) => p.published_url && !p.tracked_at && p.track_due_at && new Date(p.track_due_at) <= new Date()), [posts]);
+  // 발행 완료 목록. '이번 주 발행' 카드를 고르면 최근 7일만 추린다.
+  const publishedList = useMemo(() => {
+    const weekAgo = Date.now() - 7 * 86400_000;
+    return posts
+      .filter((p) => p.status === "published")
+      .filter((p) => (view === "week" ? !!p.published_at && new Date(p.published_at).getTime() >= weekAgo : true))
+      .sort((a, b) => (b.published_at || "").localeCompare(a.published_at || ""));
+  }, [posts, view]);
   const dash = useMemo(() => {
     const weekAgo = Date.now() - 7 * 86400_000;
     const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -627,24 +648,46 @@ export default function NaverCafePage() {
               <div className="flex flex-wrap items-center gap-2">{pacingCard}{agentBadge}</div>
             </div>
 
-            {/* 현황 통계 */}
+            {/* 현황 통계 = 아래 목록의 필터. 카드를 누르면 그 섹션만 본다. */}
             <div className="mb-5 grid grid-cols-3 gap-3 md:grid-cols-6">
               {[
-                { label: "발행처", value: cafes.length },
-                { label: "검수 대기(초안)", value: stats.drafts, warn: stats.drafts > 0 },
-                { label: "발행 대기(승인)", value: stats.approved },
-                { label: "발행 완료", value: stats.published },
-                { label: "이번 주 발행", value: dash.weekPub },
-                { label: "반응 측정 대기", value: stats.trackWait, warn: stats.trackWait > 0 },
-              ].map((s) => (
-                <div key={s.label} className={`rounded-2xl border p-4 ${s.warn ? "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30" : "border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900"}`}>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">{s.label}</p>
-                  <p className="mt-1 text-2xl font-bold dark:text-gray-100">{s.value}</p>
-                </div>
-              ))}
+                { key: "all" as const, label: "모두", value: posts.length, hint: "전체 흐름 보기" },
+                { key: "draft" as const, label: "검수 대기(초안)", value: stats.drafts, warn: stats.drafts > 0 },
+                { key: "approved" as const, label: "발행 대기(승인)", value: stats.approved },
+                { key: "published" as const, label: "발행 완료", value: stats.published },
+                { key: "week" as const, label: "이번 주 발행", value: dash.weekPub },
+                { key: "track" as const, label: "반응 측정 대기", value: stats.trackWait, warn: stats.trackWait > 0 },
+              ].map((s) => {
+                const active = view === s.key;
+                return (
+                  <button
+                    key={s.key}
+                    type="button"
+                    onClick={() => setView(s.key)}
+                    title={s.hint || `${s.label}만 보기`}
+                    className={`rounded-2xl border p-4 text-left transition ${
+                      active
+                        ? "border-primary bg-primary/5 ring-2 ring-primary/30 dark:bg-primary/10"
+                        : s.warn
+                          ? "border-amber-300 bg-amber-50 hover:border-amber-400 dark:border-amber-700 dark:bg-amber-950/30"
+                          : "border-gray-200 bg-white hover:border-gray-300 dark:border-gray-800 dark:bg-gray-900 dark:hover:border-gray-700"
+                    }`}
+                  >
+                    <p className={`text-xs ${active ? "font-semibold text-primary" : "text-gray-500 dark:text-gray-400"}`}>{s.label}</p>
+                    <p className="mt-1 text-2xl font-bold dark:text-gray-100">{s.value}</p>
+                  </button>
+                );
+              })}
             </div>
+            {view !== "all" && (
+              <div className="mb-4 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                <span>필터: <b className="text-primary">{VIEW_LABEL[view]}</b>만 보는 중</span>
+                <button onClick={() => setView("all")} className="rounded-full border border-gray-200 px-2 py-0.5 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800">전체 보기</button>
+              </div>
+            )}
 
             {/* 검수 대기(초안) 보드 */}
+            {(view === "all" || view === "draft") && (
             <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
               <div className="mb-2 flex items-center justify-between">
                 <h2 className="text-sm font-bold dark:text-gray-100">검수 대기 <span className="ml-1 text-[11px] font-normal text-gray-400">— 승인하면 페이스 규칙에 맞춰 자동 발행돼요</span></h2>
@@ -658,8 +701,10 @@ export default function NaverCafePage() {
                 </div>
               )}
             </div>
+            )}
 
             {/* 발행 대기(승인) 보드 — 승인 후에도 수정·취소할 수 있고, 급하면 즉시 발행한다. */}
+            {(view === "all" || view === "approved") && (
             <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-sm font-bold dark:text-gray-100">
@@ -706,8 +751,52 @@ export default function NaverCafePage() {
                 </div>
               )}
             </div>
+            )}
+
+            {/* 발행 완료 / 이번 주 발행 — 올라간 글 목록(원문 링크 + 반응). */}
+            {(view === "all" || view === "published" || view === "week") && (
+              <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="text-sm font-bold dark:text-gray-100">
+                    {view === "week" ? "이번 주 발행" : "발행 완료"} ({publishedList.length})
+                    <span className="ml-1 text-[11px] font-normal text-gray-400">— 제목을 누르면 실제 카페 글로 이동해요</span>
+                  </h2>
+                </div>
+                {publishedList.length === 0 ? (
+                  <p className="py-4 text-center text-xs text-gray-400">
+                    {view === "week" ? "이번 주에 발행된 글이 없어요." : "아직 발행된 글이 없어요. 발행 대기에서 에이전트가 올리면 여기에 쌓입니다."}
+                  </p>
+                ) : (
+                  <div className="divide-y dark:divide-gray-800">
+                    {publishedList.map((p) => (
+                      <div key={p.id} className="flex flex-wrap items-center gap-2 py-2">
+                        <div className="min-w-0 flex-1">
+                          {p.published_url ? (
+                            <a href={p.published_url} target="_blank" rel="noopener noreferrer" className="truncate text-sm font-medium text-primary hover:underline dark:text-blue-300">{p.title}</a>
+                          ) : (
+                            <p className="truncate text-sm font-medium dark:text-gray-200">{p.title}</p>
+                          )}
+                          <p className="truncate text-[11px] text-gray-400">
+                            {p.nc_cafes?.name} · {p.published_at ? new Date(p.published_at).toLocaleString("ko-KR") : "—"}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400">
+                          {p.tracked_at ? (
+                            <span>조회 {(p.views ?? 0).toLocaleString()} · 좋아요 {p.likes ?? 0} · 댓글 {p.comments ?? 0}</span>
+                          ) : (
+                            <span className="text-gray-400">반응 측정 전</span>
+                          )}
+                          <button onClick={() => setPostModal(p)} className="rounded-lg border border-gray-200 px-2 py-1 font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">내용</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* 반응 측정 대기 */}
+            {(view === "all" || view === "track") && (
             <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
               <div className="mb-2 flex items-center justify-between">
                 <h2 className="text-sm font-bold dark:text-gray-100">반응 측정 대기 ({trackQueue.length})</h2>
@@ -728,6 +817,7 @@ export default function NaverCafePage() {
                 </div>
               )}
             </div>
+            )}
 
             {/* 카페별 성과 | 베스트 글 */}
             <div className="mb-5 grid items-start gap-4 xl:grid-cols-2">
