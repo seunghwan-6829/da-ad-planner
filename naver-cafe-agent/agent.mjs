@@ -237,38 +237,38 @@ async function firstVisible(scope, selectors, timeout = 4000) {
 /** 본문 편집칸을 찾아 실제로 포커스한다.
  *  숨김(aria-hidden)·초소형 편집칸을 걸러내고, "보이는 것 중 가장 큰" contenteditable 을 좌표로 클릭한다.
  *  좌표 클릭이라 aria-hidden 같은 attribute 판정과 무관하게 실제 편집 영역에 커서가 들어간다. */
+/* 본문에 커서가 실제로 들어갔는지 확인.
+   ⚠️ 스마트에디터 본문은 iframe 기반이라, 편집 영역을 클릭하면 activeElement 가 IFRAME 이 된다(실측).
+      그래서 IFRAME 포커스도 '본문 포커스됨'으로 인정한다. 메인 문서의 숨김(aria-hidden) 칸은 제외. */
 async function bodyFocused(page) {
-  // 커서가 "보이는 편집 가능한" 요소에 실제로 들어갔는지 확인. 여기 안 들어가면 타이핑이 허공에 간다.
   return await page.evaluate(() => {
     const a = document.activeElement
-    if (!a || a.getAttribute?.('aria-hidden') === 'true') return false
+    if (!a) return false
+    if (a.tagName === 'IFRAME') return true
+    if (a.getAttribute?.('aria-hidden') === 'true') return false
     if (a.getAttribute?.('contenteditable') === 'true') return true
     return !!a.closest?.('[contenteditable="true"]:not([aria-hidden="true"])')
   }).catch(() => false)
 }
 
+/* 본문 편집칸에 커서를 넣는다.
+   ⚠️ 메인 문서의 contenteditable 은 클립보드용 숨김칸뿐이다. 그걸 클릭하면 타임아웃난다(실측).
+      실제 본문은 SE 텍스트 영역(.se-text-paragraph 등)을 클릭하면 편집 iframe 에 포커스가 간다.
+      입력된 글자는 메인 .se-content 에도 그대로 반영돼 검수·읽기가 정상 동작한다(실측 확인). */
 async function clickBodyEditor(page) {
-  const centerOf = () => page.evaluate(() => {
-    const cands = [...document.querySelectorAll('[contenteditable="true"]')]
-      .filter((el) => el.getAttribute('aria-hidden') !== 'true')
-      .map((el) => el.getBoundingClientRect())
-      .filter((r) => r.width > 80 && r.height > 30)
-      .sort((a, b) => b.width * b.height - a.width * a.height)
-    const r = cands[0]
-    if (!r) return null
-    return { x: Math.round(r.x + Math.min(40, r.width / 2)), y: Math.round(r.y + Math.min(24, r.height / 2)) }
-  }).catch(() => null)
-
-  // 1) 보이는 본문 영역 좌표를 눌러 커서를 넣고, 실제로 포커스됐는지 확인한다.
+  const el = await firstVisible(page, [
+    '.se-text-paragraph',
+    '.se-module-text',
+    '.se-section-text',
+    '.se-content',
+    '.se-viewer',
+  ], 6000)
+  if (!el) return false
   for (let i = 0; i < 2; i++) {
-    const box = await centerOf()
-    if (!box) break
-    try { await page.mouse.click(box.x, box.y); await sleep(400) } catch {}
+    try { await el.click({ timeout: 5000 }) } catch {}
+    await sleep(400)
     if (await bodyFocused(page)) return true
   }
-  // 2) 폴백: 보이는 에디터 컨테이너를 직접 클릭 후 재확인.
-  const area = await firstVisible(page, ['.se-content', '.se-viewer', '.se-section-text', '[class*="se-content"]'], 4000)
-  if (area) { try { await area.click({ timeout: 4000 }); await sleep(400) } catch {} }
   return await bodyFocused(page)
 }
 /* ⚠️ 등록 버튼은 "정확히 등록"인 것만 잡아야 한다.
