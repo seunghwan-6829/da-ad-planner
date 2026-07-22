@@ -371,6 +371,19 @@ async function findWriteButton(page, menuId) {
  * 폴백: [글쓰기]를 못 찾으면 글쓰기 주소로 직접 이동한다.
  * @returns {{ page, how:'from-board'|'direct', learnedBoardName:string }}
  */
+const isWriteUrl = (u) => /articles\/write|ArticleWrite/i.test(String(u || ''))
+
+/** 지금 열려 있는 탭들 중 "글쓰기 화면인, 살아있는" 탭을 고른다(가장 최근 것 우선). 없으면 null.
+ *  ⚠️ 네이버 [글쓰기]는 중간 팝업을 열었다가 진짜 글쓰기 탭으로 교체하기도 한다.
+ *     그래서 첫 'page' 이벤트를 믿지 말고, 상황이 안정된 뒤 실제 글쓰기 탭을 훑어 고른다. */
+function findWriteTab() {
+  const pages = (context?.pages() || []).filter((p) => { try { return !p.isClosed() } catch { return false } })
+  for (let i = pages.length - 1; i >= 0; i--) {
+    try { if (isWriteUrl(pages[i].url())) return pages[i] } catch {}
+  }
+  return null
+}
+
 async function openWriteForm(basePage, cafeUrl, clubId, menuId) {
   let learnedBoardName = ''
   if (cafeUrl) {
@@ -382,24 +395,34 @@ async function openWriteForm(basePage, cafeUrl, clubId, menuId) {
 
       const btn = await findWriteButton(basePage, menuId)
       if (btn) {
-        // 클릭과 동시에 "새 탭이 열리는지" 지켜본다. 열리면 그 탭이 진짜 글쓰기 화면이다.
-        const [popup] = await Promise.all([
-          context.waitForEvent('page', { timeout: 8000 }).catch(() => null),
-          btn.click({ timeout: 8000 }).catch(() => {}),
-        ])
-        const writePage = popup || basePage
-        // 글쓰기 화면이 뜰 때까지 기다린다(같은 탭이든 새 탭이든).
-        await writePage.waitForLoadState('domcontentloaded', { timeout: 20000 }).catch(() => {})
-        await writePage.waitForURL((u) => /articles\/write|ArticleWrite/i.test(String(u)), { timeout: 20000 }).catch(() => {})
-        await sleep(2000)
-        if (/articles\/write|ArticleWrite/i.test(writePage.url())) {
-          // 기존(목록) 탭은 닫지 않는다 — 발행이 끝난 뒤 closeExtraTabs 가 남은 탭을 정리한다.
-          return { page: writePage, how: popup ? 'from-board(새 탭)' : 'from-board', learnedBoardName }
+        await btn.click({ timeout: 8000 }).catch(() => {})
+
+        /* 클릭 뒤 탭들이 "안정될 때까지" 기다린다 — 중간 팝업이 열렸다 닫히고 진짜 글쓰기 탭이
+           자리잡는 흐름을 통과시키기 위해. write URL 탭이 연속 2회 같게 잡히면 안정된 것으로 본다. */
+        let writePage = null
+        let stableStreak = 0
+        for (let i = 0; i < 15; i++) { // 최대 ~15초
+          await sleep(1000)
+          const cand = findWriteTab()
+          if (cand && cand === writePage && !cand.isClosed()) {
+            if (++stableStreak >= 2) break
+          } else {
+            writePage = cand
+            stableStreak = cand ? 1 : 0
+          }
         }
-        if (popup) { try { await popup.close() } catch {} } // 실패한 새 탭만 즉시 정리
+        if (writePage && !writePage.isClosed() && isWriteUrl(writePage.url())) {
+          await writePage.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => {})
+          await writePage.bringToFront().catch(() => {})
+          await sleep(1200)
+          if (!writePage.isClosed() && isWriteUrl(writePage.url())) {
+            return { page: writePage, how: writePage === basePage ? 'from-board' : 'from-board(새 탭)', learnedBoardName }
+          }
+        }
       }
     } catch { /* 폴백으로 넘어간다 */ }
   }
+  // 폴백: 글쓰기 주소로 직접 이동(같은 탭).
   await basePage.goto(`https://cafe.naver.com/ca-fe/cafes/${clubId}/articles/write?boardType=L${menuId ? `&menuId=${menuId}` : ''}`, {
     waitUntil: 'domcontentloaded',
     timeout: 30000,
@@ -597,6 +620,14 @@ async function publishPost(job) {
       await page.locator('button:has-text("말머리"), [class*="prefix"] button, [class*="Prefix"] button').first().click({ timeout: 2500 })
       await page.locator(`li:has-text("${job.prefix}"), [role="option"]:has-text("${job.prefix}")`).first().click({ timeout: 2500 })
     } catch {}
+  }
+
+  // 입력 직전 탭 생존 확인 — 네이버가 글쓰기 탭을 교체/종료했다면 여기서 정직하게 실패로 돌린다
+  // (그래야 재시도로 회복된다. 크래시로 이어지지 않게).
+  if (page.isClosed()) {
+    const alt = findWriteTab()
+    if (alt && !alt.isClosed()) { page = alt; log('  글쓰기 탭이 교체되어 새 탭으로 이어갑니다') }
+    else throw new Error('글쓰기 탭이 닫혔어요(네이버가 창을 교체함). 다시 시도합니다.')
   }
 
   // 제목 — 필드의 maxlength 를 넘으면 잘려 들어가므로, 미리 맞춰 자른다(검수 오탐 방지).
