@@ -402,6 +402,7 @@ export default function NaverCafePage() {
   const [cafeForm, setCafeForm] = useState<Partial<Cafe>>({});
   const [savingCafe, setSavingCafe] = useState(false);
   const [genBusy, setGenBusy] = useState(false);
+  const [resetBusy, setResetBusy] = useState(false);
 
   const loadAll = useCallback(() => {
     fetch("/api/naver-cafe/brands").then((r) => (r.ok ? r.json() : [])).then((j) => setBrands(j as Brand[])).catch(() => {});
@@ -464,6 +465,28 @@ export default function NaverCafePage() {
       }
       loadAll();
     } catch (e) { alert(e instanceof Error ? e.message : "초안 생성 실패"); } finally { setGenBusy(false); }
+  }
+  /* 정리 후 재생성 — 아직 발행하지 않은(키핑 중인) 초안을 싹 비우고 브랜드마다 새 톤으로 2개씩.
+     발행 완료된 글/기록은 건드리지 않는다. 파괴적이라 반드시 한 번 확인받는다. */
+  async function resetSeed() {
+    if (!confirm(
+      "아직 발행하지 않은 카페 초안(검수 대기·발행 대기·보관·반려·실패)을 모두 삭제하고,\n" +
+      "브랜드마다 새 톤으로 2개씩 새로 생성할까요?\n\n" +
+      "· '발행 완료'된 글과 기록은 지워지지 않아요.\n" +
+      "· 되돌릴 수 없어요."
+    )) return;
+    setResetBusy(true);
+    try {
+      const j = await api("/api/naver-cafe/reset-seed", "POST", { per_brand: 2, clear: true });
+      const lines = (j.detail || []).map((d: { unit: string; seeded: number; reason?: string }) =>
+        `· ${d.unit}: ${d.seeded ?? 0}개${d.reason ? ` (${d.reason})` : ""}`).join("\n");
+      alert(
+        `옛 초안 ${j.cleared ?? 0}개 삭제 완료.\n새 초안 ${j.seeded ?? 0}개 생성:\n${lines || "(생성된 초안 없음)"}` +
+        (j.note ? `\n\n${j.note}` : "") + (j.note2 ? `\n${j.note2}` : "")
+      );
+      setView("draft");
+      loadAll();
+    } catch (e) { alert(e instanceof Error ? e.message : "정리·재생성 실패"); } finally { setResetBusy(false); }
   }
   async function patchStatus(p: Post, status: PostStatus) {
     try { await api("/api/naver-cafe/posts", "PATCH", { id: p.id, status }); loadAll(); }
@@ -766,7 +789,18 @@ export default function NaverCafePage() {
                 <h1 className="flex items-center gap-2 text-xl font-bold dark:text-gray-100"><BarChart3 className="h-6 w-6 text-primary" /> 카페 자동화 대시보드</h1>
                 <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">브랜드 페르소나 초안 → 검수(승인/보관/반려) → 페이스 규칙에 맞춰 실제 타이핑 발행 → 24h 반응 측정</p>
               </div>
-              <div className="flex flex-wrap items-center gap-2">{pacingCard}{agentBadge}</div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={resetSeed}
+                  disabled={resetBusy}
+                  title="아직 발행하지 않은 초안을 모두 비우고, 브랜드마다 새 톤으로 2개씩 다시 생성해요. (발행 완료된 글은 유지)"
+                  className="flex items-center gap-1.5 rounded-lg border border-violet-300 bg-violet-50 px-3 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-100 disabled:opacity-50 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-300 dark:hover:bg-violet-900/40"
+                >
+                  {resetBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                  옛 초안 비우고 새로 2개씩
+                </button>
+                {pacingCard}{agentBadge}
+              </div>
             </div>
 
             {/* 현황 통계 = 아래 목록의 필터. 카드를 누르면 그 섹션만 본다. */}
