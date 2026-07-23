@@ -57,6 +57,7 @@ export default function PublicAdSharePage() {
   const [ad, setAd] = useState<PublicAd | null>(null)
   const [state, setState] = useState<'loading' | 'ready' | 'notfound'>('loading')
   const [idx, setIdx] = useState(0)
+  const [vidFailed, setVidFailed] = useState(false)
 
   useEffect(() => {
     if (!libraryId) return
@@ -135,15 +136,26 @@ export default function PublicAdSharePage() {
           {/* 좌: 미디어 + 캡션 + 대본 */}
           <div className="space-y-4 md:sticky md:top-6">
             <div className="relative mx-auto aspect-[9/16] w-full max-w-[340px] overflow-hidden rounded-2xl bg-black shadow-sm">
-              {ad.media_type === 'video' && ad.media_url ? (
+              {ad.media_type === 'video' && ad.media_url && !vidFailed ? (
                 <video
                   src={ad.media_url}
                   poster={ad.poster_url || undefined}
                   controls
                   playsInline
                   preload="metadata"
+                  onError={() => setVidFailed(true)}
                   className="h-full w-full bg-black object-contain"
                 />
+              ) : ad.media_type === 'video' ? (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-gray-900 p-4 text-center">
+                  {ad.poster_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={ad.poster_url} alt="" className="absolute inset-0 h-full w-full object-contain opacity-40" />
+                  ) : null}
+                  <p className="relative text-sm font-medium text-white/90">원본 영상이 만료됐어요</p>
+                  <p className="relative text-xs text-white/50">저장 전에 페이스북에서 광고가 내려간 것 같아요</p>
+                  <a href={`https://www.facebook.com/ads/library/?id=${libraryId}`} target="_blank" rel="noopener noreferrer" className="relative mt-1 rounded-full bg-white/15 px-3 py-1 text-xs text-white hover:bg-white/25">광고 라이브러리에서 보기 ↗</a>
+                </div>
               ) : urls.length > 0 ? (
                 <>
                   {/* eslint-disable-next-line @next/next/no-img-element */}

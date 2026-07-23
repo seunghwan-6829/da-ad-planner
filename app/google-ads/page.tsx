@@ -3011,6 +3011,15 @@ function AdDetailModal({
               {linkCopied ? <Check className="h-3.5 w-3.5" /> : <Link2 className="h-3.5 w-3.5" />}
               {linkCopied ? "복사됨" : "공유 URL"}
             </button>
+            <a
+              href={`/google-ad/share/${ad.library_id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="이 소재를 별도 탭(영구 링크)으로 열어요 — 나중에 이 화면으로 다시 볼 수 있어요"
+              className="flex items-center gap-1 rounded-lg border border-primary/40 bg-primary/5 px-2.5 py-1.5 text-xs font-medium text-primary hover:bg-primary/10"
+            >
+              <ExternalLink className="h-3.5 w-3.5" /> 별도 탭
+            </a>
             <a href={sourceLink(ad)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 rounded-lg border border-gray-200 dark:border-gray-700 px-2.5 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800">
               <ExternalLink className="h-3.5 w-3.5" /> 투명성 센터
             </a>

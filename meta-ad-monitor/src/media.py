@@ -25,19 +25,22 @@ _HEADERS = {
 }
 
 
-def _download(url: str, attempts: int = 3) -> bytes | None:
+def _download(url: str, attempts: int = 4) -> bytes | None:
+    """메타 CDN 파일을 받아온다.
+    ⚠️ 예전엔 첫 비200 응답(403/503 등)에서 바로 포기해, 일시적 오류에도 소재가 영구 유실됐다.
+       CDN 은 일시적으로 403/503 을 주거나 연결이 끊기므로, 비200 과 예외를 모두 백오프 재시도한다."""
+    last = ""
     for i in range(attempts):
         try:
             r = requests.get(url, headers=_HEADERS, timeout=90)
             if r.status_code == 200 and r.content:
                 return r.content
-            print(f"  다운로드 응답 이상({r.status_code})")
-            return None
+            last = f"응답 {r.status_code}"
         except Exception as e:
-            if i == attempts - 1:
-                print(f"  다운로드 실패: {e}")
-            else:
-                time.sleep(1.0 * (i + 1))
+            last = str(e)
+        if i < attempts - 1:
+            time.sleep(1.5 * (i + 1))  # 백오프 후 재시도
+    print(f"  다운로드 실패({attempts}회): {last}")
     return None
 
 

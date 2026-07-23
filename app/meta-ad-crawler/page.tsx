@@ -305,40 +305,71 @@ function MediaView({
 }) {
   const urls = mediaListOf(ad);
   const [idx, setIdx] = useState(0);
+  const [vidFailed, setVidFailed] = useState(false); // 영상 재생 실패(만료/미저장) → 검은 화면 대신 폴백
   const r = rounded ?? "";
 
-  if (ad.media_type === "video" && ad.media_url) {
-    if (card) {
-      // 카드: 클릭을 가로채지 않도록 컨트롤 없는 프리뷰(포스터/첫 프레임) + 가운데 ▶
-      return (
-        <div className="pointer-events-none relative h-full w-full bg-black">
-          <video
-            src={ad.media_url}
-            poster={ad.poster_url || undefined}
-            muted
-            playsInline
-            preload="metadata"
-            className={`h-full w-full object-cover ${r}`}
-          />
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-black/45">
-              <Play className="h-4 w-4 fill-white text-white" />
+  if (ad.media_type === "video") {
+    if (ad.media_url && !vidFailed) {
+      if (card) {
+        // 카드: 클릭을 가로채지 않도록 컨트롤 없는 프리뷰(포스터/첫 프레임) + 가운데 ▶
+        return (
+          <div className="pointer-events-none relative h-full w-full bg-black">
+            <video
+              src={ad.media_url}
+              poster={ad.poster_url || undefined}
+              muted
+              playsInline
+              preload="metadata"
+              onError={() => setVidFailed(true)}
+              className={`h-full w-full object-cover ${r}`}
+            />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-black/45">
+                <Play className="h-4 w-4 fill-white text-white" />
+              </div>
             </div>
           </div>
-        </div>
+        );
+      }
+      return (
+        <video
+          ref={videoRef}
+          src={ad.media_url}
+          poster={ad.poster_url || undefined}
+          controls
+          playsInline
+          preload="metadata"
+          onError={() => setVidFailed(true)}
+          onClick={(e) => e.stopPropagation()}
+          className={`h-full w-full bg-black object-contain ${r}`}
+        />
       );
     }
+    // 영상인데 재생 불가(원본 만료·미저장) → 검은 박스 대신 포스터 + 안내 + 라이브러리 링크
     return (
-      <video
-        ref={videoRef}
-        src={ad.media_url}
-        poster={ad.poster_url || undefined}
-        controls
-        playsInline
-        preload="metadata"
-        onClick={(e) => e.stopPropagation()}
-        className={`h-full w-full bg-black object-contain ${r}`}
-      />
+      <div className={`relative h-full w-full overflow-hidden bg-gray-900 ${r}`}>
+        {ad.poster_url ? <img src={ad.poster_url} alt="" className="h-full w-full object-cover opacity-40" /> : null}
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 p-3 text-center">
+          <Megaphone className="h-6 w-6 text-white/50" />
+          <p className="text-[11px] font-medium text-white/90">원본 영상이 만료됐어요</p>
+          {!card && (
+            <>
+              <p className="text-[10px] leading-tight text-white/50">저장 전에 페이스북에서 광고가 내려간 것 같아요</p>
+              {ad.library_id && (
+                <a
+                  href={`https://www.facebook.com/ads/library/?id=${ad.library_id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className="mt-1 rounded-full bg-white/15 px-2.5 py-1 text-[11px] text-white hover:bg-white/25"
+                >
+                  광고 라이브러리에서 보기 ↗
+                </a>
+              )}
+            </>
+          )}
+        </div>
+      </div>
     );
   }
   if (urls.length === 0) {
@@ -2853,6 +2884,15 @@ function AdDetailModal({
               {linkCopied ? <Check className="h-3.5 w-3.5" /> : <Link2 className="h-3.5 w-3.5" />}
               {linkCopied ? "복사됨" : "공유 URL"}
             </button>
+            <a
+              href={`/meta-ad/share/${ad.library_id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="이 소재를 별도 탭(영구 링크)으로 열어요 — 나중에 이 화면으로 다시 볼 수 있어요"
+              className="flex items-center gap-1 rounded-lg border border-primary/40 bg-primary/5 px-2.5 py-1.5 text-xs font-medium text-primary hover:bg-primary/10"
+            >
+              <ExternalLink className="h-3.5 w-3.5" /> 별도 탭
+            </a>
             <a href={sourceLink(ad)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 rounded-lg border border-gray-200 dark:border-gray-700 px-2.5 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800">
               <ExternalLink className="h-3.5 w-3.5" /> 광고 라이브러리
             </a>
