@@ -860,13 +860,13 @@ async function publishComment(job) {
 // ── 하트비트 ──
 async function heartbeat() { try { await http('/api/naver-cafe/agent', 'POST', { info: 'pc-agent' }) } catch {} }
 
-/* 글쓰기가 새 탭에서 열리므로 처리마다 탭이 하나씩 쌓인다. 첫 탭만 남기고 나머지는 닫아
-   메모리·혼선을 막는다(발행 한 건이 완전히 끝난 뒤에만 호출한다). */
-async function closeExtraTabs() {
-  try {
-    const pages = context?.pages() || []
-    for (let i = 1; i < pages.length; i++) { try { await pages[i].close() } catch {} }
-  } catch {}
+/* 처리 한 건이 끝나면 브라우저를 통째로 닫는다.
+   글쓰기 탭뿐 아니라 그 앞의 '게시판 목록 창'(첫 창)까지 함께 닫혀, 대기 중에는 창이 하나도 남지 않는다.
+   다음 발행 때 프로필째 다시 열리며, 네이버 로그인은 프로필에 저장돼 있어 그대로 유지된다.
+   (발행 간격이 25~90분이라 매번 새로 여는 부담은 사실상 없다.) */
+async function closeBrowserSession() {
+  try { if (context) await context.close() } catch {}
+  context = null
 }
 
 // 결과 보고(작은 호출). 실패 시 백오프 재시도. ★확정된 발행 성공을 절대 실패로 낮추지 않기 위해 분리.
@@ -904,13 +904,13 @@ async function publishTick() {
     const msg = String((e && e.message) || e).slice(0, 300)
     // 사람이 미리보기에서 취소한 건 '실패'가 아니다 — 서버가 이미 발행 대기로 되돌렸고,
     // 실패로 보고하면 연속 실패 카운터가 올라가 엉뚱하게 자동 중단된다.
-    if (e && e.cancelled) { log(`⏹ 등록하지 않았습니다: ${msg}`); await closeExtraTabs(); return }
+    if (e && e.cancelled) { log(`⏹ 등록하지 않았습니다: ${msg}`); await closeBrowserSession(); return }
     log(`❌ 발행 실패: ${msg}`)
     try { const p = context?.pages().slice(-1)[0]; if (p) await p.screenshot({ path: join(LOGS, `${job.id}.png`), fullPage: true }) } catch {}
     const reported = await reportResult({ id: job.id, ok: false, kind: job.kind, cafe_id: job.cafe_id, note: msg })
     // 실패 보고마저 실패하면 글이 '발행 중'으로 남아 아무도 집어가지 못한다 — 크게 알린다.
     if (!reported) log(`⚠️ 실패 보고를 전송하지 못했습니다. 이 글은 서버에 '발행 중'으로 남습니다 — 대시보드에서 [되돌리기]를 눌러주세요.`)
-    await closeExtraTabs()
+    await closeBrowserSession()
     return
   }
 
@@ -927,7 +927,7 @@ async function publishTick() {
   })
   if (ok) log(`✅ 발행 완료${url ? `: ${url}` : ''}`)
   else log(`⚠️ 발행은 됐지만 결과 보고 실패 — 서버에 '발행 중'으로 남습니다. 웹에서 확인 후 처리하세요(중복 발행 방지).`)
-  await closeExtraTabs()
+  await closeBrowserSession()
 }
 
 // ── 24h 반응 측정: 서버가 준 대기 목록을 로그인 브라우저로 방문해 수집 ──
@@ -953,6 +953,7 @@ async function trackReactions() {
       await sleep(1500 + Math.random() * 2000)
     } catch (e) { log(`  반응 측정 실패(다음 틱 재시도): ${String((e && e.message) || e).slice(0, 100)}`) }
   }
+  await closeBrowserSession() // 측정용으로 연 창도 끝나면 닫아 대기 중 창이 남지 않게 한다.
 }
 
 // ── 최초 1회: 네이버 로그인 세션 만들기 ──
