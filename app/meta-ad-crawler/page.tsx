@@ -306,6 +306,9 @@ function MediaView({
   const urls = mediaListOf(ad);
   const [idx, setIdx] = useState(0);
   const [vidFailed, setVidFailed] = useState(false); // 영상 재생 실패(만료/미저장) → 검은 화면 대신 폴백
+  // 상세 모달은 광고가 바뀌어도 같은 컴포넌트가 재사용된다 — 이전 광고의 실패/슬라이드 상태가
+  // 남으면 멀쩡한 영상에도 폴백이 떠 버리므로, 광고가 바뀌면 초기화한다.
+  useEffect(() => { setVidFailed(false); setIdx(0); }, [ad.library_id, ad.media_url]);
   const r = rounded ?? "";
 
   if (ad.media_type === "video") {
