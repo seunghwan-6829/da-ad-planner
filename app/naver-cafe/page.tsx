@@ -403,6 +403,7 @@ export default function NaverCafePage() {
   const [savingCafe, setSavingCafe] = useState(false);
   const [genBusy, setGenBusy] = useState(false);
   const [resetBusy, setResetBusy] = useState(false);
+  const [reflowBusy, setReflowBusy] = useState(false);
 
   const loadAll = useCallback(() => {
     fetch("/api/naver-cafe/brands").then((r) => (r.ok ? r.json() : [])).then((j) => setBrands(j as Brand[])).catch(() => {});
@@ -487,6 +488,16 @@ export default function NaverCafePage() {
       setView("draft");
       loadAll();
     } catch (e) { alert(e instanceof Error ? e.message : "정리·재생성 실패"); } finally { setResetBusy(false); }
+  }
+  /* 기존 글 줄바꿈만 정리 — 내용은 그대로 두고 가독성(줄나눔)만 손본다. */
+  async function reflowExisting() {
+    if (!confirm("아직 발행하지 않은 글들의 '줄바꿈'만 보기 좋게 정리할까요?\n\n· 내용·제목은 그대로예요. 문장·쉼표 단위로 줄만 나눕니다.\n· 발행 완료된 글은 건드리지 않아요.")) return;
+    setReflowBusy(true);
+    try {
+      const j = await api("/api/naver-cafe/reset-seed", "POST", { reflow_only: true });
+      alert(`줄바꿈 정리 완료 — 전체 ${j.total ?? 0}개 중 ${j.reflowed ?? 0}개 정리했어요.`);
+      loadAll();
+    } catch (e) { alert(e instanceof Error ? e.message : "줄바꿈 정리 실패"); } finally { setReflowBusy(false); }
   }
   async function patchStatus(p: Post, status: PostStatus) {
     try { await api("/api/naver-cafe/posts", "PATCH", { id: p.id, status }); loadAll(); }
@@ -798,6 +809,15 @@ export default function NaverCafePage() {
                 >
                   {resetBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
                   옛 초안 비우고 새로 2개씩
+                </button>
+                <button
+                  onClick={reflowExisting}
+                  disabled={reflowBusy}
+                  title="지금 있는 글들의 내용은 그대로 두고, 문장·쉼표 단위로 줄바꿈만 보기 좋게 정리해요."
+                  className="flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
+                >
+                  {reflowBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                  기존 글 줄바꿈 정리
                 </button>
                 {pacingCard}{agentBadge}
               </div>
@@ -1454,7 +1474,7 @@ export default function NaverCafePage() {
               <button onClick={() => setPacingOpen(false)} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"><X className="h-5 w-5" /></button>
             </div>
             <div className="flex-1 space-y-3 overflow-y-auto p-4">
-              <p className="rounded-lg bg-gray-50 p-2.5 text-[11px] text-gray-500 dark:bg-gray-800 dark:text-gray-400">사람처럼 보이게 하는 안전장치예요. 값을 낮게(보수적으로) 둘수록 안전합니다.</p>
+              <p className="rounded-lg bg-gray-50 p-2.5 text-[11px] text-gray-500 dark:bg-gray-800 dark:text-gray-400">네이버가 "진짜 사람이 쓴다"고 느끼게 하는 안전장치예요. <b>숫자를 작게</b> 둘수록 더 안전합니다.</p>
               <div className="grid grid-cols-2 gap-3">
                 {/* 시간 제한은 기본으로 끈다(새벽에도 발행). 필요하면 켜서 시간대를 정할 수 있게 남겨둠. */}
                 {(() => {
@@ -1483,16 +1503,17 @@ export default function NaverCafePage() {
                   );
                 })()}
                 {([
-                  ["daily_post_limit", "하루 글 상한"],
-                  ["daily_comment_limit", "하루 댓글 상한"],
-                  ["per_cafe_post_weekly", "발행처별 주간 글 상한"],
-                  ["min_action_gap_min", "동작 간 최소 간격(분)"],
-                  ["max_action_gap_min", "동작 간 최대 간격(분)"],
-                  ["comment_delay_min", "댓글 최소 지연(분)"],
-                  ["comment_delay_max", "댓글 최대 지연(분)"],
-                ] as [keyof Pacing, string][]).map(([k, label]) => (
+                  ["daily_post_limit", "하루 글 개수", "하루에 최대 몇 개"],
+                  ["daily_comment_limit", "하루 댓글 개수", "하루에 최대 몇 개"],
+                  ["per_cafe_post_weekly", "한 카페 주간 글", "한 곳에 일주일 최대 몇 개"],
+                  ["min_action_gap_min", "올리는 간격 · 최소", "분 · 너무 붙으면 위험"],
+                  ["max_action_gap_min", "올리는 간격 · 최대", "분 · 최소~최대 랜덤"],
+                  ["comment_delay_min", "댓글 타이밍 · 최소", "분 · 원글 뜨고 이만큼 뒤"],
+                  ["comment_delay_max", "댓글 타이밍 · 최대", "분 · 최소~최대 랜덤"],
+                ] as [keyof Pacing, string, string][]).map(([k, label, hint]) => (
                   <div key={k}>
-                    <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{label}</label>
+                    <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300">{label}</label>
+                    <p className="mb-1 text-[10px] text-gray-400">{hint}</p>
                     <input type="number" min={0} value={pacing[k] as number} onChange={(e) => setPacing({ ...pacing, [k]: Number(e.target.value) })} className={inputCls} />
                   </div>
                 ))}

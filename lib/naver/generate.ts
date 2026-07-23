@@ -89,6 +89,23 @@ function stripMarkup(s: string): string {
     .trim()
 }
 
+/* 본문을 읽기 좋게 줄바꿈한다 — 문장 끝(. ? !)과 쉼표(,) 뒤에서 줄을 나눈다.
+   문단(빈 줄) 구분은 유지. 네이버 에디터는 본문의 \n 을 그대로 줄바꿈으로 반영하고,
+   워커(agent.mjs)도 줄 단위로 Enter 를 눌러 입력하므로, 여기서 넣은 줄바꿈이 실제 글에 그대로 나타난다.
+   숫자 안의 쉼표("1,000")는 뒤에 공백이 없어 나뉘지 않는다. */
+export function reflowBody(text: string): string {
+  const paras = String(text || '').replace(/\r\n?/g, '\n').split(/\n{2,}/)
+  const out = paras.map((para) => {
+    // 문단 안의 기존 줄바꿈/중복 공백을 한 칸으로 정리한 뒤, 규칙대로 다시 나눈다.
+    let p = para.replace(/\s*\n\s*/g, ' ').replace(/[ \t]{2,}/g, ' ').trim()
+    if (!p) return ''
+    p = p.replace(/([.?!]+)[ \t]+/g, '$1\n') // 문장 끝(마침표·물음표·느낌표) 뒤
+    p = p.replace(/,[ \t]+/g, ',\n')          // 쉼표 뒤 (숫자 "1,000"은 공백이 없어 제외)
+    return p.split('\n').map((l) => l.trim()).filter(Boolean).join('\n')
+  })
+  return out.filter(Boolean).join('\n\n').replace(/\n{3,}/g, '\n\n').trim()
+}
+
 // 첫 비어있지 않은 줄 = 제목, 나머지 = 본문.
 function splitTitleBody(text: string): { title: string; body: string } {
   const lines = text.replace(/\r/g, '').split('\n')
@@ -153,7 +170,8 @@ ${avoid.length ? `[최근에 쓴 제목들 — 주제·톤 겹치지 않게] ${a
 - 1번째 줄: 제목만 (따옴표·"제목:" 없이).
 - 2번째 줄부터: 본문.`
   const text = await callClaude(apiKey, model, maxTokens, prompt)
-  return splitTitleBody(text)
+  const { title, body } = splitTitleBody(text)
+  return { title, body: reflowBody(body) } // 읽기 좋게 줄바꿈까지 넣어서 반환
 }
 
 export async function draftComment(
