@@ -494,7 +494,7 @@ export default function NaverCafePage() {
     if (!confirm("아직 발행하지 않은 글들의 '줄바꿈'만 보기 좋게 정리할까요?\n\n· 내용·제목은 그대로예요. 문장·쉼표 단위로 줄만 나눕니다.\n· 발행 완료된 글은 건드리지 않아요.")) return;
     setReflowBusy(true);
     try {
-      const j = await api("/api/naver-cafe/reset-seed", "POST", { reflow_only: true });
+      const j = await api("/api/naver-cafe/reflow", "POST", {});
       alert(`줄바꿈 정리 완료 — 전체 ${j.total ?? 0}개 중 ${j.reflowed ?? 0}개 정리했어요.`);
       loadAll();
     } catch (e) { alert(e instanceof Error ? e.message : "줄바꿈 정리 실패"); } finally { setReflowBusy(false); }

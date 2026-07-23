@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getNaverSettings } from '@/lib/naver/settings'
-import { draftPost, reflowBody, POST_ARCHETYPES, type DraftCafe } from '@/lib/naver/generate'
+import { draftPost, POST_ARCHETYPES, type DraftCafe } from '@/lib/naver/generate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -40,23 +40,6 @@ export async function POST(req: Request) {
   const b = await req.json().catch(() => ({}))
   const perBrand = Math.max(0, Math.min(5, Number(b.per_brand ?? 2) || 0))
   const doClear = b.clear !== false
-
-  // ── 줄바꿈만 정리(내용은 그대로) — 이미 마음에 드는 초안의 가독성만 손볼 때 ──
-  if (b.reflow_only === true) {
-    const { data: rows, error } = await supabaseAdmin
-      .from('nc_posts').select('id, body, kind').in('status', PENDING)
-    if (error) return NextResponse.json({ error: '조회 실패: ' + error.message }, { status: 500 })
-    let reflowed = 0
-    for (const r of (rows || []) as Row[]) {
-      if (r.kind === 'comment') continue // 댓글은 한 덩어리로 두므로 줄바꿈 정리 대상 아님
-      const nb = reflowBody(str(r.body))
-      if (nb && nb !== r.body) {
-        const up = await supabaseAdmin.from('nc_posts').update({ body: nb, updated_at: new Date().toISOString() }).eq('id', r.id)
-        if (!up.error) reflowed++
-      }
-    }
-    return NextResponse.json({ ok: true, reflowed, total: (rows || []).length })
-  }
 
   // ── 1) 미발행 초안 비우기 ──
   let cleared = 0
