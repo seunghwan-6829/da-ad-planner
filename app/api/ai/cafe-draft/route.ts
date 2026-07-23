@@ -40,7 +40,10 @@ export async function POST(req: Request) {
     }
     const topic = (b.topic || '').toString().trim()
     if (!topic) return NextResponse.json({ error: '글 주제를 입력해 주세요.' }, { status: 400 })
-    const { title, body } = await draftPost(apiKey, cafe, topic, claude.model, claude.max_tokens)
+    // archetype(글 유형) 지정 가능 — 없으면 랜덤. (테스트·수동 생성에서 유형을 고를 수 있게)
+    const { title, body } = await draftPost(apiKey, cafe, topic, claude.model, claude.max_tokens, {
+      archetypeKey: typeof b.archetype === 'string' ? b.archetype : undefined,
+    })
     return NextResponse.json({ title, body })
   } catch (e) {
     const msg = e instanceof Error ? e.message : '초안 생성 중 오류가 발생했어요.'
