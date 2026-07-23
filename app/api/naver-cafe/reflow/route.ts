@@ -19,17 +19,15 @@ export async function POST() {
     .from('nc_posts').select('id, body, kind').in('status', PENDING).limit(2000)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  let reflowed = 0, unchanged = 0, failed = 0
-  const nlSample: { before: number; after: number }[] = []
-  let firstError = ''
+  let reflowed = 0
+  let unchanged = 0
   for (const r of (rows || []) as { id: string; body: string; kind?: string }[]) {
     if (r.kind === 'comment') continue // 댓글은 한 덩어리로 두므로 대상 아님
     const before = String(r.body || '')
     const nb = reflowBody(before)
-    if (nlSample.length < 6) nlSample.push({ before: (before.match(/\n/g) || []).length, after: (nb.match(/\n/g) || []).length })
-    if (!nb || nb === before) { unchanged++; continue }
+    if (!nb || nb === before) { unchanged++; continue } // 이미 정리된 글은 건너뜀(멱등)
     const up = await supabaseAdmin.from('nc_posts').update({ body: nb, updated_at: new Date().toISOString() }).eq('id', r.id)
-    if (up.error) { failed++; if (!firstError) firstError = up.error.message } else reflowed++
+    if (!up.error) reflowed++
   }
-  return NextResponse.json({ ok: true, total: (rows || []).length, reflowed, unchanged, failed, nlSample, firstError: firstError || undefined })
+  return NextResponse.json({ ok: true, total: (rows || []).length, reflowed, unchanged })
 }
