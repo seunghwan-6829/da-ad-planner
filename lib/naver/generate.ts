@@ -70,6 +70,21 @@ function pickArchetype(key?: string): Archetype {
   return POST_ARCHETYPES[Math.floor(Math.random() * POST_ARCHETYPES.length)]
 }
 
+/* 발행처 '글 방향' 설정 → 어떤 글 유형(아키타입) 묶음으로 쓸지.
+   운영 설정에서 버튼으로 고르면(정보/질문/일상), 그 방향의 유형 안에서만 돌려 쓴다.
+   'auto'(또는 미지정)면 전체에서 섞어 쓴다(기존 동작). */
+export const STYLE_GROUPS: Record<string, string[]> = {
+  info: ['꿀팁방출', '자료나눔'],            // 정보·꿀팁 방출형
+  question: ['추천요청', '고민상담', '질문'], // 질문·추천·고민형
+  casual: ['가벼운경험', '가벼운의견'],       // 일상·잡담형
+}
+export function archetypesForStyle(style?: string): Archetype[] {
+  const keys = STYLE_GROUPS[String(style || '').trim()]
+  if (!keys) return POST_ARCHETYPES // auto/미지정 → 전체
+  const picked = POST_ARCHETYPES.filter((a) => keys.includes(a.key))
+  return picked.length ? picked : POST_ARCHETYPES
+}
+
 /* "주로 업로드하는 컨텐츠"(topics)를 개별 소주제로 쪼갠다.
    쉼표·슬래시·가운뎃점·및·그리고, 그리고 "A과/와 B"(양쪽 2자 이상)까지 분리해서
    자동 생성이 한 주제(예: 상세페이지)에만 쏠리지 않고 골고루 돌게 한다.

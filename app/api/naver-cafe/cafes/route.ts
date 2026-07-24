@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic'
 // 마이그레이션(v3 컬럼 추가 SQL) 전 환경에서도 죽지 않게, 컬럼-미존재 에러면 해당 컬럼을 빼고 재시도.
 const V3_COLS = [
   'brand_id', 'club_id', 'board_id', 'require_prefix', 'prefix', 'emphasis',
-  'allow_post', 'allow_comment', 'auto_mode', 'interval_days', 'auto_publish', 'rules',
+  'allow_post', 'allow_comment', 'auto_mode', 'interval_days', 'auto_publish', 'rules', 'post_style',
 ]
 const V2_EXTRA = ['selling_point', 'daily_drafts']
 
@@ -23,7 +23,7 @@ function toArray(v: unknown): string[] {
 function buildRow(b: Record<string, unknown>, forInsert: boolean): Record<string, unknown> {
   const row: Record<string, unknown> = {}
   const strField = (k: string) => { if (typeof b[k] === 'string') row[k] = b[k] }
-  for (const k of ['name', 'cafe_url', 'board_name', 'tone', 'topics', 'notes', 'plan_schedule', 'publish_slot', 'selling_point', 'club_id', 'board_id', 'prefix']) strField(k)
+  for (const k of ['name', 'cafe_url', 'board_name', 'tone', 'topics', 'notes', 'plan_schedule', 'publish_slot', 'selling_point', 'club_id', 'board_id', 'prefix', 'post_style']) strField(k)
   if (b.brand_id !== undefined) row.brand_id = b.brand_id ? String(b.brand_id) : null
   if (b.emphasis !== undefined) row.emphasis = toArray(b.emphasis)
   if (b.rules !== undefined && typeof b.rules === 'object' && b.rules) row.rules = b.rules

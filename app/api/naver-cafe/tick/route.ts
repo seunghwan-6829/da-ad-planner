@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getNaverSettings } from '@/lib/naver/settings'
 import { getMeta, setMeta } from '@/lib/naver/pacing'
-import { draftPost, splitTopics, type DraftCafe } from '@/lib/naver/generate'
+import { draftPost, splitTopics, archetypesForStyle, type DraftCafe } from '@/lib/naver/generate'
 import { cronAuthOk } from '@/lib/cron-auth'
 
 export const dynamic = 'force-dynamic'
@@ -63,7 +63,10 @@ async function runAutoSchedules(apiKey: string) {
           selling_point: (d as { selling_point?: string }).selling_point || '',
           rules: (d as { rules?: { promo_banned?: boolean } }).rules || null,
         }
-        const { title, body } = await draftPost(apiKey, cafe, topic, claude.model, claude.max_tokens)
+        // 발행처가 고른 '글 방향'(정보/질문/일상) 안에서 유형을 하나 뽑는다(미설정이면 전체 섞기).
+        const stylePool = archetypesForStyle((d as { post_style?: string }).post_style)
+        const arch = stylePool[Math.floor(Math.random() * stylePool.length)]
+        const { title, body } = await draftPost(apiKey, cafe, topic, claude.model, claude.max_tokens, { archetypeKey: arch.key })
         if (!title) {
           detail.push({ dest: cafe.name, reason: '생성 실패' })
           return

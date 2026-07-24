@@ -430,6 +430,7 @@ export default function NaverCafePage() {
       require_prefix: !!cafe.require_prefix, prefix: cafe.prefix || "",
       emphasis: cafe.emphasis || [], allow_post: cafe.allow_post !== false, allow_comment: cafe.allow_comment !== false,
       auto_mode: !!cafe.auto_mode, interval_days: cafe.interval_days ?? 3, auto_publish: !!cafe.auto_publish,
+      post_style: (cafe as { post_style?: string }).post_style || "auto",
     });
   }, [cafe?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1369,6 +1370,32 @@ export default function NaverCafePage() {
                 <div>
                   <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">활동 컨셉</label>
                   <textarea value={cafeForm.tone || ""} onChange={(e) => setCafeForm({ ...cafeForm, tone: e.target.value })} rows={3} placeholder="예: 정보 많은 보따리 상인(어투·잘난척 금물)" className={inputCls} />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">
+                    글 방향 <span className="font-normal text-gray-400">— 이 발행처 원고를 어떤 글로 쓸지 고정</span>
+                  </label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {[
+                      { k: "auto", label: "자동 (섞기)", hint: "질문·정보·일상 다 섞어서" },
+                      { k: "info", label: "정보·꿀팁", hint: "노하우·자료를 푸는 글" },
+                      { k: "question", label: "질문·고민", hint: "물어보고 추천받는 글" },
+                      { k: "casual", label: "일상·잡담", hint: "가벼운 경험·의견" },
+                    ].map((o) => {
+                      const on = ((cafeForm.post_style as string) || "auto") === o.k;
+                      return (
+                        <button
+                          key={o.k}
+                          type="button"
+                          title={o.hint}
+                          onClick={() => setCafeForm({ ...cafeForm, post_style: o.k })}
+                          className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${on ? "border-primary bg-primary/10 text-primary" : "border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"}`}
+                        >
+                          {o.label}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">채널 소구점</label>
