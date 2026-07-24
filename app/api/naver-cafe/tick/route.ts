@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getNaverSettings } from '@/lib/naver/settings'
 import { getMeta, setMeta } from '@/lib/naver/pacing'
-import { draftPost, type DraftCafe } from '@/lib/naver/generate'
+import { draftPost, splitTopics, type DraftCafe } from '@/lib/naver/generate'
 import { cronAuthOk } from '@/lib/cron-auth'
 
 export const dynamic = 'force-dynamic'
@@ -14,8 +14,9 @@ export const maxDuration = 300
 // 사전 클레임(auto_last 먼저 기록)으로 잦은 호출에도 중복 생성 안 함.
 
 function pickTopic(destTopics: string, brandTopics: unknown): string {
-  const fromDest = (destTopics || '').split(/[,\n]/).map((s) => s.trim()).filter(Boolean)
-  const fromBrand = Array.isArray(brandTopics) ? (brandTopics as unknown[]).map((x) => String(x).trim()).filter(Boolean) : []
+  // "마케팅과 상세페이지 관련" 같은 문자열도 소주제로 쪼개(splitTopics) 한 주제 쏠림 방지.
+  const fromDest = splitTopics(destTopics || '')
+  const fromBrand = Array.isArray(brandTopics) ? (brandTopics as unknown[]).flatMap((x) => splitTopics(String(x))) : []
   const pool = fromDest.length ? fromDest : fromBrand
   if (!pool.length) return ''
   return pool[Math.floor(Math.random() * pool.length)]

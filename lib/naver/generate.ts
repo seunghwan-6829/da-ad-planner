@@ -70,6 +70,20 @@ function pickArchetype(key?: string): Archetype {
   return POST_ARCHETYPES[Math.floor(Math.random() * POST_ARCHETYPES.length)]
 }
 
+/* "주로 업로드하는 컨텐츠"(topics)를 개별 소주제로 쪼갠다.
+   쉼표·슬래시·가운뎃점·및·그리고, 그리고 "A과/와 B"(양쪽 2자 이상)까지 분리해서
+   자동 생성이 한 주제(예: 상세페이지)에만 쏠리지 않고 골고루 돌게 한다.
+   예) "마케팅과 상세페이지 관련" → ["마케팅", "상세페이지"] */
+export function splitTopics(topics: string): string[] {
+  const parts = String(topics || '')
+    .replace(/\s*(?:,|、|\/|·|\||＋|\+|및|그리고)\s*/g, '\n')  // 안전한 구분자들
+    .replace(/([가-힣]{2,})(?:과|와)\s+/g, '$1\n')            // "마케팅과 " → "마케팅|"
+    .split('\n')
+    .map((s) => s.trim().replace(/\s*(관련|쪽|얘기|이야기)$/, '').trim()) // 꼬리말 정리
+    .filter((s) => s.length >= 2)
+  return Array.from(new Set(parts))
+}
+
 export interface DraftCafe {
   name: string
   persona?: string

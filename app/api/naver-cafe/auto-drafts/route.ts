@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getNaverSettings } from '@/lib/naver/settings'
-import { draftPost, POST_ARCHETYPES, type DraftCafe } from '@/lib/naver/generate'
+import { draftPost, splitTopics, POST_ARCHETYPES, type DraftCafe } from '@/lib/naver/generate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -53,10 +53,13 @@ export async function POST(req: Request) {
         rules: (c.rules as DraftCafe['rules']) || null,
       }
 
-      // 원고 N개 = API N개 병렬 호출(하나가 실패해도 나머지는 그대로). 유형을 돌려가며 배정.
+      // "주로 업로드하는 컨텐츠"를 소주제로 쪼개(예: 마케팅과 상세페이지 → [마케팅, 상세페이지])
+      // 원고마다 소주제를 돌려가며 배정 → 한 주제에만 쏠리지 않게.
+      const subjects = splitTopics(dc.topics || '')
+      // 원고 N개 = API N개 병렬 호출(하나가 실패해도 나머지는 그대로). 유형·소주제를 돌려가며 배정.
       const results = await Promise.allSettled(
         Array.from({ length: need }, (_, i) =>
-          draftPost(apiKey, dc, '', claude.model, claude.max_tokens, {
+          draftPost(apiKey, dc, subjects.length ? subjects[(startIdx + i) % subjects.length] : '', claude.model, claude.max_tokens, {
             avoidTitles,
             archetypeKey: POST_ARCHETYPES[(startIdx + i) % POST_ARCHETYPES.length].key,
           })
