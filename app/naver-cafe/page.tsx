@@ -456,14 +456,15 @@ export default function NaverCafePage() {
     await fetch(`/api/naver-cafe/cafes?id=${cafe.id}`, { method: "DELETE" });
     setSel("dash"); loadAll();
   }
-  async function genDrafts() {
+  /* 초안 생성. force=true 면 하루 할당량을 무시하고 지금 바로 생성(디벨롭 중 다시 뽑을 때). */
+  async function genDrafts(force = false) {
     if (!cafe) return;
     setGenBusy(true);
     try {
-      const j = await api("/api/naver-cafe/auto-drafts", "POST", { cafe_id: cafe.id });
+      const j = await api("/api/naver-cafe/auto-drafts", "POST", { cafe_id: cafe.id, force });
       if (!j.made) {
         const err = Array.isArray(j.detail) ? j.detail.find((d: { error?: string }) => d.error)?.error : null;
-        alert(err ? `초안 생성 실패: ${err}` : "오늘 분량이 이미 채워져 있어요. 내일 아침 자동으로 다시 생성돼요.");
+        alert(err ? `초안 생성 실패: ${err}` : (force ? "생성된 초안이 없어요. 잠시 후 다시 시도해 주세요." : "오늘 분량이 이미 채워져 있어요. 내일 아침 자동으로 다시 생성돼요."));
       }
       loadAll();
     } catch (e) { alert(e instanceof Error ? e.message : "초안 생성 실패"); } finally { setGenBusy(false); }
@@ -1205,7 +1206,10 @@ export default function NaverCafePage() {
                   <h2 className="text-sm font-bold dark:text-gray-100">초안 검수 <span className="ml-1 text-[11px] font-normal text-gray-400">— 매일 아침 AI가 자동 작성</span></h2>
                   <div className="flex gap-2">
                     <button onClick={() => setCompose({ fixed: cafe.id })} className="flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"><PenLine className="h-3.5 w-3.5" /> 직접 기획</button>
-                    <button onClick={genDrafts} disabled={genBusy} className="flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50">
+                    <button onClick={() => genDrafts(true)} disabled={genBusy} title="하루 할당량과 상관없이 지금 바로 새로 뽑아요 (디벨롭 중 재생성용). 기존 초안은 남으니 필요하면 지워주세요." className="flex items-center gap-1 rounded-lg border border-primary/40 bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/10 disabled:opacity-50">
+                      {genBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} 지금 다시 생성
+                    </button>
+                    <button onClick={() => genDrafts(false)} disabled={genBusy} className="flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50">
                       {genBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />} 오늘 초안 {cafe.daily_drafts ?? 3}개 생성
                     </button>
                   </div>

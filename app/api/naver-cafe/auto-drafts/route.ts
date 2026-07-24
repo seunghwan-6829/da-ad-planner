@@ -37,7 +37,10 @@ export async function POST(req: Request) {
       const { data: recent } = await supabaseAdmin
         .from('nc_posts').select('title').eq('cafe_id', cafe.id).order('created_at', { ascending: false }).limit(15)
       const target = Math.max(0, Math.min(10, Number((cafe as { daily_drafts?: number }).daily_drafts ?? 3) || 0))
-      const need = Math.max(0, target - (todays?.length || 0))
+      // force: 하루 할당량을 무시하고 요청한 개수(기본 daily_drafts)만큼 지금 바로 생성 — 디벨롭 중 재생성용.
+      const forced = b.force === true
+      const wanted = Math.max(1, Math.min(10, Number(b.count) || target || 1))
+      const need = forced ? wanted : Math.max(0, target - (todays?.length || 0))
       const avoidTitles = (recent || []).map((r) => r.title).filter(Boolean)
       const startIdx = todays?.length || 0
 
