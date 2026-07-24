@@ -47,18 +47,6 @@ async function countToday(kind: string, nowMs: number = Date.now()): Promise<num
   return count || 0
 }
 
-// 발행처(카페 보드)별 롤링 7일 카운트.
-async function countCafeWeek(kind: string, cafeId: string, nowMs: number = Date.now()): Promise<number> {
-  const since = new Date(nowMs - 7 * 86400_000).toISOString()
-  const { count } = await supabaseAdmin
-    .from('nc_activity')
-    .select('id', { count: 'exact', head: true })
-    .eq('kind', kind)
-    .eq('cafe_id', cafeId)
-    .gte('at', since)
-  return count || 0
-}
-
 export async function getMeta(key: string): Promise<string | null> {
   const { data } = await supabaseAdmin.from('nc_meta').select('value').eq('key', key).maybeSingle()
   return data?.value ?? null
@@ -77,13 +65,8 @@ export async function canAct(
 ): Promise<{ ok: boolean; reason: string }> {
   if (!inActiveHours(pacing, nowMs)) return { ok: false, reason: '활동 시간대 아님' }
 
-  if (kind === 'post') {
-    if ((await countToday('post', nowMs)) >= pacing.daily_post_limit) return { ok: false, reason: '오늘 글 상한 도달' }
-    if ((await countCafeWeek('post', cafeId, nowMs)) >= pacing.per_cafe_post_weekly)
-      return { ok: false, reason: '이 카페 주간 글 상한 도달' }
-  } else if (kind === 'comment') {
-    if ((await countToday('comment', nowMs)) >= pacing.daily_comment_limit) return { ok: false, reason: '오늘 댓글 상한 도달' }
-  }
+  /* 개수 상한(하루 글/댓글·카페 주간 글)은 쓰지 않는다 — 발행처별 운영 주기가 물량을 관리하므로 중복.
+     계정 보호는 '활동 시간대'와 아래 '동작 간 랜덤 간격'이 맡는다(간격 자체가 사실상 속도 상한). */
 
   // 동작 간 랜덤 간격: 직전 동작 후 예약된 next_action_at 전이면 대기.
   const nxt = await getMeta(NEXT_KEY)

@@ -323,10 +323,9 @@ function PostModal({ post, onClose, onChanged }: { post: Post; onClose: () => vo
 /* ── 직접 기획(수동 작성) 플로팅 ── */
 function ComposeModal({ cafes, fixedCafeId, onClose, onSaved }: { cafes: Cafe[]; fixedCafeId: string | null; onClose: () => void; onSaved: () => void }) {
   const [cafeId, setCafeId] = useState(fixedCafeId || cafes[0]?.id || "");
-  const [kind, setKind] = useState<"post" | "comment">("post");
+  const [kind] = useState<"post" | "comment">("post"); // 댓글 기능 제거 — 글만 작성
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
-  const [sourceUrl, setSourceUrl] = useState("");
   const [busy, setBusy] = useState(false);
 
   async function save(status: "draft" | "approved") {
@@ -335,7 +334,7 @@ function ComposeModal({ cafes, fixedCafeId, onClose, onSaved }: { cafes: Cafe[];
     if (!body.trim()) { alert("내용을 입력해 주세요."); return; }
     setBusy(true);
     try {
-      await api("/api/naver-cafe/posts", "POST", { cafe_id: cafeId, kind, title, body, status, source_url: kind === "comment" ? sourceUrl : undefined });
+      await api("/api/naver-cafe/posts", "POST", { cafe_id: cafeId, kind, title, body, status });
       onSaved(); onClose();
     } catch (e) { alert(e instanceof Error ? e.message : "저장 실패"); } finally { setBusy(false); }
   }
@@ -348,11 +347,6 @@ function ComposeModal({ cafes, fixedCafeId, onClose, onSaved }: { cafes: Cafe[];
           <button onClick={onClose} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"><X className="h-5 w-5" /></button>
         </div>
         <div className="flex-1 space-y-3 overflow-y-auto p-4">
-          <div className="flex items-center gap-2">
-            {(["post", "comment"] as const).map((k) => (
-              <button key={k} onClick={() => setKind(k)} className={`rounded-lg px-3 py-1 text-xs font-medium ${kind === k ? "bg-primary text-white" : "border border-gray-200 text-gray-500 dark:border-gray-700 dark:text-gray-300"}`}>{k === "post" ? "글" : "댓글"}</button>
-            ))}
-          </div>
           {fixedCafeId ? (
             <p className="text-xs text-gray-500 dark:text-gray-400">발행처: <b className="dark:text-gray-200">{cafes.find((c) => c.id === fixedCafeId)?.name}</b></p>
           ) : (
@@ -360,9 +354,8 @@ function ComposeModal({ cafes, fixedCafeId, onClose, onSaved }: { cafes: Cafe[];
               {cafes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           )}
-          {kind === "comment" && <input value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} placeholder="댓글 달 원글 URL(선택)" className={inputCls} />}
-          {kind === "post" && <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="제목" className={inputCls} />}
-          <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={kind === "comment" ? 6 : 12} placeholder={kind === "comment" ? "댓글 내용" : "원고(본문)"} className={inputCls} />
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="제목" className={inputCls} />
+          <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={12} placeholder="원고(본문)" className={inputCls} />
         </div>
         <div className="flex items-center justify-end gap-2 border-t p-4 dark:border-gray-800">
           <button onClick={() => save("draft")} disabled={busy} className="flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"><Save className="h-3.5 w-3.5" /> 초안 저장</button>
@@ -730,7 +723,7 @@ export default function NaverCafePage() {
   const pacingCard = pacingStat && (
     <button onClick={() => setPacingOpen(true)} className="flex items-center gap-3 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs dark:border-gray-700 dark:bg-gray-900" title="페이스(계정 밴 방지) 설정 열기">
       <span className={`flex items-center gap-1 font-semibold ${pacingStat.active ? "text-emerald-600 dark:text-emerald-400" : "text-gray-400"}`}><Gauge className="h-3.5 w-3.5" /> {pacingStat.active ? "활동 시간" : "휴면 시간"}</span>
-      <span className="text-gray-500 dark:text-gray-400">글 {pacingStat.post_today}/{pacingStat.daily_post_limit} · 댓글 {pacingStat.comment_today}/{pacingStat.daily_comment_limit}</span>
+      <span className="text-gray-500 dark:text-gray-400">오늘 발행 {pacingStat.post_today}건</span>
       {pacingStat.wait_min > 0 && <span className="text-amber-600 dark:text-amber-300">다음 {pacingStat.wait_min}분</span>}
       <Settings2 className="h-3.5 w-3.5 text-gray-400" />
     </button>
@@ -1190,7 +1183,6 @@ export default function NaverCafePage() {
                 { label: "발행 완료", value: cafeSplit.published.length },
                 { label: "보관함", value: cafeSplit.saved.length },
                 { label: "자동 스케줄", value: cafe.auto_mode ? `${cafe.interval_days ?? 3}일` : "꺼짐" },
-                { label: "댓글 허용", value: cafe.allow_comment !== false ? "예" : "아니오" },
               ].map((s) => (
                 <div key={s.label} className="rounded-2xl border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-900">
                   <p className="text-[11px] text-gray-500 dark:text-gray-400">{s.label}</p>
@@ -1450,7 +1442,6 @@ export default function NaverCafePage() {
 
               <div className="mt-3 flex gap-4">
                 <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300"><input type="checkbox" checked={cafeForm.allow_post !== false} onChange={(e) => setCafeForm({ ...cafeForm, allow_post: e.target.checked })} /> 글 발행 허용</label>
-                <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300"><input type="checkbox" checked={cafeForm.allow_comment !== false} onChange={(e) => setCafeForm({ ...cafeForm, allow_comment: e.target.checked })} /> 댓글 허용</label>
                 <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300"><input type="checkbox" checked={!!cafeForm.require_prefix} onChange={(e) => setCafeForm({ ...cafeForm, require_prefix: e.target.checked })} /> 말머리 필수</label>
               </div>
             </div>
@@ -1534,13 +1525,8 @@ export default function NaverCafePage() {
                   );
                 })()}
                 {([
-                  ["daily_post_limit", "하루 글 개수", "하루에 최대 몇 개"],
-                  ["daily_comment_limit", "하루 댓글 개수", "하루에 최대 몇 개"],
-                  ["per_cafe_post_weekly", "한 카페 주간 글", "한 곳에 일주일 최대 몇 개"],
-                  ["min_action_gap_min", "올리는 간격 · 최소", "분 · 너무 붙으면 위험"],
-                  ["max_action_gap_min", "올리는 간격 · 최대", "분 · 최소~최대 랜덤"],
-                  ["comment_delay_min", "댓글 타이밍 · 최소", "분 · 원글 뜨고 이만큼 뒤"],
-                  ["comment_delay_max", "댓글 타이밍 · 최대", "분 · 최소~최대 랜덤"],
+                  ["min_action_gap_min", "올리는 간격 · 최소", "분 · 너무 자주 올리면 위험"],
+                  ["max_action_gap_min", "올리는 간격 · 최대", "분 · 최소~최대 사이 랜덤"],
                 ] as [keyof Pacing, string, string][]).map(([k, label, hint]) => (
                   <div key={k}>
                     <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300">{label}</label>
