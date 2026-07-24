@@ -14,15 +14,35 @@ export const maxDuration = 300
 // 원고마다 글 유형(아키타입)을 돌려가며 배정해 병렬 생성 시에도 형태가 겹치지 않게 한다.
 
 export async function POST(req: Request) {
-  const apiKey = process.env.ANTHROPIC_API_KEY || req.headers.get('x-user-api-key') || ''
-  if (!apiKey) return NextResponse.json({ error: 'ANTHROPIC_API_KEY(서버) 또는 사용자 키가 필요해요.' }, { status: 401 })
-
   const b = await req.json().catch(() => ({}))
+  const inspect = b.inspect === true || new URL(req.url).searchParams.get('inspect') === '1'
+  const apiKey = process.env.ANTHROPIC_API_KEY || req.headers.get('x-user-api-key') || ''
+  if (!apiKey && !inspect) return NextResponse.json({ error: 'ANTHROPIC_API_KEY(서버) 또는 사용자 키가 필요해요.' }, { status: 401 })
+
   let q = supabaseAdmin.from('nc_cafes').select('*').eq('enabled', true)
   if (b.cafe_id) q = q.eq('id', b.cafe_id)
   const { data: cafes, error } = await q
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   if (!cafes?.length) return NextResponse.json({ ok: true, made: 0, detail: [] })
+
+  // 진단(읽기 전용): 각 발행처가 생성기에 '실제로' 넘기는 값 — 활동 컨셉(persona) 반영 여부 점검용.
+  if (inspect) {
+    const rows = (cafes as Record<string, unknown>[]).map((c) => {
+      const persona = String(c.persona || c.tone || '')
+      return {
+        name: String(c.name || ''),
+        persona_len: persona.length,
+        persona_head: persona.slice(0, 70),
+        topics: String(c.topics || ''),
+        subjects: splitTopics(String(c.topics || '')),
+        selling_head: String(c.selling_point || '').slice(0, 50),
+        emphasis: Array.isArray(c.emphasis) ? c.emphasis : [],
+        daily_drafts: Number(c.daily_drafts ?? 3),
+        auto_mode: c.auto_mode === true,
+      }
+    })
+    return NextResponse.json({ inspect: true, count: rows.length, cafes: rows })
+  }
 
   const { claude } = await getNaverSettings()
   const today = new Date(); today.setHours(0, 0, 0, 0)
