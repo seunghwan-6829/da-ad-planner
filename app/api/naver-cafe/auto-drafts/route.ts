@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getNaverSettings } from '@/lib/naver/settings'
 import { draftPost, splitTopics, archetypesForStyle, type DraftCafe } from '@/lib/naver/generate'
+import { titleSimilarity } from '@/lib/naver/dedupe'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -24,18 +25,21 @@ export async function POST(req: Request) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   if (!cafes?.length) return NextResponse.json({ ok: true, made: 0, detail: [] })
 
-  const { claude } = await getNaverSettings()
+  const { claude, options } = await getNaverSettings()
   const today = new Date(); today.setHours(0, 0, 0, 0)
-  const detail: { cafe: string; made: number; error?: string }[] = []
+  const detail: { cafe: string; made: number; skipped?: number; error?: string }[] = []
 
   for (const cafe of cafes) {
     try {
-      // 오늘 이미 만든 자동 초안 수 + 최근 제목(중복 방지)
+      // 오늘 이미 만든 자동 초안 수 + 중복 방지용 최근 제목(모든 상태, dup 창=기본 30일)
       const { data: todays } = await supabaseAdmin
         .from('nc_posts').select('id').eq('cafe_id', cafe.id).eq('origin', 'auto')
         .gte('created_at', today.toISOString())
+      const dupSince = new Date(Date.now() - Math.max(1, options.dup_window_days) * 86400_000).toISOString()
       const { data: recent } = await supabaseAdmin
-        .from('nc_posts').select('title').eq('cafe_id', cafe.id).order('created_at', { ascending: false }).limit(15)
+        .from('nc_posts').select('title').eq('cafe_id', cafe.id)
+        .gte('created_at', dupSince)
+        .order('created_at', { ascending: false }).limit(60)
       const target = Math.max(0, Math.min(10, Number((cafe as { daily_drafts?: number }).daily_drafts ?? 3) || 0))
       // force: 하루 할당량을 무시하고 요청한 개수(기본 daily_drafts)만큼 지금 바로 생성 — 디벨롭 중 재생성용.
       const forced = b.force === true
@@ -70,15 +74,20 @@ export async function POST(req: Request) {
           })
         )
       )
-      let made = 0
+      let made = 0, skipped = 0
+      const seen = [...avoidTitles] // 최근 30일 제목 + 이번 배치에서 이미 채택한 제목
       for (const r of results) {
         if (r.status !== 'fulfilled' || !r.value.title) continue
+        const t = r.value.title
+        // 최근 30일(또는 설정 창) 안에 비슷한 제목이 있으면 아예 만들지 않는다 — 같은 글 반복 방지.
+        if (seen.some((old) => titleSimilarity(t, old) >= options.dup_similarity)) { skipped++; continue }
+        seen.push(t)
         const { error: insErr } = await supabaseAdmin
           .from('nc_posts')
-          .insert({ cafe_id: cafe.id, title: r.value.title, body: r.value.body, status: 'draft', origin: 'auto', created_by: 'auto-draft' })
+          .insert({ cafe_id: cafe.id, title: t, body: r.value.body, status: 'draft', origin: 'auto', created_by: 'auto-draft' })
         if (!insErr) made++
       }
-      detail.push({ cafe: cafe.name, made })
+      detail.push({ cafe: cafe.name, made, ...(skipped ? { skipped } : {}) })
     } catch (e) {
       detail.push({ cafe: cafe.name, made: 0, error: String(e instanceof Error ? e.message : e).slice(0, 120) })
     }

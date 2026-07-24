@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getNaverSettings } from '@/lib/naver/settings'
 import { getMeta, setMeta } from '@/lib/naver/pacing'
 import { draftPost, splitTopics, archetypesForStyle, type DraftCafe } from '@/lib/naver/generate'
+import { titleSimilarity } from '@/lib/naver/dedupe'
 import { cronAuthOk } from '@/lib/cron-auth'
 
 export const dynamic = 'force-dynamic'
@@ -25,7 +26,7 @@ function pickTopic(destTopics: string, brandTopics: unknown): string {
 async function runAutoSchedules(apiKey: string) {
   const nowMs = Date.now()
   const nowISO = new Date().toISOString()
-  const { claude } = await getNaverSettings()
+  const { claude, options } = await getNaverSettings()
 
   // auto_mode + allow_post + enabled 발행처 + (활성 브랜드)
   const { data: dests } = await supabaseAdmin
@@ -69,6 +70,15 @@ async function runAutoSchedules(apiKey: string) {
         const { title, body } = await draftPost(apiKey, cafe, topic, claude.model, claude.max_tokens, { archetypeKey: arch.key })
         if (!title) {
           detail.push({ dest: cafe.name, reason: '생성 실패' })
+          return
+        }
+        // 최근 창(기본 30일) 안에 이 카페에 비슷한 제목이 이미 있으면 만들지 않는다 — 같은 글 반복 방지.
+        const dupSince = new Date(nowMs - Math.max(1, options.dup_window_days) * 86400_000).toISOString()
+        const { data: recentT } = await supabaseAdmin
+          .from('nc_posts').select('title').eq('cafe_id', d.id).gte('created_at', dupSince)
+          .order('created_at', { ascending: false }).limit(60)
+        if ((recentT || []).some((r) => titleSimilarity(title, r.title || '') >= options.dup_similarity)) {
+          detail.push({ dest: cafe.name, reason: '중복(최근 비슷한 글) — 건너뜀' })
           return
         }
         const autoPublish = (d as { auto_publish?: boolean }).auto_publish === true

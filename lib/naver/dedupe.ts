@@ -22,14 +22,28 @@ function tokens(title: string): Set<string> {
   )
 }
 
-/** 두 제목의 유사도(자카드 계수, 0~1). 1에 가까울수록 같은 주제. */
-export function titleSimilarity(a: string, b: string): number {
-  const ta = tokens(a)
-  const tb = tokens(b)
-  if (!ta.size || !tb.size) return 0
+function jaccard(a: Set<string>, b: Set<string>): number {
+  if (!a.size || !b.size) return 0
   let inter = 0
-  for (const t of ta) if (tb.has(t)) inter++
-  return inter / (ta.size + tb.size - inter)
+  for (const t of a) if (b.has(t)) inter++
+  return inter / (a.size + b.size - inter)
+}
+
+/** 글자 2-그램 집합 — 공백·기호·감정표기(ㅠㅜㅋㅎ)를 걷어낸 글자열 기준.
+   토큰(의미)만 보면 "어디" vs "어디다", "맡기세요" vs "맡기세요ㅠ" 를 다른 걸로 놓쳐서,
+   거의 똑같은 제목(문구만 살짝 다른 것)을 못 잡는다 — 글자 단위로 이를 보완한다. */
+function charBigrams(s: string): Set<string> {
+  const n = String(s || '').toLowerCase().replace(/[ㅠㅜㅋㅎ]/g, '').replace(/[^\p{L}\p{N}]/gu, '')
+  const set = new Set<string>()
+  if (n.length === 1) set.add(n)
+  for (let i = 0; i < n.length - 1; i++) set.add(n.slice(i, i + 2))
+  return set
+}
+
+/** 두 제목의 유사도(0~1). "의미(토큰) 유사"와 "문구(글자) 유사" 중 큰 값 —
+   같은 주제(토큰)든 거의 같은 문구(글자)든 어느 쪽으로 겹쳐도 중복으로 본다. */
+export function titleSimilarity(a: string, b: string): number {
+  return Math.max(jaccard(tokens(a), tokens(b)), jaccard(charBigrams(a), charBigrams(b)))
 }
 
 export type DupHit = { title: string; published_at: string | null; similarity: number }

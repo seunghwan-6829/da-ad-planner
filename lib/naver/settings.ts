@@ -33,7 +33,7 @@ export const DEFAULT_OPTIONS: NaverOptions = {
      켜면 예전처럼 캡처를 올리고 사람 확인을 기다린다. */
   preview_before_publish: false,
   halt_after_failures: 2,
-  dup_window_days: 14,
+  dup_window_days: 30, // 같은 카페에 최근 30일(≈1달) 안엔 비슷한 글을 다시 안 낸다.
   dup_similarity: 0.6,
 }
 

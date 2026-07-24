@@ -192,7 +192,7 @@ export async function draftPost(
   const emphasis = (cafe.emphasis || []).filter(Boolean)
   const promoBanned = cafe.rules?.promo_banned
   const arch = pickArchetype(opts.archetypeKey)
-  const avoid = (opts.avoidTitles || []).filter(Boolean).slice(0, 15)
+  const avoid = (opts.avoidTitles || []).filter(Boolean).slice(0, 30)
 
   const prompt = `네이버 카페 "${cafe.name}"에 올릴 글을 써줘. 진짜 회원이 쓴 것 같은, 댓글이 달리고 싶어지는 글.
 
