@@ -85,6 +85,7 @@ function normalizeOptions(raw: Partial<NaverOptions> | null | undefined): NaverO
     ;(o as Record<string, unknown>)[k] = Number.isFinite(v) ? v : DEFAULT_OPTIONS[k]
   }
   o.dup_similarity = Math.min(1, Math.max(0, o.dup_similarity))
+  o.dup_window_days = Math.max(30, o.dup_window_days) // 중복 방지는 '최소 1달' 보장 — DB 저장값이 작아도 30일 이상.
   return o
 }
 
