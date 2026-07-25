@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getNaverSettings } from '@/lib/naver/settings'
-import { lastPublishAtMs, nextEligibleAt, bumpToActiveHours } from '@/lib/naver/pacing'
+import { lastPublishAtMs, publishTargetAt } from '@/lib/naver/pacing'
 
 export const dynamic = 'force-dynamic'
 
@@ -12,7 +12,6 @@ export const dynamic = 'force-dynamic'
 //    전역 동작 간격(25~90분)은 발행처 간 몇 분 차이라 일(day) 단위 예상에선 무시(오차 미미).
 
 export async function GET() {
-  const DAY = 86400_000
   const nowMs = Date.now()
   const { pacing } = await getNaverSettings()
 
@@ -43,10 +42,10 @@ export async function GET() {
     const j = seq.get(row.cafe_id) || 0
     seq.set(row.cafe_id, j + 1)
 
-    let est = nextEligibleAt(last, interval, pacing, nowMs) + j * interval * DAY
-    est = bumpToActiveHours(est, pacing)
+    // 발행처의 j번째 발행 예정 시각 — 주기로 날짜, 그 날짜 안의 결정적 랜덤 시각. 게이트(agent/next)와 동일.
+    let est = publishTargetAt(last, interval, j, row.cafe_id, pacing, nowMs)
     const nb = row.not_before ? Date.parse(row.not_before) : NaN
-    if (!Number.isNaN(nb) && nb > est) est = bumpToActiveHours(nb, pacing)
+    if (!Number.isNaN(nb) && nb > est) est = nb
 
     const note = last === null && j === 0 ? '주기 도래 — 곧 올라가요' : `업로드 주기 ${interval}일 기준`
     estimates[row.id] = { at: new Date(est).toISOString(), note }

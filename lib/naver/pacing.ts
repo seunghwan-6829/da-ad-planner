@@ -68,6 +68,40 @@ export function nextEligibleAt(lastPublishMs: number | null, intervalDays: numbe
   return bumpToActiveHours(t, pacing)
 }
 
+// 결정적 해시/의사난수 — 같은 시드는 항상 같은 값(0~1). 화면 예상과 발행 게이트가 같은 시각을 계산하게 한다.
+function hashStr(s: string): number {
+  let h = 2166136261
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) }
+  return h >>> 0
+}
+function seededUnit(seed: number): number {
+  let t = (seed + 0x6d2b79f5) >>> 0
+  t = Math.imul(t ^ (t >>> 15), t | 1)
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+}
+
+/* 발행처의 'cycleIndex 번째' 발행 예정 시각(ms).
+   업로드 주기로 '날짜'를 정하고, 그 날짜 안에서 활동 시간대(없으면 하루 전체) 중 '결정적 랜덤 시각'을 부여한다.
+   → 매 주기 시각이 달라져(예: 이번엔 오전 10:07, 다음엔 오후 3:41) 봇처럼 매번 같은 시각에 올리는 걸 피한다.
+   시드가 (발행처+날짜)로 결정적이라, 화면에 뜨는 예상 시각과 실제 발행 게이트가 같은 값을 낸다. */
+export function publishTargetAt(lastMs: number | null, intervalDays: number, cycleIndex: number, seedStr: string, pacing: NaverPacing, nowMs: number = Date.now()): number {
+  const DAY = 86400_000
+  const I = Math.max(1, intervalDays)
+  const base = lastMs !== null ? lastMs + (cycleIndex + 1) * I * DAY : nowMs + cycleIndex * I * DAY
+  const [lo0, hi0] = pacing.active_hours
+  const unlimited = lo0 <= 0 && hi0 >= 24
+  const lo = unlimited ? 0 : lo0
+  const hi = unlimited ? 24 : hi0
+  const dayNum = Math.floor((base + KST_OFFSET_MS) / DAY) // 기준 날짜(KST)
+  const r = seededUnit((hashStr(seedStr) ^ Math.imul(dayNum, 2654435761)) >>> 0)
+  const offsetMin = Math.floor(r * Math.max(1, hi - lo) * 60) // 창 안에서의 분
+  const mid = new Date(base + KST_OFFSET_MS); mid.setUTCHours(0, 0, 0, 0) // 그 날 KST 00:00
+  let target = (mid.getTime() - KST_OFFSET_MS) + (lo * 60 + offsetMin) * 60_000
+  if (target < nowMs) target = nowMs // 이미 지난 시각이면 지금(곧)
+  return target
+}
+
 // KST 오늘 00:00 에 해당하는 실제 UTC 순간(ISO).
 function startOfKstDayUtcISO(nowMs: number = Date.now()): string {
   const { y, m, day } = kstParts(nowMs)

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getNaverSettings } from '@/lib/naver/settings'
-import { canAct, scheduleNext } from '@/lib/naver/pacing'
+import { canAct, scheduleNext, publishTargetAt } from '@/lib/naver/pacing'
 import { findRecentDuplicate } from '@/lib/naver/dedupe'
 import { getAgentState } from '@/lib/naver/notify'
 
@@ -66,6 +66,7 @@ export async function GET(req: Request) {
     .in('status', ['approved', 'queued']) // queued = v2 호환(승인과 동일 취급)
     .order('created_at', { ascending: true })
     .limit(50)
+  const { pacing, options } = await getNaverSettings() // 업로드 주기·활동시간·중복옵션 (게이트 앞에서 필요)
   const ready = (cands || []).filter((r) => {
     const nb = (r as { not_before?: string | null }).not_before
     const ms = nb ? Date.parse(nb) : NaN
@@ -84,7 +85,8 @@ export async function GET(req: Request) {
       const intervalDays = Math.max(1, Number((cand as { nc_cafes?: { interval_days?: number } }).nc_cafes?.interval_days) || 3)
       let lastAt = lastCache.get(cafeId)
       if (lastAt === undefined) { lastAt = await lastPublishAtMs(cafeId); lastCache.set(cafeId, lastAt) }
-      if (lastAt !== null && nowMs - lastAt < intervalDays * 86400_000) { intervalHeld = true; continue }
+      // 발행처 주기 + '그 날짜의 랜덤 시각'까지 안 됐으면 대기(매번 같은 시각 발행 방지). 화면 예상표시와 동일 계산.
+      if (nowMs < publishTargetAt(lastAt, intervalDays, 0, cafeId, pacing, nowMs)) { intervalHeld = true; continue }
       item = cand
       break
     }
@@ -123,8 +125,7 @@ export async function GET(req: Request) {
   }
   note('발행처 연결', true, String(cafe.name || ''))
 
-  // 2) 페이스 게이트(활동시간·일/주 상한·랜덤 간격)
-  const { pacing, options } = await getNaverSettings()
+  // 2) 페이스 게이트(활동시간·랜덤 간격) — pacing/options 는 위(후보 선정)에서 이미 조회함.
   const kind: 'post' | 'comment' = item.kind === 'comment' ? 'comment' : 'post'
   // 발행 미허용 발행처면 반려(헤드블록 방지)
   const notAllowed = (kind === 'post' && cafe.allow_post === false) || (kind === 'comment' && cafe.allow_comment === false)
