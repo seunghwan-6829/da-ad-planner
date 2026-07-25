@@ -172,12 +172,11 @@ const inputCls = "w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.
 const fmtN = (n: number | null | undefined) => (n == null ? "—" : n.toLocaleString());
 
 // 카페 추가/설정 공용 필드
-const CAFE_FIELDS: { key: "cafe_url" | "tone" | "selling_point" | "topics" | "publish_slot"; label: string; ph: string; rows?: number }[] = [
+const CAFE_FIELDS: { key: "cafe_url" | "tone" | "selling_point" | "topics"; label: string; ph: string; rows?: number }[] = [
   { key: "cafe_url", label: "게시판 URL", ph: "https://cafe.naver.com/f-e/cafes/.../menus/... (글 올릴 게시판 주소)" },
   { key: "tone", label: "활동 컨셉", ph: "예: 정보 많은 의문의 보따리 상인, 싸가지 없지만 일은 잘함(어투·잘난척 금물)", rows: 2 },
   { key: "selling_point", label: "채널 소구점", ph: "예: 마케팅 꿀팁·파일 방출하며 팬층 쌓기", rows: 2 },
   { key: "topics", label: "주로 업로드하는 컨텐츠", ph: "예: 마케팅과 상세페이지 관련", rows: 2 },
-  { key: "publish_slot", label: "업로드 주기", ph: "예: 2일에 1번씩" },
 ];
 
 async function api(path: string, method: string, body?: unknown) {
@@ -1336,9 +1335,25 @@ export default function NaverCafePage() {
                     {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
                   </select>
                 </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">업로드 주기(메모)</label>
-                  <input value={cafeForm.publish_slot || ""} onChange={(e) => setCafeForm({ ...cafeForm, publish_slot: e.target.value })} placeholder="예: 2일에 1번씩" className={inputCls} />
+                <div className="md:col-span-2">
+                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">
+                    업로드 주기 <span className="font-normal text-gray-400">— 이 발행처에 며칠에 한 번 올릴지 (발행 단계에서 무조건 지킴)</span>
+                  </label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {[1, 2, 3, 5, 7].map((d) => {
+                      const on = (Number(cafeForm.interval_days) || 3) === d;
+                      return (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => setCafeForm({ ...cafeForm, interval_days: d })}
+                          className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${on ? "border-primary bg-primary/10 text-primary" : "border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"}`}
+                        >
+                          {d === 1 ? "매일" : `${d}일에 1번`}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
                 <div className="md:col-span-2">
                   <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">게시판 URL</label>
@@ -1428,12 +1443,9 @@ export default function NaverCafePage() {
                   <span className="text-[11px] text-gray-500">주기마다 초안 자동 생성(PC 꺼져도 서버가 생성)</span>
                 </div>
                 {cafeForm.auto_mode && (
-                  <div className="mt-3 grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">생성 주기(일)</label>
-                      <input type="number" min={1} max={30} value={cafeForm.interval_days ?? 3} onChange={(e) => setCafeForm({ ...cafeForm, interval_days: Number(e.target.value) })} className={inputCls} />
-                    </div>
-                    <label className="flex items-center gap-2 self-end pb-2 text-xs text-gray-600 dark:text-gray-300">
+                  <div className="mt-3 space-y-2">
+                    <p className="text-[11px] text-gray-500 dark:text-gray-400">위에서 정한 <b>업로드 주기</b>마다 초안이 자동 생성돼요. (발행도 그 주기를 지킵니다)</p>
+                    <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
                       <input type="checkbox" checked={!!cafeForm.auto_publish} onChange={(e) => setCafeForm({ ...cafeForm, auto_publish: e.target.checked })} /> 생성 즉시 승인(검수 생략)
                     </label>
                   </div>

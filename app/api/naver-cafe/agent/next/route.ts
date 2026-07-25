@@ -22,6 +22,21 @@ function authOk(req: Request): boolean {
   return req.headers.get('x-agent-token') === need
 }
 
+// 발행처의 마지막 '실제 발행' 시각(ms). 없으면 null. 발행처별 '업로드 주기'(interval_days) 판정에 쓴다.
+async function lastPublishAtMs(cafeId: string): Promise<number | null> {
+  const { data } = await supabaseAdmin
+    .from('nc_posts')
+    .select('published_at')
+    .eq('cafe_id', cafeId)
+    .eq('status', 'published')
+    .not('published_at', 'is', null)
+    .order('published_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  const t = data?.published_at ? Date.parse(data.published_at as string) : NaN
+  return Number.isNaN(t) ? null : t
+}
+
 export async function GET(req: Request) {
   if (!authOk(req)) return NextResponse.json({ error: 'agent unauthorized' }, { status: 401 })
   const nowISO = new Date().toISOString()
@@ -56,8 +71,24 @@ export async function GET(req: Request) {
     const ms = nb ? Date.parse(nb) : NaN
     return Number.isNaN(ms) || ms <= nowMs
   })
-  // '지금 바로 발행'으로 찍힌 글이 있으면 그것부터. (페이스 게이트도 이 건만 건너뛴다)
-  let item = ready.find((r) => (r as { force_publish?: boolean }).force_publish === true) || ready[0]
+  // '지금 바로 발행'(force_publish)이 찍힌 글은 주기·페이스 무시하고 최우선.
+  let item = ready.find((r) => (r as { force_publish?: boolean }).force_publish === true)
+  let intervalHeld = false
+  if (!item) {
+    /* 발행처별 '업로드 주기'(interval_days)를 지킨다 — 최근 발행 후 그 일수가 안 지났으면 그 발행처는 건너뛴다.
+       오래된 승인 글부터 훑되, 주기가 찬 발행처의 글을 고른다.
+       (봇처럼 한 발행처가 몰아서 나가는 걸 막는 핵심 장치 — 계정 안전) */
+    const lastCache = new Map<string, number | null>()
+    for (const cand of ready) {
+      const cafeId = (cand as { cafe_id: string }).cafe_id
+      const intervalDays = Math.max(1, Number((cand as { nc_cafes?: { interval_days?: number } }).nc_cafes?.interval_days) || 3)
+      let lastAt = lastCache.get(cafeId)
+      if (lastAt === undefined) { lastAt = await lastPublishAtMs(cafeId); lastCache.set(cafeId, lastAt) }
+      if (lastAt !== null && nowMs - lastAt < intervalDays * 86400_000) { intervalHeld = true; continue }
+      item = cand
+      break
+    }
+  }
 
   let simulated = false
   if (!item && dry) {
@@ -70,14 +101,14 @@ export async function GET(req: Request) {
       .limit(1)
     item = drafts?.[0]
     simulated = !!item
-    note('승인된 글', false, '승인 대기 0건 — 최신 초안으로 대신 점검합니다(실제 발행 대상 아님)')
+    note('승인된 글', false, intervalHeld ? '승인 글은 있지만 발행처 업로드 주기가 아직 안 됐어요 — 최신 초안으로 경로만 점검' : '승인 대기 0건 — 최신 초안으로 대신 점검합니다(실제 발행 대상 아님)')
   } else if (item) {
     note('승인된 글', true, `${(cands || []).length}건 중 가장 오래된 건부터 발행`)
   }
 
   if (!item) {
     if (dry) return NextResponse.json({ dry: true, none: true, reason: '승인된 글도 초안도 없습니다', checks })
-    return NextResponse.json({ none: true, reason: '발행할 승인 항목이 없습니다' })
+    return NextResponse.json({ none: true, reason: intervalHeld ? '발행처 업로드 주기가 아직 안 됐어요(과다 발행 방지)' : '발행할 승인 항목이 없습니다' })
   }
   if (!dry && simulated) return NextResponse.json({ none: true, reason: '발행할 승인 항목이 없습니다' })
 
