@@ -241,6 +241,8 @@ function PostModal({ post, onClose, onChanged }: { post: Post; onClose: () => vo
   const isComment = post.kind === "comment";
   const editable = ["draft", "saved", "rejected", "failed", "approved", "queued"].includes(post.status);
   const edited = title !== post.title || body !== post.body;
+  // 바깥(어두운 영역) 클릭이나 X로 실수로 닫혀 작성분이 날아가는 걸 막는다 — 수정 중이면 확인받는다.
+  const requestClose = () => { if (edited && !confirm("수정 중인 내용이 있어요. 닫으면 사라집니다. 그래도 닫을까요?")) return; onClose(); };
 
   async function act(status: PostStatus, withEdit: boolean) {
     setBusy(true);
@@ -259,7 +261,7 @@ function PostModal({ post, onClose, onChanged }: { post: Post; onClose: () => vo
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={requestClose}>
       <div className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b p-4 dark:border-gray-800">
           <div className="flex items-center gap-2">
@@ -268,7 +270,7 @@ function PostModal({ post, onClose, onChanged }: { post: Post; onClose: () => vo
             {post.origin === "auto" && <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">AI 초안</span>}
             <span className="text-sm font-bold dark:text-gray-100">{post.nc_cafes?.name}</span>
           </div>
-          <button onClick={onClose} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"><X className="h-5 w-5" /></button>
+          <button onClick={requestClose} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"><X className="h-5 w-5" /></button>
         </div>
         <div className="flex-1 space-y-3 overflow-y-auto p-4">
           {post.status === "failed" && post.error ? (
@@ -337,13 +339,15 @@ function ComposeModal({ cafes, fixedCafeId, onClose, onSaved }: { cafes: Cafe[];
       onSaved(); onClose();
     } catch (e) { alert(e instanceof Error ? e.message : "저장 실패"); } finally { setBusy(false); }
   }
+  // 바깥(어두운 영역) 클릭이나 X로 실수로 닫혀 작성분이 날아가는 걸 막는다 — 쓴 게 있으면 확인받는다.
+  const requestClose = () => { if ((title.trim() || body.trim()) && !confirm("작성 중인 내용이 있어요. 닫으면 사라집니다. 그래도 닫을까요?")) return; onClose(); };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={requestClose}>
       <div className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b p-4 dark:border-gray-800">
           <h3 className="text-sm font-bold dark:text-gray-100">직접 기획하기</h3>
-          <button onClick={onClose} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"><X className="h-5 w-5" /></button>
+          <button onClick={requestClose} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"><X className="h-5 w-5" /></button>
         </div>
         <div className="flex-1 space-y-3 overflow-y-auto p-4">
           {fixedCafeId ? (
@@ -1285,7 +1289,7 @@ export default function NaverCafePage() {
 
       {/* 발행처 추가 플로팅 */}
       {addingCafe && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setAddingCafe(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div className="flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between border-b p-4 dark:border-gray-800">
               <h3 className="text-sm font-bold dark:text-gray-100">발행처 추가 {addingCafe.brand_id ? `— ${brands.find((b) => b.id === addingCafe.brand_id)?.name}` : ""}</h3>
@@ -1320,7 +1324,7 @@ export default function NaverCafePage() {
 
       {/* 운영설정 플로팅 */}
       {settingsOpen && cafe && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setSettingsOpen(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between border-b p-4 dark:border-gray-800">
               <h2 className="text-sm font-bold dark:text-gray-100">운영 설정 <span className="ml-1 text-[11px] font-normal text-gray-400">— AI 원고가 이 설정에 맞춰 작성돼요</span></h2>
@@ -1466,7 +1470,7 @@ export default function NaverCafePage() {
 
       {/* 브랜드 플로팅 */}
       {brandModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setBrandModal(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div className="flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between border-b p-4 dark:border-gray-800">
               <h3 className="text-sm font-bold dark:text-gray-100">{brandModal.id ? "브랜드 설정" : "브랜드 추가"}</h3>
@@ -1501,7 +1505,7 @@ export default function NaverCafePage() {
 
       {/* 페이스 설정 플로팅 */}
       {pacingOpen && pacing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setPacingOpen(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div className="flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between border-b p-4 dark:border-gray-800">
               <h3 className="flex items-center gap-2 text-sm font-bold dark:text-gray-100"><Gauge className="h-4 w-4 text-primary" /> 페이스(계정 밴 방지) 설정</h3>
