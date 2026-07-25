@@ -401,6 +401,7 @@ export default function NaverCafePage() {
   const [resetBusy, setResetBusy] = useState(false);
   const [reflowBusy, setReflowBusy] = useState(false);
 
+  const [estMap, setEstMap] = useState<Record<string, { at: string; note: string }>>({}); // 발행 대기 글별 예상 발행 시각
   const loadAll = useCallback(() => {
     fetch("/api/naver-cafe/brands").then((r) => (r.ok ? r.json() : [])).then((j) => setBrands(j as Brand[])).catch(() => {});
     fetch("/api/naver-cafe/cafes")
@@ -413,6 +414,8 @@ export default function NaverCafePage() {
       .then((j) => { if (j) { setAgentOnline(!!j.online); setAgentState(j as AgentState); } })
       .catch(() => {});
     fetch("/api/naver-cafe/settings").then((r) => (r.ok ? r.json() : null)).then((j) => { if (j) { setPacing(j.pacing); setPacingStat(j.status); } }).catch(() => {});
+    // 발행 대기 글들이 대략 언제 올라갈지(발행처 업로드 주기 기준) — 게이트와 같은 계산.
+    fetch("/api/naver-cafe/schedule").then((r) => (r.ok ? r.json() : null)).then((j) => { if (j) setEstMap(j.estimates || {}); }).catch(() => {});
   }, []);
   useEffect(() => { loadAll(); const t = setInterval(loadAll, 15_000); return () => clearInterval(t); }, [loadAll]);
   useEffect(() => { ncMemCache = { brands, cafes, posts, agentOnline }; }, [brands, cafes, posts, agentOnline]);
@@ -1003,9 +1006,7 @@ export default function NaverCafePage() {
                     );
                   if (pacingStat && pacingStat.wait_min > 0)
                     return <p className="text-[11px] text-amber-600 dark:text-amber-300">⏱ 다음 발행까지 {pacingStat.wait_min}분 대기 중(발행 간격 규칙)</p>;
-                  if (pacingStat && pacingStat.post_today >= pacingStat.daily_post_limit)
-                    return <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-300">📌 오늘 글 상한({pacingStat.daily_post_limit}건)을 다 채웠어요 — 내일 이어서 올라갑니다</p>;
-                  return <p className="text-[11px] text-gray-400">에이전트가 페이스 규칙에 맞춰 순서대로 올려요</p>;
+                  return <p className="text-[11px] text-gray-400">발행처별 업로드 주기에 맞춰 순서대로 올라가요</p>;
                 })()}
               </div>
               {publishQueue.length === 0 ? (
@@ -1024,6 +1025,12 @@ export default function NaverCafePage() {
                           {p.nc_cafes?.name} · 승인 {p.approved_at ? new Date(p.approved_at).toLocaleString("ko-KR") : "—"}
                           {p.not_before && new Date(p.not_before) > new Date() ? ` · ${new Date(p.not_before).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })} 이후 발행 예정` : ""}
                         </p>
+                        {p.status !== "publishing" && estMap[p.id] && (
+                          <p className="mt-0.5 truncate text-[11px] font-semibold text-primary">
+                            🕒 예상 발행: {new Date(estMap[p.id].at).toLocaleString("ko-KR", { month: "long", day: "numeric", weekday: "short", hour: "2-digit", minute: "2-digit" })}쯤
+                            <span className="ml-1 font-normal text-gray-400">· {estMap[p.id].note}</span>
+                          </p>
+                        )}
                       </button>
                       <div className="flex shrink-0 items-center gap-1">
                         <button onClick={() => setPostModal(p)} title="내용 수정" className="rounded-lg border border-gray-200 px-2 py-1 text-[11px] font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">수정</button>

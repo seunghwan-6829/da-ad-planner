@@ -30,6 +30,44 @@ export function inActiveHours(pacing: NaverPacing, nowMs: number = Date.now()): 
   return lo <= hour && hour < hi
 }
 
+/* 발행처의 마지막 '실제 발행' 시각(ms). 없으면 null. 업로드 주기(예상 발행 시각) 계산에 쓴다.
+   ⚠️ 발행 게이트(agent/next)가 쓰는 판정과 같은 원천(published_at)을 써야 화면 예상과 실제가 맞는다. */
+export async function lastPublishAtMs(cafeId: string): Promise<number | null> {
+  const { data } = await supabaseAdmin
+    .from('nc_posts')
+    .select('published_at')
+    .eq('cafe_id', cafeId)
+    .eq('status', 'published')
+    .not('published_at', 'is', null)
+    .order('published_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  const t = data?.published_at ? Date.parse(data.published_at as string) : NaN
+  return Number.isNaN(t) ? null : t
+}
+
+/* t(ms)가 활동 시간대 밖이면 '다음 활동 시작' 시각으로 민다(KST 기준). 제한 없으면 그대로. */
+export function bumpToActiveHours(ms: number, pacing: NaverPacing): number {
+  const [lo, hi] = pacing.active_hours
+  if (lo <= 0 && hi >= 24) return ms
+  const { hour } = kstParts(ms)
+  if (hour >= lo && hour < hi) return ms
+  // 오늘 lo시(KST) 만들기
+  const start = new Date(ms + KST_OFFSET_MS)
+  start.setUTCHours(lo, 0, 0, 0)
+  let target = start.getTime() - KST_OFFSET_MS
+  if (hour >= hi) target += 86400_000 // 활동 끝난 뒤 → 내일 lo시. (hour<lo 이면 오늘 lo시가 미래라 그대로)
+  return target
+}
+
+/* 발행처가 '지금 이후' 처음으로 발행 가능한 시각(ms) — 업로드 주기 + 활동 시간대 반영.
+   마지막 발행 + interval_days 가 기준, 없으면 지금. 게이트의 '주기 안 지났으면 스킵'과 짝을 이룬다. */
+export function nextEligibleAt(lastPublishMs: number | null, intervalDays: number, pacing: NaverPacing, nowMs: number = Date.now()): number {
+  let t = lastPublishMs !== null ? lastPublishMs + Math.max(1, intervalDays) * 86400_000 : nowMs
+  if (t < nowMs) t = nowMs
+  return bumpToActiveHours(t, pacing)
+}
+
 // KST 오늘 00:00 에 해당하는 실제 UTC 순간(ISO).
 function startOfKstDayUtcISO(nowMs: number = Date.now()): string {
   const { y, m, day } = kstParts(nowMs)
