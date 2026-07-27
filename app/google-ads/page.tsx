@@ -471,7 +471,7 @@ function OnDemandGoogleVideo({ ad, rounded, videoRef }: { ad: Ad; rounded: strin
   const poster = ad.poster_url || undefined;
 
   if (phase === "ready" && url) {
-    return <video ref={videoRef} src={url} poster={poster} controls autoPlay playsInline preload="metadata" onClick={(e) => e.stopPropagation()} className={`h-full w-full bg-black object-contain ${rounded}`} />;
+    return <video ref={videoRef} src={url} poster={poster} controls autoPlay playsInline preload="metadata" crossOrigin="anonymous" onClick={(e) => e.stopPropagation()} className={`h-full w-full bg-black object-contain ${rounded}`} />;
   }
 
   // 유튜브 임베드 즉시 재생 — 저장본이 없어도, 로컬 영상 서버가 꺼져 있어도 바로 확인된다.
@@ -562,7 +562,7 @@ function MediaView({
     }
     if (stored) {
       return (
-        <video ref={videoRef} src={ad.media_url!} poster={ad.poster_url || undefined} controls autoPlay playsInline preload="metadata" onClick={(e) => e.stopPropagation()} className={`h-full w-full bg-black object-contain ${r}`} />
+        <video ref={videoRef} src={ad.media_url!} poster={ad.poster_url || undefined} controls autoPlay playsInline preload="metadata" crossOrigin="anonymous" onClick={(e) => e.stopPropagation()} className={`h-full w-full bg-black object-contain ${r}`} />
       );
     }
     // media_url 없음/유튜브 → 재생 누르면 상세 로딩 → 다운로드 → 재생 (온디맨드).

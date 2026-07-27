@@ -232,7 +232,7 @@ function IgSmartVideo({ post, rounded }: { post: Post; rounded: string }) {
   }, [post.post_id, post.media_url]);
 
   if (phase === "native" && src) {
-    return <video src={src} poster={post.poster_url || undefined} controls playsInline preload="metadata" onClick={(e) => e.stopPropagation()} className={`h-full w-full bg-black object-contain ${rounded}`} />;
+    return <video src={src} poster={post.poster_url || undefined} controls playsInline preload="metadata" crossOrigin="anonymous" onClick={(e) => e.stopPropagation()} className={`h-full w-full bg-black object-contain ${rounded}`} />;
   }
   if (phase === "embed") {
     const ig = instagramEmbed(post);
@@ -317,7 +317,7 @@ function OnDemandOwnedVideo({ post, rounded }: { post: Post; rounded: string }) 
 
   const poster = posterThumb(post) || undefined;
   if (phase === "ready" && url) {
-    return <video src={url} poster={poster} controls autoPlay playsInline preload="metadata" onClick={(e) => e.stopPropagation()} className={`h-full w-full bg-black object-contain ${rounded}`} />;
+    return <video src={url} poster={poster} controls autoPlay playsInline preload="metadata" crossOrigin="anonymous" onClick={(e) => e.stopPropagation()} className={`h-full w-full bg-black object-contain ${rounded}`} />;
   }
   return (
     <button type="button" onClick={(e) => { e.stopPropagation(); if (phase !== "loading") start(); }} className={`relative flex h-full w-full items-center justify-center overflow-hidden bg-black ${rounded}`}>
@@ -379,7 +379,7 @@ function MediaView({ post, card, rounded }: { post: Post; card?: boolean; rounde
     }
     // 상세: 저장된 mp4=직접 재생 / 인스타=임베드 / 유튜브=임베드 or 온디맨드
     if (stored) {
-      return <video src={post.media_url!} poster={post.poster_url || undefined} controls playsInline preload="metadata" onClick={(e) => e.stopPropagation()} className={`h-full w-full bg-black object-contain ${r}`} />;
+      return <video src={post.media_url!} poster={post.poster_url || undefined} controls playsInline preload="metadata" crossOrigin="anonymous" onClick={(e) => e.stopPropagation()} className={`h-full w-full bg-black object-contain ${r}`} />;
     }
     if (post.platform === "instagram") {
       // 원본 mp4 추출 → 타임라인 있는 네이티브 재생(실패 시 컴포넌트 내부에서 임베드 폴백)
@@ -392,7 +392,7 @@ function MediaView({ post, card, rounded }: { post: Post; card?: boolean; rounde
       return <iframe src={embed} title="" allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen className={`h-full w-full bg-black ${r}`} />;
     }
     if (post.media_url) {
-      return <video src={post.media_url} poster={post.poster_url || undefined} controls playsInline preload="metadata" onClick={(e) => e.stopPropagation()} className={`h-full w-full bg-black object-contain ${r}`} />;
+      return <video src={post.media_url} poster={post.poster_url || undefined} controls playsInline preload="metadata" crossOrigin="anonymous" onClick={(e) => e.stopPropagation()} className={`h-full w-full bg-black object-contain ${r}`} />;
     }
   }
   if (urls.length === 0) {

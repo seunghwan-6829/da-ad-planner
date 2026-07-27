@@ -343,6 +343,7 @@ function MediaView({
           controls
           playsInline
           preload="metadata"
+          crossOrigin="anonymous" /* 화면 캡처용 — 저장본(Supabase)·fbcdn 모두 CORS 허용이라 재생에 영향 없음 */
           onError={() => setVidFailed(true)}
           onClick={(e) => e.stopPropagation()}
           className={`h-full w-full bg-black object-contain ${r}`}
