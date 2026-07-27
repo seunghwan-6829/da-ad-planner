@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { AddToProductionButton } from "@/components/add-to-production";
+import CaptureFrameButton from "@/components/video-frame-capture";
 import { aiFetch } from "@/lib/ai-fetch";
 import { loadCache, saveCache } from "@/lib/crawler-cache";
 import { getClients, type Client } from "@/lib/api/clients";
@@ -2568,6 +2569,7 @@ function AdDetailModal({
 
   // 메인 영상: 그래프 드래그/클릭·프레임 클릭으로 이동+재생(AnalysisViz가 ref로 직접 제어)
   const mainVideoRef = useRef<HTMLVideoElement | null>(null);
+  const mediaBoxRef = useRef<HTMLDivElement | null>(null); // 화면 캡처 대상(보이는 플레이어) 탐색용
 
   // 스페이스바 → 영상 재생/정지 토글. 단, 입력란(메모 등) 작성 중이면 원래 띄어쓰기로 동작.
   useEffect(() => {
@@ -2906,9 +2908,14 @@ function AdDetailModal({
         <div className="grid flex-1 overflow-hidden md:grid-cols-2">
           {/* 좌: 미디어 + T&D (소재 바로 밑) */}
           <div className="space-y-4 overflow-y-auto border-b p-4 dark:border-gray-800 md:border-b-0 md:border-r">
-            <div className="relative mx-auto aspect-[9/16] w-full max-w-[320px] overflow-hidden rounded-xl bg-black dark:bg-black">
+            <div ref={mediaBoxRef} className="relative mx-auto aspect-[9/16] w-full max-w-[320px] overflow-hidden rounded-xl bg-black dark:bg-black">
               <MediaView ad={ad} rounded="rounded-xl" videoRef={mainVideoRef} />
             </div>
+            {ad.media_type === "video" && (
+              <div className="mx-auto -mt-1 flex w-full max-w-[320px] justify-end">
+                <CaptureFrameButton container={mediaBoxRef} filenameBase={brandName} />
+              </div>
+            )}
             <div>
               <div className="mb-1.5 flex items-center justify-between gap-2">
                 <span className="text-xs font-bold uppercase tracking-wide text-gray-400">제목 · 캡션 (T&D)</span>

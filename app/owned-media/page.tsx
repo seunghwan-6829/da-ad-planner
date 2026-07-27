@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { AddToProductionButton } from "@/components/add-to-production";
+import CaptureFrameButton from "@/components/video-frame-capture";
 import { aiFetch } from "@/lib/ai-fetch";
 import { loadCache, saveCache } from "@/lib/crawler-cache";
 import { getClients, type Client } from "@/lib/api/clients";
@@ -1423,6 +1424,7 @@ function PostDetailModal({
   useEffect(() => { setTranscript(post.transcript ?? null); setTranscriptErr(null); }, [post.transcript, post.post_id]);
 
   const memoRef = useRef<HTMLTextAreaElement>(null);
+  const mediaBoxRef = useRef<HTMLDivElement | null>(null); // 화면 캡처 대상(보이는 플레이어) 탐색용
   useEffect(() => { const el = memoRef.current; if (el) { el.style.height = "auto"; el.style.height = `${el.scrollHeight}px`; } }, [memo]);
 
   async function runTranscript() {
@@ -1535,9 +1537,14 @@ function PostDetailModal({
         <div className="grid flex-1 overflow-hidden md:grid-cols-2">
           {/* 좌: 미디어 + 캡션 */}
           <div className="space-y-4 overflow-y-auto border-b p-4 dark:border-gray-800 md:border-b-0 md:border-r">
-            <div className="relative mx-auto aspect-[9/16] w-full max-w-[320px] overflow-hidden rounded-xl bg-black">
+            <div ref={mediaBoxRef} className="relative mx-auto aspect-[9/16] w-full max-w-[320px] overflow-hidden rounded-xl bg-black">
               <MediaView post={post} rounded="rounded-xl" />
             </div>
+            {post.media_type === "video" && (
+              <div className="mx-auto -mt-1 flex w-full max-w-[320px] justify-end">
+                <CaptureFrameButton container={mediaBoxRef} filenameBase={creatorName} />
+              </div>
+            )}
             <div>
               <div className="mb-1.5 flex items-center justify-between gap-2">
                 <span className="text-xs font-bold uppercase tracking-wide text-gray-400">제목 · 캡션</span>
