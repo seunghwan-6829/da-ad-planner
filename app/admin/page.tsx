@@ -9,13 +9,15 @@ import { Badge } from '@/components/ui/badge'
 import { useAuth, UserRole } from '@/lib/auth-context'
 import { TrialAccountsPanel } from '@/components/admin/trial-accounts-panel'
 import { supabase } from '@/lib/supabase'
-import { 
-  getClients, 
-  getClientPermissions, 
-  grantClientPermission, 
+import {
+  getClients,
+  getClientPermissions,
+  grantClientPermission,
   revokeClientPermission,
+  grantAllClientsForUser,
+  revokeAllClientsForUser,
   Client,
-  ClientPermission 
+  ClientPermission
 } from '@/lib/api/clients'
 
 interface UserProfile {
@@ -150,6 +152,41 @@ export default function AdminPage() {
 
   function hasPermission(userId: string, clientId: string): boolean {
     return permissions[clientId]?.some(p => p.user_id === userId) || false
+  }
+
+  // 이 사용자가 '전체 클라이언트'에 권한이 있는지(전체 부여/해제 토글 판단).
+  function hasAllClients(userId: string): boolean {
+    return clients.length > 0 && clients.every((c) => hasPermission(userId, c.id))
+  }
+
+  // 특정 사용자에게 전체 클라이언트 열람 권한을 한 번에 부여.
+  async function handleGrantAllClients(userId: string) {
+    if (!confirm('이 사용자에게 전체 클라이언트 열람 권한을 부여할까요?')) return
+    setPermissionUpdating(userId)
+    try {
+      await grantAllClientsForUser(userId, clients.map((c) => c.id))
+      await loadClients()
+    } catch (error) {
+      console.error('전체 권한 부여 실패:', error)
+      alert('전체 부여에 실패했습니다.')
+    } finally {
+      setPermissionUpdating(null)
+    }
+  }
+
+  // 특정 사용자의 전체 클라이언트 열람 권한을 한 번에 해제.
+  async function handleRevokeAllClients(userId: string) {
+    if (!confirm('이 사용자의 전체 클라이언트 열람 권한을 해제할까요?')) return
+    setPermissionUpdating(userId)
+    try {
+      await revokeAllClientsForUser(userId)
+      await loadClients()
+    } catch (error) {
+      console.error('전체 권한 해제 실패:', error)
+      alert('전체 해제에 실패했습니다.')
+    } finally {
+      setPermissionUpdating(null)
+    }
   }
 
   async function updateUserRole(userId: string, newRole: UserRole) {
@@ -399,7 +436,7 @@ export default function AdminPage() {
                         <Button
                           size="sm"
                           onClick={() => updateUserRole(user.id, 'approved')}
-                          disabled={updating === user.id}
+                          disabled={updating === user.id || deleting === user.id}
                           className="bg-green-600 hover:bg-green-700"
                         >
                           {updating === user.id ? (
@@ -408,6 +445,23 @@ export default function AdminPage() {
                             <>
                               <Check className="h-4 w-4 mr-1" />
                               승인
+                            </>
+                          )}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleDeleteUser(user)}
+                          disabled={updating === user.id || deleting === user.id}
+                          title="이 가입 요청을 거부하고 계정을 삭제해요"
+                          className="text-red-600 border-red-200 hover:bg-red-50"
+                        >
+                          {deleting === user.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <>
+                              <X className="h-4 w-4 mr-1" />
+                              승인 거부
                             </>
                           )}
                         </Button>
@@ -627,39 +681,49 @@ export default function AdminPage() {
                         <div className="flex items-center gap-2">
                           {isUserAdmin ? (
                             <Badge variant="destructive">관리자 (전체 접근)</Badge>
-                          ) : hasPerm ? (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleRevokePermission(user.id, selectedClient)}
-                              disabled={permissionUpdating === user.id}
-                              className="text-red-500 border-red-200 hover:bg-red-50"
-                            >
-                              {permissionUpdating === user.id ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <>
-                                  <X className="h-4 w-4 mr-1" />
-                                  권한 해제
-                                </>
-                              )}
-                            </Button>
                           ) : (
-                            <Button
-                              size="sm"
-                              onClick={() => handleGrantPermission(user.id, selectedClient)}
-                              disabled={permissionUpdating === user.id}
-                              className="bg-green-600 hover:bg-green-700"
-                            >
-                              {permissionUpdating === user.id ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
+                            <>
+                              {/* 전체 클라이언트 일괄 부여/해제 — 하나씩 안 눌러도 이 사람에게 전부 열람 허용 */}
+                              {hasAllClients(user.id) ? (
+                                <Button size="sm" variant="outline" onClick={() => handleRevokeAllClients(user.id)} disabled={permissionUpdating === user.id} title="이 사용자의 모든 클라이언트 권한 해제" className="text-red-500 border-red-200 hover:bg-red-50">전체 해제</Button>
                               ) : (
-                                <>
-                                  <Check className="h-4 w-4 mr-1" />
-                                  권한 부여
-                                </>
+                                <Button size="sm" variant="outline" onClick={() => handleGrantAllClients(user.id)} disabled={permissionUpdating === user.id} title="이 사용자에게 모든 클라이언트 열람 권한을 한 번에 부여" className="text-primary border-primary/40 hover:bg-primary/5">전체 부여</Button>
                               )}
-                            </Button>
+                              {hasPerm ? (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleRevokePermission(user.id, selectedClient)}
+                                  disabled={permissionUpdating === user.id}
+                                  className="text-red-500 border-red-200 hover:bg-red-50"
+                                >
+                                  {permissionUpdating === user.id ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <>
+                                      <X className="h-4 w-4 mr-1" />
+                                      권한 해제
+                                    </>
+                                  )}
+                                </Button>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  onClick={() => handleGrantPermission(user.id, selectedClient)}
+                                  disabled={permissionUpdating === user.id}
+                                  className="bg-green-600 hover:bg-green-700"
+                                >
+                                  {permissionUpdating === user.id ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <>
+                                      <Check className="h-4 w-4 mr-1" />
+                                      권한 부여
+                                    </>
+                                  )}
+                                </Button>
+                              )}
+                            </>
                           )}
                         </div>
                       </div>

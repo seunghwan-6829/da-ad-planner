@@ -15,6 +15,11 @@ import { NextResponse, type NextRequest } from 'next/server'
 // ── 체험 계정이 못 보는 화면 ──
 const TRIAL_BLOCKED_PAGES = ['/naver-cafe', '/project-plans', '/data-tracking', '/instagram', '/admin']
 
+// ── '관리자 페이지에서 승인된 사용자'만 볼 수 있는 화면 ──
+//    관리자·정식 승인(role: admin|approved)만 통과. 체험·대기·미로그인은 차단(AuthGuard 우회 불가한 서버 게이트).
+//    ※ 여기 넣는 경로는 위 TRIAL_BLOCKED_PAGES 에도 포함돼 있어야 미들웨어가 검사한다.
+const APPROVED_ONLY_PAGES = ['/data-tracking']
+
 // ── 체험 계정이 못 부르는 API(로그인 안 한 사람도 못 부른다) ──
 const PROTECTED_API = ['/api/naver-cafe', '/api/pb', '/api/instagram', '/api/admin']
 
@@ -81,6 +86,7 @@ export async function middleware(req: NextRequest) {
 
   const isProtectedApi = startsWithAny(path, PROTECTED_API) && !startsWithAny(path, API_EXCEPTIONS)
   const isBlockedPage = startsWithAny(path, TRIAL_BLOCKED_PAGES)
+  const isApprovedOnlyPage = startsWithAny(path, APPROVED_ONLY_PAGES)
   const isTargetMutation = startsWithAny(path, TARGET_MUTATION_API) && req.method !== 'GET'
   if (!isProtectedApi && !isBlockedPage && !isTargetMutation) return NextResponse.next()
 
@@ -91,8 +97,15 @@ export async function middleware(req: NextRequest) {
   if (!profile) {
     // 보호 API 는 익명 호출을 막는다(지금까지 열려 있던 구멍).
     if (isProtectedApi) return deny(req, '로그인이 필요합니다')
-    // 화면은 기존처럼 클라이언트 AuthGuard 가 로그인 폼을 띄우게 통과시킨다.
+    // 승인자 전용 화면은 미로그인도 서버에서 막는다(AuthGuard 우회 방지).
+    if (isApprovedOnlyPage) return deny(req, '로그인이 필요합니다')
+    // 그 외 화면은 기존처럼 클라이언트 AuthGuard 가 로그인 폼을 띄우게 통과시킨다.
     return NextResponse.next()
+  }
+
+  // 승인자 전용 화면(예: 데이터 추적)은 관리자·정식 승인만. 체험·대기 계정은 여기서 차단.
+  if (isApprovedOnlyPage && profile.role !== 'admin' && profile.role !== 'approved') {
+    return deny(req, '관리자 승인 후 이용할 수 있어요')
   }
 
   const isTrial = profile.role === 'trial'

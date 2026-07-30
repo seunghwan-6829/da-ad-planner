@@ -228,7 +228,23 @@ export async function revokeClientPermission(userId: string, clientId: string): 
     .delete()
     .eq('user_id', userId)
     .eq('client_id', clientId)
-  
+
+  if (error) throw error
+}
+
+// 특정 사용자에게 '전체 클라이언트' 열람 권한을 한 번에 부여(이미 있는 건 무시). UNIQUE(user_id,client_id) 대응 upsert.
+export async function grantAllClientsForUser(userId: string, clientIds: string[]): Promise<void> {
+  if (!clientIds.length) return
+  const rows = clientIds.map((client_id) => ({ user_id: userId, client_id }))
+  const { error } = await supabase
+    .from('client_permissions')
+    .upsert(rows, { onConflict: 'user_id,client_id', ignoreDuplicates: true })
+  if (error) throw error
+}
+
+// 특정 사용자의 '전체 클라이언트' 열람 권한을 한 번에 해제.
+export async function revokeAllClientsForUser(userId: string): Promise<void> {
+  const { error } = await supabase.from('client_permissions').delete().eq('user_id', userId)
   if (error) throw error
 }
 
