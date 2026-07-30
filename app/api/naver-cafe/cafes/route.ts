@@ -23,7 +23,9 @@ function toArray(v: unknown): string[] {
 function buildRow(b: Record<string, unknown>, forInsert: boolean): Record<string, unknown> {
   const row: Record<string, unknown> = {}
   const strField = (k: string) => { if (typeof b[k] === 'string') row[k] = b[k] }
-  for (const k of ['name', 'cafe_url', 'board_name', 'tone', 'topics', 'notes', 'plan_schedule', 'publish_slot', 'selling_point', 'club_id', 'board_id', 'prefix', 'post_style']) strField(k)
+  for (const k of ['cafe_url', 'board_name', 'tone', 'topics', 'notes', 'plan_schedule', 'publish_slot', 'selling_point', 'club_id', 'board_id', 'prefix', 'post_style']) strField(k)
+  // 발행처 이름: 빈 값으로 덮어써지지 않게(수정 중 실수로 지움 방지) — 공백 아닌 문자열일 때만 반영. POST 는 아래에서 검증된 name 을 따로 세팅.
+  if (typeof b.name === 'string' && b.name.trim()) row.name = b.name.trim()
   if (b.brand_id !== undefined) row.brand_id = b.brand_id ? String(b.brand_id) : null
   if (b.emphasis !== undefined) row.emphasis = toArray(b.emphasis)
   if (b.rules !== undefined && typeof b.rules === 'object' && b.rules) row.rules = b.rules

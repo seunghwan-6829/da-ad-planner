@@ -423,6 +423,7 @@ export default function NaverCafePage() {
   const cafe = sel !== "dash" ? cafes.find((c) => c.id === sel) || null : null;
   useEffect(() => {
     if (cafe) setCafeForm({
+      name: cafe.name,
       brand_id: cafe.brand_id ?? null, cafe_url: cafe.cafe_url, tone: cafe.tone, selling_point: cafe.selling_point || "",
       topics: cafe.topics, notes: cafe.notes, publish_slot: cafe.publish_slot, daily_drafts: cafe.daily_drafts ?? 3,
       club_id: cafe.club_id || "", board_id: cafe.board_id || "", board_name: cafe.board_name || "",
@@ -1339,6 +1340,11 @@ export default function NaverCafePage() {
             </div>
             <div className="flex-1 overflow-y-auto p-4">
               <div className="grid gap-3 md:grid-cols-2">
+                <div className="md:col-span-2">
+                  {/* 발행처 이름 수정 — 오타로 잘못 넣었을 때 고치는 용도(발행 동작엔 영향 없음). */}
+                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">발행처 이름 <span className="font-normal text-gray-400">— 화면에 보이는 이름(오타 수정용)</span></label>
+                  <input value={(cafeForm.name as string) || ""} onChange={(e) => setCafeForm({ ...cafeForm, name: e.target.value })} placeholder="예: 강남엄마 목동엄" className={inputCls} />
+                </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">브랜드</label>
                   <select value={(cafeForm.brand_id as string) || ""} onChange={(e) => setCafeForm({ ...cafeForm, brand_id: e.target.value || null })} className={inputCls}>
