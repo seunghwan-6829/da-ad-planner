@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Shield, Users, Check, X, Clock, Loader2, RefreshCw, Folder, UserCheck, Megaphone, Trash2, Search, Ticket } from 'lucide-react'
+import { Shield, Users, Check, X, Clock, Loader2, RefreshCw, Folder, UserCheck, Megaphone, Activity, Trash2, Search, Ticket } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -27,6 +27,7 @@ interface UserProfile {
   role: UserRole
   created_at: string
   can_meta_ad?: boolean
+  can_data_tracking?: boolean
 }
 
 export default function AdminPage() {
@@ -35,8 +36,9 @@ export default function AdminPage() {
   const { user, isAdmin, loading: authLoading } = useAuth()
 
   // 탭 관리
-  const [activeTab, setActiveTab] = useState<'users' | 'clients' | 'metaAd' | 'trial'>('users')
+  const [activeTab, setActiveTab] = useState<'users' | 'clients' | 'metaAd' | 'dataTracking' | 'trial'>('users')
   const [metaUpdating, setMetaUpdating] = useState<string | null>(null)
+  const [dtUpdating, setDtUpdating] = useState<string | null>(null)
 
   // 사용자 관리
   const [users, setUsers] = useState<UserProfile[]>([])
@@ -56,7 +58,7 @@ export default function AdminPage() {
 
   useEffect(() => {
     const tab = searchParams.get('tab')
-    if (tab === 'clients' || tab === 'metaAd') {
+    if (tab === 'clients' || tab === 'metaAd' || tab === 'dataTracking') {
       setActiveTab(tab)
     }
   }, [searchParams])
@@ -232,6 +234,25 @@ export default function AdminPage() {
     }
   }
 
+  // 데이터 추적 전용 권한 토글 — 앱 승인과 별개(관리자 페이지 '데이터 추적 권한' 탭).
+  async function updateDataTrackingAccess(userId: string, value: boolean) {
+    if (!supabase) return
+    setDtUpdating(userId)
+    try {
+      const { error } = await supabase
+        .from('user_profiles')
+        .update({ can_data_tracking: value })
+        .eq('id', userId)
+      if (error) throw error
+      setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, can_data_tracking: value } : u)))
+    } catch (error) {
+      console.error('데이터 추적 권한 변경 실패:', error)
+      alert('권한 변경에 실패했습니다. (can_data_tracking 컬럼 마이그레이션을 실행했는지 확인하세요)')
+    } finally {
+      setDtUpdating(null)
+    }
+  }
+
   // 사용자 강퇴(완전 삭제). Auth 계정까지 삭제되어 다시 로그인 불가.
   async function handleDeleteUser(target: UserProfile) {
     if (!supabase) return
@@ -344,6 +365,17 @@ export default function AdminPage() {
         >
           <Megaphone className="h-4 w-4 inline mr-2" />
           크롤러 권한
+        </button>
+        <button
+          className={`px-4 py-2 font-medium transition-colors ${
+            activeTab === 'dataTracking'
+              ? 'border-b-2 border-primary text-primary'
+              : 'text-gray-500 hover:text-gray-700'
+          }`}
+          onClick={() => setActiveTab('dataTracking')}
+        >
+          <Activity className="h-4 w-4 inline mr-2" />
+          데이터 추적 권한
         </button>
         <button
           className={`px-4 py-2 font-medium transition-colors ${
@@ -817,6 +849,103 @@ export default function AdminPage() {
                             className="bg-green-600 hover:bg-green-700"
                           >
                             {metaUpdating === user.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <>
+                                <Check className="h-4 w-4 mr-1" />
+                                권한 부여
+                              </>
+                            )}
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* 데이터 추적 권한 탭 — 앱 승인과 별개로 사람마다 '데이터 추적'만 켜고 끈다(크롤러 권한과 동일 방식). */}
+      {activeTab === 'dataTracking' && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Activity className="h-5 w-5" />
+              데이터 추적 접근 권한
+            </CardTitle>
+            <CardDescription>
+              토글 하나로 그 사람의 <strong>데이터 추적</strong>(좌측 메뉴 · /data-tracking) 접근을 열고 닫습니다.
+              앱 승인과는 <strong>별개</strong>라, 승인된 사람이라도 여기서 끄면 데이터 추적만 막힙니다.
+              끄면 메뉴가 사라지고 주소를 직접 입력해도 열리지 않아요. 관리자는 항상 접근 가능합니다.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin" />
+              </div>
+            ) : approvedAndAdminUsers.length === 0 ? (
+              <p className="text-center text-muted-foreground py-8">승인된 사용자가 없습니다</p>
+            ) : (
+              <div className="space-y-2">
+                {approvedAndAdminUsers.map((user) => {
+                  const isUserAdmin = user.role === 'admin'
+                  const has = isUserAdmin || !!user.can_data_tracking
+                  return (
+                    <div
+                      key={user.id}
+                      className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${has ? 'bg-green-100' : 'bg-gray-100'}`}>
+                          {has ? <Check className="h-5 w-5 text-green-600" /> : <X className="h-5 w-5 text-gray-400" />}
+                        </div>
+                        <div>
+                          <p className="font-medium text-lg">{user.email}</p>
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                                has
+                                  ? 'bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300'
+                                  : 'bg-gray-100 text-gray-400 line-through dark:bg-gray-800 dark:text-gray-500'
+                              }`}
+                            >
+                              데이터 추적
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {isUserAdmin ? (
+                          <Badge variant="destructive">관리자 (항상 접근)</Badge>
+                        ) : user.can_data_tracking ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => updateDataTrackingAccess(user.id, false)}
+                            disabled={dtUpdating === user.id}
+                            className="text-red-500 border-red-200 hover:bg-red-50"
+                          >
+                            {dtUpdating === user.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <>
+                                <X className="h-4 w-4 mr-1" />
+                                권한 해제
+                              </>
+                            )}
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            onClick={() => updateDataTrackingAccess(user.id, true)}
+                            disabled={dtUpdating === user.id}
+                            className="bg-green-600 hover:bg-green-700"
+                          >
+                            {dtUpdating === user.id ? (
                               <Loader2 className="h-4 w-4 animate-spin" />
                             ) : (
                               <>

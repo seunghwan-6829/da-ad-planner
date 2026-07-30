@@ -34,7 +34,7 @@ const TARGET_MUTATION_API = ['/api/meta-ad/targets', '/api/google-ads/targets', 
 
 const startsWithAny = (path: string, list: string[]) => list.some((p) => path === p || path.startsWith(p + '/'))
 
-type Profile = { role: string; trial_expires_at: string | null } | null
+type Profile = { role: string; trial_expires_at: string | null; can_data_tracking?: boolean } | null
 
 // 같은 사용자의 연속 요청마다 Supabase 를 두 번씩 부르지 않도록 짧게 캐시(60초).
 const cache = new Map<string, { at: number; profile: Profile }>()
@@ -58,8 +58,9 @@ async function loadProfile(token: string): Promise<Profile> {
     const user = (await ures.json()) as { id?: string }
     if (!user?.id) return null
 
-    // 2) 역할·만료 조회(service_role — RLS 우회)
-    const pres = await fetch(`${url}/rest/v1/user_profiles?id=eq.${user.id}&select=role,trial_expires_at`, {
+    // 2) 역할·만료·권한 조회(service_role — RLS 우회)
+    //    select=* : 아직 can_data_tracking 컬럼이 없어도(마이그레이션 전) 에러 없이 통과하도록 전체 선택.
+    const pres = await fetch(`${url}/rest/v1/user_profiles?id=eq.${user.id}&select=*`, {
       headers: { apikey: service, Authorization: `Bearer ${service}` },
     })
     const rows = pres.ok ? ((await pres.json()) as Profile[]) : []
@@ -103,9 +104,13 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next()
   }
 
-  // 승인자 전용 화면(예: 데이터 추적)은 관리자·정식 승인만. 체험·대기 계정은 여기서 차단.
-  if (isApprovedOnlyPage && profile.role !== 'admin' && profile.role !== 'approved') {
-    return deny(req, '관리자 승인 후 이용할 수 있어요')
+  // 데이터 추적 전용 권한 게이트 — 앱 승인과 별개인 can_data_tracking 하나만 본다(관리자는 항상 통과).
+  //   · 마이그레이션 전(can_data_tracking undefined)이면 예전처럼 정식 승인(approved)에 열어 준다.
+  //   · 관리자 페이지 '데이터 추적 권한' 탭에서 끄면(false) 정식 승인이라도 차단.
+  if (isApprovedOnlyPage) {
+    const dt = profile.can_data_tracking
+    const allowed = profile.role === 'admin' || dt === true || (dt === undefined && profile.role === 'approved')
+    if (!allowed) return deny(req, '데이터 추적 권한이 없어요 (관리자에게 요청하세요)')
   }
 
   const isTrial = profile.role === 'trial'

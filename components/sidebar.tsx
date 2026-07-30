@@ -67,7 +67,7 @@ function isNavActive(pathname: string | null, href: string): boolean {
 export function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
-  const { user, profile, isAdmin, canMetaAd, isTrial, signOut } = useAuth()
+  const { user, profile, isAdmin, canMetaAd, canDataTracking, isTrial, signOut } = useAuth()
 
   // ⚠️ 하드 리로드(F5) 시 usePathname()이 일시적으로 '/'로 잡혀 '대시보드'가 잘못 활성화되는
   //    하이드레이션 타이밍 버그 방지 → 마운트/경로변경 후 실제 URL(window.location)로 활성 경로 동기화.
@@ -84,7 +84,12 @@ export function Sidebar() {
         (주소를 직접 쳐도 막힌다). */
   const TRIAL_LOCKED = ['/naver-cafe', '/project-plans', '/data-tracking', '/instagram']
   const lockedHrefs = isAdmin ? [] : isTrial ? TRIAL_LOCKED : ['/naver-cafe']
-  const topItems = navigationTop.filter((item) => !crawlerHrefs.includes(item.href) || canMetaAd)
+  // 크롤러 3종은 can_meta_ad, '데이터 추적'은 can_data_tracking(관리자는 항상)으로 노출을 가른다.
+  const topItems = navigationTop.filter(
+    (item) =>
+      (!crawlerHrefs.includes(item.href) || canMetaAd) &&
+      (item.href !== '/data-tracking' || canDataTracking),
+  )
 
   // #6 메타 광고 5일 알림: 신규/종료 변화가 있으면 하단 배지. 닫으면 그 시그니처는 다시 안 뜸(새 변화 시 재등장).
   const [change, setChange] = useState<MetaChange | null>(null)

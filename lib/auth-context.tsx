@@ -12,6 +12,7 @@ interface UserProfile {
   name: string | null
   role: UserRole
   can_meta_ad?: boolean
+  can_data_tracking?: boolean
   trial_expires_at?: string | null
   trial_label?: string | null
 }
@@ -43,6 +44,7 @@ interface AuthContextType {
   isAdmin: boolean
   isApproved: boolean
   canMetaAd: boolean
+  canDataTracking: boolean
   isTrial: boolean
 }
 
@@ -57,6 +59,7 @@ const AuthContext = createContext<AuthContextType>({
   isAdmin: false,
   isApproved: false,
   canMetaAd: false,
+  canDataTracking: false,
   isTrial: false,
 })
 
@@ -191,10 +194,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
      사이드바 노출과 세 페이지의 진입 가드가 모두 이 값 하나를 본다.
      컬럼명은 처음 메타 크롤러만 있던 시절의 잔재라 그대로 두었다(이름 변경은 마이그레이션 필요). */
   const canMetaAd = profile?.role === 'admin' || profile?.can_meta_ad === true || isTrial
+  /* 데이터 추적(/data-tracking) 접근 — 앱 승인과 별개인 '데이터 추적 권한' 하나만 본다.
+     관리자 페이지 '데이터 추적 권한' 탭에서 사람마다 켜고 끈다(크롤러 권한과 똑같은 방식).
+     ⚠️ 컬럼(can_data_tracking) 마이그레이션 전이면 값이 undefined 라, 그때만 예전처럼
+        정식 승인(approved)에 열어 준다(마이그레이션 전후로 접근이 끊기지 않게). 체험은 제외. */
+  const canDataTracking =
+    profile?.role === 'admin' ||
+    profile?.can_data_tracking === true ||
+    (profile?.can_data_tracking === undefined && profile?.role === 'approved')
 
   return (
     <AuthContext.Provider value={{
-      user, profile, loading, error, signIn, signUp, signOut, isAdmin, isApproved, canMetaAd, isTrial
+      user, profile, loading, error, signIn, signUp, signOut, isAdmin, isApproved, canMetaAd, canDataTracking, isTrial
     }}>
       {children}
     </AuthContext.Provider>
