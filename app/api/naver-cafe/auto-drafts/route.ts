@@ -66,31 +66,44 @@ export async function POST(req: Request) {
       // 발행처가 고른 '글 방향'(정보/질문/일상) 안에서만 유형을 돌려 쓴다. 미설정이면 전체 섞기.
       const stylePool = archetypesForStyle(String((c as { post_style?: string }).post_style || ''))
       // 원고 N개 = API N개 병렬 호출(하나가 실패해도 나머지는 그대로). 유형·소주제를 돌려가며 배정.
-      const results = await Promise.allSettled(
-        Array.from({ length: need }, (_, i) =>
-          draftPost(apiKey, dc, subjects.length ? subjects[(startIdx + i) % subjects.length] : '', claude.model, claude.max_tokens, {
-            avoidTitles,
-            archetypeKey: stylePool[(startIdx + i) % stylePool.length].key,
+      // '지금 다시 생성'(force)은 중복차단에 다 막혀 0개가 나오는 걸 막으려 몇 라운드 더 시도한다
+      // — 매 라운드 지금까지 채택/회피한 제목을 회피 목록에 실어(generate 가 도입을 벌림) 새 제목을 뽑는다.
+      let made = 0, skipped = 0
+      const seen = [...avoidTitles] // 최근 창 제목 + 이번에 채택한 제목(계속 누적 → 회피 목록)
+      const maxRounds = forced ? 3 : 1
+      for (let round = 0; round < maxRounds && made < need; round++) {
+        const batch = need - made
+        const results = await Promise.allSettled(
+          Array.from({ length: batch }, (_, i) => {
+            const idx = startIdx + made + i + round * 7 // 유형·소주제가 라운드마다 다르게 돌도록 오프셋
+            return draftPost(apiKey, dc, subjects.length ? subjects[idx % subjects.length] : '', claude.model, claude.max_tokens, {
+              avoidTitles: seen.slice(-40),
+              archetypeKey: stylePool[idx % stylePool.length].key,
+            })
           })
         )
-      )
-      let made = 0, skipped = 0
-      const seen = [...avoidTitles] // 최근 30일 제목 + 이번 배치에서 이미 채택한 제목
-      for (const r of results) {
-        if (r.status !== 'fulfilled' || !r.value.title) continue
-        const t = r.value.title
-        // 최근 30일(또는 설정 창) 안에 비슷한 제목이 있으면 아예 만들지 않는다 — 같은 글 반복 방지.
-        if (seen.some((old) => titleSimilarity(t, old) >= options.dup_similarity)) { skipped++; continue }
-        seen.push(t)
-        const { error: insErr } = await supabaseAdmin
-          .from('nc_posts')
-          .insert({ cafe_id: cafe.id, title: t, body: r.value.body, status: 'draft', origin: 'auto', created_by: 'auto-draft' })
-        if (!insErr) made++
+        for (const r of results) {
+          if (r.status !== 'fulfilled' || !r.value.title) continue
+          const t = r.value.title
+          // 최근 창 안에 비슷한 제목이 있으면 아예 만들지 않는다 — 같은 글 반복 방지.
+          if (seen.some((old) => titleSimilarity(t, old) >= options.dup_similarity)) { skipped++; continue }
+          seen.push(t)
+          const { error: insErr } = await supabaseAdmin
+            .from('nc_posts')
+            .insert({ cafe_id: cafe.id, title: t, body: r.value.body, status: 'draft', origin: 'auto', created_by: 'auto-draft' })
+          if (!insErr) made++
+          if (made >= need) break
+        }
       }
       detail.push({ cafe: cafe.name, made, ...(skipped ? { skipped } : {}) })
     } catch (e) {
       detail.push({ cafe: cafe.name, made: 0, error: String(e instanceof Error ? e.message : e).slice(0, 120) })
     }
   }
-  return NextResponse.json({ ok: true, made: detail.reduce((s, d) => s + d.made, 0), detail })
+  return NextResponse.json({
+    ok: true,
+    made: detail.reduce((s, d) => s + d.made, 0),
+    skipped: detail.reduce((s, d) => s + (d.skipped || 0), 0),
+    detail,
+  })
 }

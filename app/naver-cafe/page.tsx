@@ -464,7 +464,13 @@ export default function NaverCafePage() {
       const j = await api("/api/naver-cafe/auto-drafts", "POST", { cafe_id: cafe.id, force });
       if (!j.made) {
         const err = Array.isArray(j.detail) ? j.detail.find((d: { error?: string }) => d.error)?.error : null;
-        alert(err ? `초안 생성 실패: ${err}` : (force ? "생성된 초안이 없어요. 잠시 후 다시 시도해 주세요." : "오늘 분량이 이미 채워져 있어요. 내일 아침 자동으로 다시 생성돼요."));
+        const skipped = Number(j.skipped) || (Array.isArray(j.detail) ? j.detail.reduce((s: number, d: { skipped?: number }) => s + (d.skipped || 0), 0) : 0);
+        alert(
+          err ? `초안 생성 실패: ${err}`
+          : skipped ? `새로 만든 ${skipped}개가 기존 글과 너무 비슷해서 저장하지 않았어요.\n활동 컨셉·주제를 좀 더 다양하게 하거나, 기존 초안을 정리한 뒤 다시 시도해 주세요.`
+          : force ? "생성된 초안이 없어요. 잠시 후 다시 시도해 주세요."
+          : "오늘 분량이 이미 채워져 있어요. 내일 아침 자동으로 다시 생성돼요."
+        );
       }
       loadAll();
     } catch (e) { alert(e instanceof Error ? e.message : "초안 생성 실패"); } finally { setGenBusy(false); }

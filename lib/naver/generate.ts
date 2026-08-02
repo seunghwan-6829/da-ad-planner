@@ -70,6 +70,18 @@ function pickArchetype(key?: string): Archetype {
   return POST_ARCHETYPES[Math.floor(Math.random() * POST_ARCHETYPES.length)]
 }
 
+/* 최근 제목들에서 '자주 반복되는 첫머리(앞 2~3어절)'를 뽑는다.
+   같은 도입("마케팅 이거 진짜…")이 쌓이면 새 제목도 거기로 수렴 → 중복차단에 다 걸려 0개가 나온다.
+   그래서 이 도입들을 프롬프트에 '쓰지 마' 목록으로 실어 제목 첫머리를 벌린다. */
+function commonOpeners(titles: string[]): string[] {
+  const counts = new Map<string, number>()
+  for (const t of titles) {
+    const w = String(t || '').trim().split(/\s+/).filter(Boolean)
+    for (const n of [2, 3]) if (w.length >= n) { const k = w.slice(0, n).join(' '); counts.set(k, (counts.get(k) || 0) + 1) }
+  }
+  return [...counts.entries()].filter(([, c]) => c >= 2).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k]) => k)
+}
+
 /* 발행처 '글 방향' 설정 → 어떤 글 유형(아키타입) 묶음으로 쓸지.
    운영 설정에서 버튼으로 고르면(정보/질문/일상), 그 방향의 유형 안에서만 돌려 쓴다.
    'auto'(또는 미지정)면 전체에서 섞어 쓴다(기존 동작). */
@@ -193,6 +205,7 @@ export async function draftPost(
   const promoBanned = cafe.rules?.promo_banned
   const arch = pickArchetype(opts.archetypeKey)
   const avoid = (opts.avoidTitles || []).filter(Boolean).slice(0, 30)
+  const openers = commonOpeners(avoid) // 이미 너무 많은 도입 → 프롬프트에서 금지
 
   const prompt = `네이버 카페 "${cafe.name}"에 올릴 글을 써줘. 진짜 회원이 쓴 것 같은, 댓글이 달리고 싶어지는 글.
 
@@ -207,12 +220,15 @@ ${cafe.selling_point ? `[이 채널이 글로 해내야 하는 것] ${cafe.selli
   → 상업 목표(업체·서비스로 유도 등)라면: 본문에 직접 드러내지 마 — 업체명·홍보 티 금지, 결로만 배어나오게.` : ''}
 ${emphasis.length ? `[대화에 자연스럽게 스밀 단어(볼드 금지, 억지로 넣지 말 것)] ${emphasis.join(', ')}` : ''}
 [주의] ${cafe.notes || '(없음)'}${promoBanned ? ' / 이 카페는 홍보 금지 — 상업적 표현·브랜드 언급 일절 금지' : ''}
-${avoid.length ? `[최근에 쓴 제목들 — 주제·톤 겹치지 않게] ${avoid.join(' / ')}` : ''}
+${avoid.length ? `[⛔ 이미 올렸거나 대기 중인 제목들 — 아래와 겹치면 안 됨]
+${avoid.map((t) => `· ${t}`).join('\n')}
+  → 소재가 같아도 완전히 다른 각도·상황·말투로. 제목 첫머리(앞 2~3어절)를 위 제목들과 다르게.${openers.length ? `\n  → 특히 "${openers.join('", "')}"(으)로 시작하는 제목이 이미 너무 많다 — 그 도입은 절대 다시 쓰지 마.` : ''}` : ''}
 
 [제목 — 여기가 제일 중요]
 - 진짜 사람이 폰으로 급하게 친 것처럼. 짧게(10~28자). 컨셉의 말투로.
 - "어 나도 궁금했는데" 또는 "오 이건 봐야지" 싶게. 정보 제목이 아니라 사람 말투로.
 - ㅠㅠ ? ... 같은 거 하나쯤 자연스럽게 써도 됨.
+- 도입을 매번 다르게. 위 '이미 있는 제목들'과 같은 첫머리로 시작하지 마(같은 첫 단어 반복 = 봇 티). 주제어를 앞에 두거나, 상황·감정·질문을 앞에 두는 등 첫 어절을 바꿔라.
 - 금지: 숫자·통계(23%, 2배, 80% 등), "~하는 이유/방법/후기 정리", "제목: 부제" 형태, 매끈한 정보성 제목.
   나쁜 예) 상세페이지 바꾸고 매출 23% 떨어진 이유
   좋은 예/질문형) 상세페이지 업체 추천부탁드립니다ㅠ
