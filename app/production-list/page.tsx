@@ -4,7 +4,6 @@
    한 곳에 모아 보고(필터), 항목을 열면 해당 광고 소재가 크롤러 상세처럼 플로팅으로 뜬다. */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import {
   Check,
   ChevronLeft,
@@ -19,10 +18,8 @@ import {
   X,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
-import { aiFetch } from "@/lib/ai-fetch";
 import { getClients, type Client } from "@/lib/api/clients";
-import { createMindmap } from "@/lib/api/mindmaps";
-import { createContentGuide } from "@/lib/api/content-guides";
+import { useGenJobs, type GenKind } from "@/components/gen-jobs";
 
 type Source = "meta" | "google" | "owned";
 
@@ -39,11 +36,6 @@ type PLItem = {
   created_by: string | null;
   created_at: string;
 };
-
-// AI 라우트(loadCreative)의 source 파라미터 매핑: 메타=기본(am), 구글=ga, 온드=om
-const AI_SOURCE: Record<Source, string | undefined> = { meta: undefined, google: "ga", owned: "om" };
-// 대본(나레이션) 추출 엔드포인트 — 크롤러 페이지와 동일하게 마인드맵/가이드 생성 전에 먼저 호출
-const TRANSCRIPT_EP: Record<Source, string> = { meta: "/api/meta-ad/transcript", google: "/api/google-ads/transcript", owned: "/api/owned-media/transcript" };
 
 type Detail = {
   source: Source;
@@ -170,53 +162,30 @@ function DetailModal({
   onPatched: (patch: Partial<PLItem>) => void;
   onDeleted: () => void;
 }) {
-  const router = useRouter();
   const [detail, setDetail] = useState<Detail | null>(null);
   const [detailErr, setDetailErr] = useState<string>("");
   const [note, setNote] = useState(item.note || "");
   const [noteSaved, setNoteSaved] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [genMM, setGenMM] = useState(false); // 기획 마인드맵 생성 중
-  const [genCG, setGenCG] = useState(false); // 컨텐츠 가이드 생성 중
+  const genJobs = useGenJobs();
 
-  // 영상 소재면 대본(나레이션)부터 확보 — 없이 만들면 마인드맵에 '나레이션 없음'으로 나온다.
-  //   (이미 추출돼 있으면 캐시라 즉시 반환. 유튜브 등 추출 불가 소재는 조용히 건너뜀)
-  async function ensureTranscript() {
-    if (detail?.media_type !== "video") return;
-    try {
-      await aiFetch(TRANSCRIPT_EP[item.source], { method: "POST", body: JSON.stringify({ library_id: item.ref_id, post_id: item.ref_id }) });
-    } catch { /* 대본 없이도 생성은 진행 */ }
-  }
-
-  // 크롤러 상세와 동일: 이 소재로 기획 마인드맵 생성(선택된 클라이언트 폴더로) 후 캔버스 이동.
-  async function generateMindmap() {
+  /* 기획 마인드맵/컨텐츠 가이드 생성 → 전역 큐(우측 하단 토스트)로.
+     여기서 기다리지 않으니 모달을 닫고 다음 소재를 바로 눌러 '중첩'으로 돌릴 수 있고,
+     페이지를 이동해도 진행 표시가 따라온다. 완료되면 토스트의 [열기]로 이동. */
+  function startGenerate(kind: GenKind) {
     if (!item.client_id) { alert("먼저 아래에서 클라이언트를 지정해 주세요."); return; }
-    setGenMM(true);
-    try {
-      await ensureTranscript();
-      const res = await aiFetch("/api/ai/mindmap", { method: "POST", body: JSON.stringify({ library_id: item.ref_id, source: AI_SOURCE[item.source] }) });
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok) { alert(j.error || "마인드맵 생성에 실패했어요."); return; }
-      const mm = await createMindmap({ client_id: item.client_id, library_id: item.ref_id, title: item.brand || item.ref_id, source_brand: item.brand || null, source_thumb: item.thumb || null, data: j.data });
-      router.push(`/plan-mindmap/${mm.id}`);
-    } catch { alert("마인드맵 생성 중 오류가 발생했어요."); }
-    finally { setGenMM(false); }
-  }
-
-  async function generateContentGuide() {
-    if (!item.client_id) { alert("먼저 아래에서 클라이언트를 지정해 주세요."); return; }
-    setGenCG(true);
-    try {
-      await ensureTranscript();
-      const res = await aiFetch("/api/ai/content-guide", { method: "POST", body: JSON.stringify({ library_id: item.ref_id, source: AI_SOURCE[item.source] }) });
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok) { alert(j.error || "컨텐츠 가이드 생성에 실패했어요."); return; }
-      const scenes = j.scenes || [];
-      if (!scenes.length) { alert("장면을 만들지 못했어요. 다시 시도해 주세요."); return; }
-      const cg = await createContentGuide({ client_id: item.client_id, library_id: item.ref_id, title: item.brand || item.ref_id, source_brand: item.brand || null, source_thumb: item.thumb || null, data: { scenes, brand: j.brand || item.brand || "" } });
-      router.push(`/content-guide/${cg.id}`);
-    } catch { alert("컨텐츠 가이드 생성 중 오류가 발생했어요."); }
-    finally { setGenCG(false); }
+    genJobs.start({
+      kind,
+      source: item.source,
+      refId: item.ref_id,
+      clientId: item.client_id,
+      label: item.brand || item.ref_id,
+      sub: clients.find((c) => c.id === item.client_id)?.name,
+      brand: item.brand,
+      thumb: item.thumb,
+      // 영상 소재면 대본(나레이션)부터 추출 — 상세가 아직 로딩 전이면 리스트의 media_type 으로 판단
+      isVideo: (detail?.media_type ?? item.media_type) === "video",
+    });
   }
 
   useEffect(() => {
@@ -322,23 +291,21 @@ function DetailModal({
 
           {/* 우: 제작 관리 */}
           <div className="space-y-4 overflow-y-auto p-4">
-            {/* 크롤러 상세와 동일한 제작 도구 — 담아온 뒤에도 그대로 사용 가능 */}
+            {/* 크롤러 상세와 동일한 제작 도구 — 누르면 우측 하단 토스트로 진행되고, 여러 소재를 중첩으로 돌릴 수 있다 */}
             <div className="flex flex-wrap gap-2">
               <button
-                onClick={generateMindmap}
-                disabled={genMM || genCG}
-                title="이 소재로 기획 마인드맵 생성 (본인 Anthropic 키 필요)"
-                className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/10 disabled:opacity-50"
+                onClick={() => startGenerate("mindmap")}
+                title="이 소재로 기획 마인드맵 생성 — 우측 하단에서 진행을 볼 수 있어요 (본인 Anthropic 키 필요)"
+                className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/10"
               >
-                {genMM ? <Loader2 className="h-4 w-4 animate-spin" /> : <Network className="h-4 w-4" />} 기획 마인드맵
+                <Network className="h-4 w-4" /> 기획 마인드맵
               </button>
               <button
-                onClick={generateContentGuide}
-                disabled={genMM || genCG}
-                title="이 소재로 장면별 컨텐츠 가이드 생성 (본인 Anthropic 키 필요)"
-                className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/10 disabled:opacity-50"
+                onClick={() => startGenerate("guide")}
+                title="이 소재로 장면별 컨텐츠 가이드 생성 — 우측 하단에서 진행을 볼 수 있어요 (본인 Anthropic 키 필요)"
+                className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/10"
               >
-                {genCG ? <Loader2 className="h-4 w-4 animate-spin" /> : <Film className="h-4 w-4" />} 컨텐츠 가이드
+                <Film className="h-4 w-4" /> 컨텐츠 가이드
               </button>
             </div>
 

@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation'
 import { AuthProvider } from '@/lib/auth-context'
 import { AuthGuard } from '@/components/auth-guard'
 import { Sidebar } from '@/components/sidebar'
+import { GenJobsProvider } from '@/components/gen-jobs'
 
 export function LayoutWrapper({ children }: { children: React.ReactNode }) {
   const routePathname = usePathname()
@@ -25,16 +26,19 @@ export function LayoutWrapper({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthProvider>
-      {isLoginPage || isPublicVideoSharePage || isPublicGuidePage || isPublicAdSharePage || isPublicContentGuidePage || isPublicMindmapSharePage ? (
-        <>{children}</>
-      ) : (
-        <AuthGuard>
-          <div className="flex h-screen">
-            <Sidebar />
-            <main className={isDataTracking ? 'flex-1 overflow-auto' : 'flex-1 overflow-auto bg-gray-50 dark:bg-gray-900 p-8'}>{children}</main>
-          </div>
-        </AuthGuard>
-      )}
+      {/* GenJobsProvider: 우측 하단 '생성 진행' 토스트 스택 — 레이아웃 전역이라 페이지를 이동해도 따라온다 */}
+      <GenJobsProvider>
+        {isLoginPage || isPublicVideoSharePage || isPublicGuidePage || isPublicAdSharePage || isPublicContentGuidePage || isPublicMindmapSharePage ? (
+          <>{children}</>
+        ) : (
+          <AuthGuard>
+            <div className="flex h-screen">
+              <Sidebar />
+              <main className={isDataTracking ? 'flex-1 overflow-auto' : 'flex-1 overflow-auto bg-gray-50 dark:bg-gray-900 p-8'}>{children}</main>
+            </div>
+          </AuthGuard>
+        )}
+      </GenJobsProvider>
     </AuthProvider>
   )
 }
