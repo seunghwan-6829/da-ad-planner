@@ -1,15 +1,13 @@
 "use client";
 
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
-import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { AddToProductionButton } from "@/components/add-to-production";
 import CaptureFrameButton from "@/components/video-frame-capture";
 import { aiFetch } from "@/lib/ai-fetch";
 import { loadCache, saveCache } from "@/lib/crawler-cache";
 import { getClients, type Client } from "@/lib/api/clients";
-import { createMindmap } from "@/lib/api/mindmaps";
-import { createContentGuide } from "@/lib/api/content-guides";
+import { useGenJobs } from "@/components/gen-jobs";
 import {
   Activity,
   Settings,
@@ -1399,7 +1397,6 @@ function PostDetailModal({
   onToggleSaved: (p: Post) => void;
   clients: Client[];
 }) {
-  const router = useRouter();
   const [memo, setMemo] = useState(post.memo ?? "");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -1415,6 +1412,7 @@ function PostDetailModal({
   const [mmGenerating, setMmGenerating] = useState(false);
   const [cgPicking, setCgPicking] = useState(false);
   const [cgGenerating, setCgGenerating] = useState(false);
+  const genJobs = useGenJobs(); // 전역 생성 큐 — 우측 하단 토스트로 진행/완료 표시
   const ended = post.status === "ended";
   // 대본(나레이션) 추출 가능 여부: 저장된 mp4 또는 인스타(서버가 원본 mp4 즉석 추출). 유튜브는 미지원.
   const isDirectVideo = post.media_type === "video" && post.platform !== "youtube" && (!!post.media_url || post.platform === "instagram");
@@ -1471,35 +1469,38 @@ function PostDetailModal({
   const isDirty = () => memo !== (post.memo ?? "") || (!!analysis && !analysisSaved);
   function requestClose() { if (isDirty()) setConfirmClose(true); else onClose(); }
 
-  async function generateMindmap(clientId: string) {
-    setMmGenerating(true);
-    try {
-      if (isDirectVideo && !post.transcript) {
-        try { await aiFetch("/api/owned-media/transcript", { method: "POST", body: JSON.stringify({ post_id: post.post_id }) }); } catch {}
-      }
-      const res = await aiFetch("/api/ai/mindmap", { method: "POST", body: JSON.stringify({ library_id: post.post_id, source: "om" }) });
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok) { alert(j.error || "마인드맵 생성에 실패했어요."); return; }
-      const capTitle = (post.caption || "").replace(/\n+/g, " ").trim().slice(0, 40);
-      const mm = await createMindmap({ client_id: clientId, library_id: post.post_id, title: capTitle ? `${creatorName} · ${capTitle}` : creatorName, source_brand: creatorName, source_thumb: posterThumb(post) || creatorImage || null, data: j.data });
-      router.push(`/plan-mindmap/${mm.id}`);
-    } catch { alert("마인드맵 생성 중 오류가 발생했어요."); }
-    finally { setMmGenerating(false); setMmPicking(false); }
+  // 기획 마인드맵/컨텐츠 가이드 생성 → 전역 큐(우측 하단 토스트).
+  // 여러 콘텐츠를 중첩으로 돌릴 수 있고, 페이지를 이동해도 진행이 따라온다. 완료되면 토스트 [열기]로 이동.
+  function generateMindmap(clientId: string) {
+    const capTitle = (post.caption || "").replace(/\n+/g, " ").trim().slice(0, 40);
+    genJobs.start({
+      kind: "mindmap",
+      source: "owned",
+      refId: post.post_id,
+      clientId,
+      label: capTitle ? `${creatorName} · ${capTitle}` : creatorName,
+      sub: clients.find((c) => c.id === clientId)?.name,
+      brand: creatorName,
+      thumb: posterThumb(post) || creatorImage || null,
+      // 대본 추출 가능한 영상이고 아직 대본이 없으면 큐가 받아쓰기(STT)부터 best-effort 로 진행
+      isVideo: isDirectVideo && !post.transcript,
+    });
+    setMmPicking(false);
   }
 
-  async function generateContentGuide(clientId: string) {
-    setCgGenerating(true);
-    try {
-      const res = await aiFetch("/api/ai/content-guide", { method: "POST", body: JSON.stringify({ library_id: post.post_id, source: "om" }) });
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok) { alert(j.error || "컨텐츠 가이드 생성에 실패했어요."); return; }
-      const scenes = j.scenes || [];
-      if (!scenes.length) { alert("장면을 만들지 못했어요. 다시 시도해 주세요."); return; }
-      const capTitle = (post.caption || "").replace(/\n+/g, " ").trim().slice(0, 40);
-      const cg = await createContentGuide({ client_id: clientId, library_id: post.post_id, title: capTitle ? `${creatorName} · ${capTitle}` : creatorName, source_brand: creatorName, source_thumb: posterThumb(post) || creatorImage || null, data: { scenes, brand: j.brand || creatorName } });
-      router.push(`/content-guide/${cg.id}`);
-    } catch { alert("컨텐츠 가이드 생성 중 오류가 발생했어요."); }
-    finally { setCgGenerating(false); setCgPicking(false); }
+  function generateContentGuide(clientId: string) {
+    const capTitle = (post.caption || "").replace(/\n+/g, " ").trim().slice(0, 40);
+    genJobs.start({
+      kind: "guide",
+      source: "owned",
+      refId: post.post_id,
+      clientId,
+      label: capTitle ? `${creatorName} · ${capTitle}` : creatorName,
+      sub: clients.find((c) => c.id === clientId)?.name,
+      brand: creatorName,
+      thumb: posterThumb(post) || creatorImage || null,
+    });
+    setCgPicking(false);
   }
 
   const parsed = parseAnalysis(analysis);

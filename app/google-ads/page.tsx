@@ -8,8 +8,7 @@ import CaptureFrameButton from "@/components/video-frame-capture";
 import { aiFetch } from "@/lib/ai-fetch";
 import { getClients, type Client } from "@/lib/api/clients";
 import { loadCache, saveCache } from "@/lib/crawler-cache";
-import { createMindmap } from "@/lib/api/mindmaps";
-import { createContentGuide } from "@/lib/api/content-guides";
+import { useGenJobs } from "@/components/gen-jobs";
 import { supabase } from "@/lib/supabase";
 
 // 영상에서 "배경(씬)이 바뀔 때마다" 프레임을 떠서(화면 변화 감지) 스토리지에 올린 뒤 URL 반환.
@@ -2688,7 +2687,7 @@ function AdDetailModal({
   const [mmGenerating, setMmGenerating] = useState(false);
   const [cgPicking, setCgPicking] = useState(false); // 컨텐츠 가이드: 클라이언트 선택창
   const [cgGenerating, setCgGenerating] = useState(false);
-  const router = useRouter();
+  const genJobs = useGenJobs(); // 전역 생성 큐 — 우측 하단 토스트로 진행/완료 표시
   const ended = ad.status === "ended";
 
   // 메인 영상: 그래프 드래그/클릭·프레임 클릭으로 이동+재생(AnalysisViz가 ref로 직접 제어)
@@ -2865,103 +2864,42 @@ function AdDetailModal({
     }
   }
 
-  // 기획 마인드맵 생성: 선택한 클라이언트 폴더에 저장 후 캔버스로 이동.
-  // AI 호출은 사용자 본인 Anthropic 키(aiFetch → x-user-api-key). 키 없으면 라우트가 401 반환.
-  async function generateMindmap(clientId: string) {
-    setMmGenerating(true);
-    try {
-      // 영상이고 아직 나레이션 대본이 없으면 먼저 받아쓰기(STT) → 마인드맵에 '나레이션 원문'이 들어가게.
-      // best-effort(OpenAI 키 없거나 실패해도 마인드맵은 진행).
-      if (ad.media_type === "video" && !ad.transcript) {
-        try { await aiFetch("/api/google-ads/transcript", { method: "POST", body: JSON.stringify({ library_id: ad.library_id }) }); } catch {}
-      }
-      const res = await aiFetch("/api/ai/mindmap", {
-        method: "POST",
-        body: JSON.stringify({ library_id: ad.library_id, source: "ga" }),
-      });
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        alert(j.error || "마인드맵 생성에 실패했어요.");
-        return;
-      }
-      const capTitle = cleanCaption(ad.ad_text, brandName).replace(/\n+/g, " ").trim().slice(0, 40);
-      const mm = await createMindmap({
-        client_id: clientId,
-        library_id: ad.library_id,
-        title: capTitle ? `${brandName} · ${capTitle}` : brandName,
-        source_brand: brandName,
-        source_thumb: posterThumb(ad) || brandImage || null,
-        data: j.data,
-      });
-      router.push(`/plan-mindmap/${mm.id}`);
-    } catch {
-      alert("마인드맵 생성 중 오류가 발생했어요.");
-    } finally {
-      setMmGenerating(false);
-      setMmPicking(false);
-    }
+  // 기획 마인드맵 생성 → 전역 큐(우측 하단 토스트). 여러 소재를 중첩으로 돌릴 수 있고, 페이지를 이동해도 진행이 따라온다.
+  // AI 호출은 큐가 사용자 본인 Anthropic 키(aiFetch → x-user-api-key)로 수행. 실패 사유도 토스트에 표시.
+  function generateMindmap(clientId: string) {
+    const capTitle = cleanCaption(ad.ad_text, brandName).replace(/\n+/g, " ").trim().slice(0, 40);
+    genJobs.start({
+      kind: "mindmap",
+      source: "google",
+      refId: ad.library_id,
+      clientId,
+      label: capTitle ? `${brandName} · ${capTitle}` : brandName,
+      sub: clients.find((c) => c.id === clientId)?.name,
+      brand: brandName,
+      thumb: posterThumb(ad) || brandImage || null,
+      // 영상이고 아직 나레이션 대본이 없으면 큐가 받아쓰기(STT)부터 best-effort 로 진행
+      isVideo: ad.media_type === "video" && !ad.transcript,
+    });
+    setMmPicking(false);
   }
 
-  // 컨텐츠 가이드 생성: 선택한 클라이언트 폴더에 스토리보드 저장 후 개별 페이지로 이동.
-  async function generateContentGuide(clientId: string) {
-    setCgGenerating(true);
-    try {
-      // 영상이면 브라우저에서 씬(배경 변화) 프레임을 추출(실패 시 서버 5프레임 폴백)
-      let frames: string[] = [];
-      if (ad.media_type === "video" && ad.media_url) {
-        try { frames = await extractSceneFrames(ad.media_url); } catch {}
-      }
-
-      type CScene = { image: string; prompt: string; description: string; caution: string };
-      let scenes: CScene[] = [];
-      let brand = brandName;
-
-      if (frames.length) {
-        // 장면별로 "따로따로 병렬 생성"(동시 4개). 각 호출은 1이미지·작은 출력 → 타임아웃/맥스토큰 제약 없음.
-        const out: CScene[] = new Array(frames.length);
-        let idx = 0;
-        const worker = async () => {
-          while (idx < frames.length) {
-            const i = idx++;
-            const img = frames[i];
-            try {
-              const r = await aiFetch("/api/ai/content-guide", { method: "POST", body: JSON.stringify({ library_id: ad.library_id, image: img, source: "ga" }) });
-              const j = await r.json().catch(() => ({}));
-              out[i] = { image: img, prompt: j.prompt || "", description: j.description || "", caution: j.caution || "" };
-            } catch {
-              out[i] = { image: img, prompt: "", description: "", caution: "" };
-            }
-          }
-        };
-        await Promise.all(Array.from({ length: Math.min(4, frames.length) }, worker));
-        scenes = out;
-      } else {
-        // 폴백: 서버 프레임(≤5) 배치
-        const res = await aiFetch("/api/ai/content-guide", { method: "POST", body: JSON.stringify({ library_id: ad.library_id, source: "ga" }) });
-        const j = await res.json().catch(() => ({}));
-        if (!res.ok) { alert(j.error || "컨텐츠 가이드 생성에 실패했어요."); return; }
-        scenes = j.scenes || [];
-        brand = j.brand || brandName;
-      }
-
-      if (!scenes.length) { alert("장면을 만들지 못했어요. 다시 시도해 주세요."); return; }
-
-      const capTitle = cleanCaption(ad.ad_text, brandName).replace(/\n+/g, " ").trim().slice(0, 40);
-      const cg = await createContentGuide({
-        client_id: clientId,
-        library_id: ad.library_id,
-        title: capTitle ? `${brandName} · ${capTitle}` : brandName,
-        source_brand: brandName,
-        source_thumb: posterThumb(ad) || brandImage || null,
-        data: { scenes, brand },
-      });
-      router.push(`/content-guide/${cg.id}`);
-    } catch {
-      alert("컨텐츠 가이드 생성 중 오류가 발생했어요.");
-    } finally {
-      setCgGenerating(false);
-      setCgPicking(false);
-    }
+  // 컨텐츠 가이드 생성 → 전역 큐. 영상 씬 프레임 추출→장면별 병렬 생성(동시 4개, 기존 로직)은 큐 안에서 그대로 진행.
+  function generateContentGuide(clientId: string) {
+    const capTitle = cleanCaption(ad.ad_text, brandName).replace(/\n+/g, " ").trim().slice(0, 40);
+    const mediaUrl = ad.media_url;
+    genJobs.start({
+      kind: "guide",
+      source: "google",
+      refId: ad.library_id,
+      clientId,
+      label: capTitle ? `${brandName} · ${capTitle}` : brandName,
+      sub: clients.find((c) => c.id === clientId)?.name,
+      brand: brandName,
+      thumb: posterThumb(ad) || brandImage || null,
+      // 영상이면 브라우저에서 씬(배경 변화) 프레임 추출 — 실패/빈 배열이면 큐가 서버 5프레임 폴백
+      getFrames: ad.media_type === "video" && mediaUrl ? () => extractSceneFrames(mediaUrl) : undefined,
+    });
+    setCgPicking(false);
   }
 
   return (

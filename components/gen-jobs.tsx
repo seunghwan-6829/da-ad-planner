@@ -42,6 +42,9 @@ export interface GenJobInput {
   brand?: string | null    // source_brand 저장용(없으면 null 유지)
   thumb?: string | null
   isVideo?: boolean        // 영상 소재면 대본(나레이션)부터 추출
+  /* (가이드 전용) 브라우저 씬 프레임 추출 — 크롤러 상세의 extractSceneFrames 클로저를 받는다.
+     프레임이 나오면 장면별 병렬 생성(동시 4개, 크롤러 기존 로직 그대로), 실패/빈 배열이면 서버 배치 폴백. */
+  getFrames?: () => Promise<string[]>
 }
 
 interface GenJob {
@@ -54,6 +57,7 @@ interface GenJob {
   status: 'running' | 'done' | 'error'
   error?: string
   resultId?: string
+  progress?: string // 진행 부가표시(예: "장면 3/8")
   startedAt: number
   endedAt?: number
   fading?: boolean
@@ -136,17 +140,15 @@ export function GenJobsProvider({ children }: { children: ReactNode }) {
           if (e instanceof Error && e.name === 'AbortError') return
         }
       }
-      const ep = input.kind === 'mindmap' ? '/api/ai/mindmap' : '/api/ai/content-guide'
-      const res = await aiFetch(ep, {
-        method: 'POST',
-        signal: ctrl.signal,
-        body: JSON.stringify({ library_id: input.refId, source: AI_SOURCE[input.source] }),
-      })
-      const j = (await res.json().catch(() => ({}))) as Record<string, unknown>
-      if (!res.ok) throw new Error((j.error as string) || '생성에 실패했어요.')
-
       let resultId = ''
       if (input.kind === 'mindmap') {
+        const res = await aiFetch('/api/ai/mindmap', {
+          method: 'POST',
+          signal: ctrl.signal,
+          body: JSON.stringify({ library_id: input.refId, source: AI_SOURCE[input.source] }),
+        })
+        const j = (await res.json().catch(() => ({}))) as Record<string, unknown>
+        if (!res.ok) throw new Error((j.error as string) || '생성에 실패했어요.')
         const mm = await createMindmap({
           client_id: input.clientId,
           library_id: input.refId,
@@ -157,15 +159,66 @@ export function GenJobsProvider({ children }: { children: ReactNode }) {
         })
         resultId = mm.id
       } else {
-        const scenes = (j.scenes as CGScene[]) || []
-        if (!scenes.length) throw new Error('장면을 만들지 못했어요. 다시 시도해 주세요.')
+        /* 컨텐츠 가이드 — 크롤러와 동일한 2단 전략:
+           ① getFrames(브라우저 씬 프레임)가 있으면 장면별 "따로따로 병렬 생성"(동시 4개)
+           ② 프레임이 없거나 실패하면 서버 프레임(≤5) 배치 폴백 */
+        let scenes: CGScene[] = []
+        let brandForData = ''
+        if (input.getFrames) {
+          patch(id, { progress: '프레임 추출 중' })
+          let frames: string[] = []
+          try { frames = await input.getFrames() } catch {}
+          if (ctrl.signal.aborted) return
+          if (frames.length) {
+            const out: CGScene[] = new Array(frames.length)
+            let idx = 0
+            let doneCount = 0
+            const worker = async () => {
+              while (idx < frames.length) {
+                if (ctrl.signal.aborted) return
+                const i = idx++
+                const img = frames[i]
+                try {
+                  const r = await aiFetch('/api/ai/content-guide', {
+                    method: 'POST',
+                    signal: ctrl.signal,
+                    body: JSON.stringify({ library_id: input.refId, source: AI_SOURCE[input.source], image: img }),
+                  })
+                  const jj = (await r.json().catch(() => ({}))) as Record<string, unknown>
+                  out[i] = { image: img, prompt: (jj.prompt as string) || '', description: (jj.description as string) || '', caution: (jj.caution as string) || '' }
+                } catch {
+                  out[i] = { image: img, prompt: '', description: '', caution: '' }
+                }
+                doneCount++
+                patch(id, { progress: `장면 ${doneCount}/${frames.length}` })
+              }
+            }
+            await Promise.all(Array.from({ length: Math.min(4, frames.length) }, () => worker()))
+            if (ctrl.signal.aborted) return
+            scenes = out
+            brandForData = input.brand || ''
+          }
+          patch(id, { progress: undefined })
+        }
+        if (!scenes.length) {
+          const res = await aiFetch('/api/ai/content-guide', {
+            method: 'POST',
+            signal: ctrl.signal,
+            body: JSON.stringify({ library_id: input.refId, source: AI_SOURCE[input.source] }),
+          })
+          const j = (await res.json().catch(() => ({}))) as Record<string, unknown>
+          if (!res.ok) throw new Error((j.error as string) || '생성에 실패했어요.')
+          scenes = (j.scenes as CGScene[]) || []
+          brandForData = (j.brand as string) || input.brand || ''
+          if (!scenes.length) throw new Error('장면을 만들지 못했어요. 다시 시도해 주세요.')
+        }
         const cg = await createContentGuide({
           client_id: input.clientId,
           library_id: input.refId,
           title: input.label,
           source_brand: input.brand ?? null,
           source_thumb: input.thumb ?? null,
-          data: { scenes, brand: (j.brand as string) || input.brand || '' },
+          data: { scenes, brand: brandForData },
         })
         resultId = cg.id
       }
@@ -281,7 +334,7 @@ export function GenJobsProvider({ children }: { children: ReactNode }) {
                       </p>
                       <p className={`mt-0.5 truncate text-[11px] ${j.status === 'error' ? 'text-red-500' : 'text-gray-400 dark:text-gray-500'}`}>
                         {running
-                          ? `생성 중… ${secs(Date.now() - j.startedAt)}초${j.sub ? ` · ${j.sub}` : ''}`
+                          ? `생성 중… ${secs(Date.now() - j.startedAt)}초${j.progress ? ` · ${j.progress}` : ''}${j.sub ? ` · ${j.sub}` : ''}`
                           : done
                             ? `완료 · ${dur}초${j.sub ? ` · ${j.sub}` : ''}`
                             : j.error || '생성에 실패했어요.'}
