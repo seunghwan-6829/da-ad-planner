@@ -4,6 +4,7 @@ import type { MouseEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ActivityItem, BehaviorCard, MetricItem, ProjectRecord, RangePreset, TopPageItem, WorkspaceData } from "@/lib/pb/home-data";
 import { DateRangePicker, toServerPreset, type DateRange } from "@/components/pb/DateRangePicker";
+import { OverviewClient } from "@/components/pb/OverviewClient";
 
 type Props = {
   initialData: WorkspaceData;
@@ -568,6 +569,10 @@ export function ProjectWorkspaceClient({ initialData, initialSelectedProjectId }
       ? initialSelectedProjectId
       : initialData.projects[0]?.id ?? ""
   );
+  // 전체 대시보드(모든 브랜드 주간 현황 + AI 리포트) — ?project= 없이 들어오면 이게 기본 화면.
+  const [overviewOpen, setOverviewOpen] = useState(
+    () => !(initialSelectedProjectId && initialData.projects.some((project) => project.id === initialSelectedProjectId))
+  );
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
@@ -601,9 +606,10 @@ export function ProjectWorkspaceClient({ initialData, initialSelectedProjectId }
     params.set("start", dateRange.startDate);
     params.set("end", dateRange.endDate);
     params.set("preset", rangePreset);
-    if (selectedProjectId) params.set("project", selectedProjectId);
+    // 전체 대시보드에서는 project 파라미터를 비워 새로고침해도 전체 화면이 유지되게.
+    if (selectedProjectId && !overviewOpen) params.set("project", selectedProjectId);
     window.history.replaceState(null, "", `/data-tracking?${params.toString()}`);
-  }, [dateRange.endDate, dateRange.startDate, rangePreset, selectedProjectId]);
+  }, [dateRange.endDate, dateRange.startDate, rangePreset, selectedProjectId, overviewOpen]);
 
   async function refreshWorkspace(nextSelectedId?: string, range = dateRange, preset: RangePreset = rangePreset) {
     const params = new URLSearchParams({ start: range.startDate, end: range.endDate, preset });
@@ -822,10 +828,19 @@ export function ProjectWorkspaceClient({ initialData, initialSelectedProjectId }
           <button className="workspace-primary-button" onClick={() => setCreateOpen(true)}>+ 프로젝트 등록</button>
           <button className="workspace-secondary-button workspace-admin-button" onClick={() => setAdminOpen(true)}>관리자 설정</button>
           <div className="workspace-sidebar-group">
+            <p className="workspace-sidebar-label">전체</p>
+            <div className="workspace-project-list">
+              <button className={`workspace-project-item ${overviewOpen ? "active" : ""}`} onClick={() => setOverviewOpen(true)}>
+                <span className="workspace-project-name">🌐 전체 대시보드</span>
+                <span className="workspace-project-domain">모든 브랜드 주간 현황 · AI 리포트</span>
+              </button>
+            </div>
+          </div>
+          <div className="workspace-sidebar-group">
             <p className="workspace-sidebar-label">프로젝트</p>
             <div className="workspace-project-list">
               {workspace.projects.length ? workspace.projects.map((project) => (
-                <button key={project.id} className={`workspace-project-item ${selectedProject?.id === project.id ? "active" : ""}`} onClick={() => setSelectedProjectId(project.id)}>
+                <button key={project.id} className={`workspace-project-item ${!overviewOpen && selectedProject?.id === project.id ? "active" : ""}`} onClick={() => { setOverviewOpen(false); setSelectedProjectId(project.id); }}>
                   <span className="workspace-project-name">{project.name}</span>
                   <span className="workspace-project-domain">{project.domain}</span>
                 </button>
@@ -836,6 +851,10 @@ export function ProjectWorkspaceClient({ initialData, initialSelectedProjectId }
       </aside>
 
       <section className="workspace-content">
+        {overviewOpen ? (
+          <OverviewClient onOpenProject={(id) => { setOverviewOpen(false); setSelectedProjectId(id); }} />
+        ) : (
+        <>
         <header className="workspace-topbar">
           <div className="workspace-title-block">
             <p className="workspace-eyebrow">프로젝트 대시보드</p>
@@ -857,6 +876,12 @@ export function ProjectWorkspaceClient({ initialData, initialSelectedProjectId }
                     href={`/data-tracking/heatmap?project=${selectedProject.id}&start=${dateRange.startDate}&end=${dateRange.endDate}&secret=create`}
                   >
                     비밀페이지 등록
+                  </a>
+                  <a
+                    className="workspace-secondary-button workspace-settings-trigger"
+                    href={`/data-tracking/replays?project=${selectedProject.id}`}
+                  >
+                    세션 리플레이
                   </a>
                   <button className="workspace-chip-button" onClick={handleVerifyHead} disabled={verifyLoading}>
                     {verifyLoading ? <span className="workspace-spinner" /> : null}
@@ -966,6 +991,8 @@ export function ProjectWorkspaceClient({ initialData, initialSelectedProjectId }
               trendSeries={selectedProject.stats.referrerTrendSeries}
             />
           </>
+        )}
+        </>
         )}
       </section>
 

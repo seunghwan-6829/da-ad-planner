@@ -10,23 +10,24 @@
     "deploy": "git add . && git commit -m \"Deploy: auto\" --allow-empty && git push origin main"
   },
   "dependencies": {
-    "react": "18.3.1",
-    "react-dom": "18.3.1",
-    "next": "15.2.6",
     "@supabase/supabase-js": "2.47.10",
-    "lucide-react": "0.469.0",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
+    "lucide-react": "0.469.0",
+    "next": "15.2.6",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "rrweb-player": "^0.7.14",
     "tailwind-merge": "2.6.0",
     "tailwindcss-animate": "1.0.7"
   },
   "devDependencies": {
-    "typescript": "5.7.2",
     "@types/node": "22.10.2",
     "@types/react": "18.3.17",
     "@types/react-dom": "18.3.5",
     "autoprefixer": "10.4.20",
     "postcss": "8.4.49",
-    "tailwindcss": "3.4.17"
+    "tailwindcss": "3.4.17",
+    "typescript": "5.7.2"
   }
 }

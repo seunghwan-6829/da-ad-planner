@@ -365,4 +365,100 @@
       emitLeave();
     }
   });
+
+  /* ── 세션 리플레이(rrweb) ──
+     방문자 화면(DOM 변화·마우스·스크롤)을 녹화해 청크로 업로드 → 대시보드에서 영상처럼 재생.
+     - 입력값은 전부 마스킹(maskAllInputs) — 비밀번호/개인정보 원문은 절대 저장 안 됨.
+     - 페이지당 최대 60초, 5초 미만 이탈은 업로드 자체를 안 함(쓰레기 방지).
+     - keepalive 는 64KB 제한이라 큰 청크는 세션 도중에 일반 fetch 로 보낸다(4초 주기 flush).
+     - 서버가 사이트당 하루 상한(429)을 돌려주면 그 즉시 녹화 중단.
+     - window.PULSEBOARD_REPLAY = false 로 끌 수 있고, PULSEBOARD_REPLAY_SAMPLE(0~1)로 샘플링 조절. */
+  (function initReplay() {
+    if (isEmbeddedPreview) return;
+    if (window.PULSEBOARD_REPLAY === false) return;
+    var endpoint = window.PULSEBOARD_ENDPOINT;
+    if (!endpoint || endpoint === "local-demo") return;
+    var replayEndpoint = endpoint.replace(/\/collect\/?$/, "/replay");
+    if (replayEndpoint === endpoint) return;
+    var sample = typeof window.PULSEBOARD_REPLAY_SAMPLE === "number" ? window.PULSEBOARD_REPLAY_SAMPLE : 1;
+    if (Math.random() >= sample) return;
+
+    var MAX_MS = 60 * 1000;
+    var MIN_MS = 5 * 1000;
+    var MAX_CHUNKS = 20;
+    var replayId = makeId("replay");
+    var buf = [];
+    var seq = 0;
+    var stopped = false;
+    var recStart = Date.now();
+    var stopFn = null;
+
+    function stopRec() {
+      if (stopped) return;
+      stopped = true;
+      try { if (stopFn) stopFn(); } catch (e) {}
+    }
+
+    function flush(isFinal) {
+      if (stopped && !isFinal) return;
+      if (!buf.length) return;
+      if (seq >= MAX_CHUNKS) { stopRec(); return; }
+      var events = buf;
+      buf = [];
+      var body = JSON.stringify({
+        siteId: window.PULSEBOARD_SITE_ID || "demo_store",
+        sessionId: getSessionId(),
+        visitorId: getVisitorId(),
+        replayId: replayId,
+        seq: seq++,
+        path: window.location.pathname,
+        url: window.location.href,
+        deviceType: getDeviceType(),
+        durationMs: Date.now() - recStart,
+        events: events
+      });
+      try {
+        fetch(replayEndpoint, {
+          method: "POST",
+          mode: "cors",
+          keepalive: !!isFinal && body.length < 60000,
+          headers: { "Content-Type": "application/json" },
+          body: body
+        }).then(function (r) {
+          if (r && (r.status === 429 || r.status === 413)) stopRec();
+        }).catch(function () {});
+      } catch (e) {}
+    }
+
+    function boot() {
+      if (!window.rrwebRecord) return;
+      try {
+        stopFn = window.rrwebRecord({
+          emit: function (ev) { if (!stopped) buf.push(ev); },
+          maskAllInputs: true,
+          sampling: { mousemove: 80, scroll: 150, media: 800, input: "last" }
+        });
+      } catch (e) { return; }
+
+      var iv = window.setInterval(function () {
+        if (stopped) { window.clearInterval(iv); return; }
+        if (Date.now() - recStart > MAX_MS) { flush(false); stopRec(); window.clearInterval(iv); return; }
+        if (Date.now() - recStart >= MIN_MS) flush(false);
+      }, 4000);
+
+      window.addEventListener("pagehide", function () {
+        if (Date.now() - recStart >= MIN_MS) flush(true);
+        stopRec();
+      });
+      document.addEventListener("visibilitychange", function () {
+        if (document.visibilityState === "hidden" && Date.now() - recStart >= MIN_MS) flush(true);
+      });
+    }
+
+    var s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/rrweb@1.1.3/dist/record/rrweb-record.min.js";
+    s.async = true;
+    s.onload = boot;
+    document.head.appendChild(s);
+  })();
 })();
