@@ -82,6 +82,43 @@ function commonOpeners(titles: string[]): string[] {
   return [...counts.entries()].filter(([, c]) => c >= 2).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k]) => k)
 }
 
+/* 최근 제목들에서 '과사용 단어'(3회 이상 & 30%+ 등장)를 뽑는다.
+   제목마다 같은 단어("진짜", "이거", 주제어…)가 박혀 죄다 비슷해 보이는 문제의 처방 —
+   본문에선 자유, 제목에서만 금지 지시한다. */
+function overusedWords(titles: string[]): string[] {
+  if (titles.length < 4) return []
+  const counts = new Map<string, number>()
+  for (const t of titles) {
+    const words = new Set(String(t).split(/[^가-힣a-zA-Z0-9]+/).filter((w) => w.length >= 2))
+    for (const w of words) counts.set(w, (counts.get(w) || 0) + 1)
+  }
+  return [...counts.entries()]
+    .filter(([, c]) => c >= 3 && c / titles.length >= 0.3)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([w]) => w)
+}
+
+/* 다양성 시드(각도) — 글마다 '누가 · 어떤 기분으로 · 어떤 상황에서 · 어떤 형태로' 쓰는지를
+   랜덤으로 다르게 잡는다. 같은 주제·같은 유형이라도 출발점이 다르면 완전히 다른 글이 나온다
+   (제목·본문이 산발적으로 계속 겹치는 문제의 근본 처방). */
+const ANGLE_WHO = [
+  '이제 막 시작한 초보', '몇 년 차인데 요즘 정체기 온 사람', '외주를 맡길지 직접 할지 고민 중인 사람',
+  '혼자 다 하다가 지친 사람', '최근에 작게나마 성과를 본 사람', '지인 일 도와주다 생각이 많아진 사람',
+  '업체한테 한 번 데어본 사람', '이것저것 다 해보고 정리 중인 사람',
+]
+const ANGLE_MOOD = ['살짝 답답한', '신나서 공유하고 싶은', '현타가 온', '궁금해서 못 참는', '덤덤하게 정리하는', '약간 억울한', '고민되는', '후련한']
+const ANGLE_TIME = ['새벽에 잠이 안 와서', '점심 먹다가 문득', '방금 일 하나 끝내고', '주말에 밀린 정리를 하다가', '거래처랑 통화하고 나서', '정산해 보다가', '']
+const ANGLE_FORM = [
+  '제목은 평서문으로 툭 던지기', '제목은 질문으로 끝내기', '제목은 "~인데 어떡하죠" 식 고민형',
+  '제목은 상황 묘사부터(예: "새벽에 견적서 쓰다가...")', '제목은 짧게 6~14자로', '제목에 구체적 사물/숫자 하나 넣기(통계 말고 개수·기간 같은 것)',
+]
+export function pickAngle(): string {
+  const pick = (arr: string[]) => arr[Math.floor(Math.random() * arr.length)]
+  const time = pick(ANGLE_TIME)
+  return `${pick(ANGLE_WHO)} · ${pick(ANGLE_MOOD)} 기분${time ? ` · ${time}` : ''} · ${pick(ANGLE_FORM)}`
+}
+
 /* 발행처 '글 방향' 설정 → 어떤 글 유형(아키타입) 묶음으로 쓸지.
    운영 설정에서 버튼으로 고르면(정보/질문/일상), 그 방향의 유형 안에서만 돌려 쓴다.
    'auto'(또는 미지정)면 전체에서 섞어 쓴다(기존 동작). */
@@ -191,6 +228,15 @@ function splitTitleBody(text: string): { title: string; body: string } {
 export interface DraftOpts {
   avoidTitles?: string[]   // 최근 제목들 — 주제·톤 겹침 방지
   archetypeKey?: string    // 유형 고정(없으면 랜덤). 병렬 생성 시 유형을 분산시키려고 쓴다.
+  angle?: string           // 다양성 시드(없으면 랜덤 pickAngle) — 화자·기분·상황·제목형태
+  /* 취향 학습(승인/반려 데이터) — 활성일 때만 프롬프트에 반영. 승인작은 '참고만, 복제 금지'가 룰. */
+  taste?: {
+    active: boolean
+    approvedSamples: string[]
+    rejectedSamples: string[]
+    guidance: string[]
+  }
+  cafeVibe?: string[]      // 이 카페에 실제 올라온 최근 글 제목(워커 관찰 수집) — 결 맞추기용
 }
 
 export async function draftPost(
@@ -206,6 +252,10 @@ export async function draftPost(
   const arch = pickArchetype(opts.archetypeKey)
   const avoid = (opts.avoidTitles || []).filter(Boolean).slice(0, 30)
   const openers = commonOpeners(avoid) // 이미 너무 많은 도입 → 프롬프트에서 금지
+  const banned = overusedWords(avoid)  // 제목마다 반복되는 단어 → 제목에서 금지
+  const angle = opts.angle || pickAngle() // 다양성 시드 — 글마다 화자·기분·상황을 다르게
+  const taste = opts.taste?.active ? opts.taste : null
+  const vibe = (opts.cafeVibe || []).filter(Boolean).slice(0, 12)
 
   const prompt = `네이버 카페 "${cafe.name}"에 올릴 글을 써줘. 진짜 회원이 쓴 것 같은, 댓글이 달리고 싶어지는 글.
 
@@ -215,6 +265,8 @@ ${cafe.persona || '이 카페에 종종 들르는 평범한 회원'}
 [이번 글 소재] ${topic || '(컨셉과 카페에 맞는 걸로 알아서 하나)'}
 [이번 글 유형(뼈대)] ${arch.key} — ${arch.desc}
   → 유형은 뼈대일 뿐이다. 위 컨셉과 안 맞으면 컨셉에 맞게 형태를 바꿔라. 항상 컨셉 > 유형.
+[🎲 이번 글 각도 — 반드시 이 상황·기분에서 출발(다양성 핵심)] ${angle}
+  → 같은 주제라도 이 각도 때문에 지난 글들과 완전히 다른 글이 되어야 한다. 각도를 제목과 첫 문장에 실제로 반영해라.
 ${cafe.selling_point ? `[이 채널이 글로 해내야 하는 것] ${cafe.selling_point}
   → 콘텐츠 목표(꿀팁·정보 나눔으로 팬층 쌓기 등)라면: 이 글이 실제로 그걸 수행해야 한다 — 진짜 써먹을 팁을 푼다.
   → 상업 목표(업체·서비스로 유도 등)라면: 본문에 직접 드러내지 마 — 업체명·홍보 티 금지, 결로만 배어나오게.` : ''}
@@ -223,12 +275,20 @@ ${emphasis.length ? `[대화에 자연스럽게 스밀 단어(볼드 금지, 억
 ${avoid.length ? `[⛔ 이미 올렸거나 대기 중인 제목들 — 아래와 겹치면 안 됨]
 ${avoid.map((t) => `· ${t}`).join('\n')}
   → 소재가 같아도 완전히 다른 각도·상황·말투로. 제목 첫머리(앞 2~3어절)를 위 제목들과 다르게.${openers.length ? `\n  → 특히 "${openers.join('", "')}"(으)로 시작하는 제목이 이미 너무 많다 — 그 도입은 절대 다시 쓰지 마.` : ''}` : ''}
+${taste ? `[🧠 사장님 취향 — 승인/반려 이력에서 학습된 데이터]
+· 승인된 제목 스타일 예(⚠️ 어디까지나 '결' 참고용. 이미 발행된 글들이라 소재·구조·표현을 비슷하게 쓰면 그대로 반려된다 — 복제 절대 금지):
+${taste.approvedSamples.map((t) => `  · ${t}`).join('\n')}
+· 반려된 제목들(이런 느낌·소재·톤은 피할 것):
+${taste.rejectedSamples.map((t) => `  · ${t}`).join('\n')}${taste.guidance.length ? `\n· 데이터 경향: ${taste.guidance.join(' / ')}` : ''}` : ''}
+${vibe.length ? `[👀 이 카페에 '실제로' 올라오는 최근 글 제목들 — 이 카페의 말투·소재 결]
+${vibe.map((t) => `· ${t}`).join('\n')}
+  → 여기 사람들이 쓰는 어휘·관심사·제목 온도에 자연스럽게 섞여들게 써라. 단, 위 제목들을 따라 쓰거나 변형하는 건 금지(남의 글이다).` : ''}
 
 [제목 — 여기가 제일 중요]
 - 진짜 사람이 폰으로 급하게 친 것처럼. 짧게(10~28자). 컨셉의 말투로.
 - "어 나도 궁금했는데" 또는 "오 이건 봐야지" 싶게. 정보 제목이 아니라 사람 말투로.
 - ㅠㅠ ? ... 같은 거 하나쯤 자연스럽게 써도 됨.
-- 도입을 매번 다르게. 위 '이미 있는 제목들'과 같은 첫머리로 시작하지 마(같은 첫 단어 반복 = 봇 티). 주제어를 앞에 두거나, 상황·감정·질문을 앞에 두는 등 첫 어절을 바꿔라.
+- 도입을 매번 다르게. 위 '이미 있는 제목들'과 같은 첫머리로 시작하지 마(같은 첫 단어 반복 = 봇 티). 주제어를 앞에 두거나, 상황·감정·질문을 앞에 두는 등 첫 어절을 바꿔라.${banned.length ? `\n- 🚫 아래 단어는 최근 제목에 과사용됐다 — 이번 제목에는 쓰지 마(본문은 자유): ${banned.join(', ')}` : ''}
 - 금지: 숫자·통계(23%, 2배, 80% 등), "~하는 이유/방법/후기 정리", "제목: 부제" 형태, 매끈한 정보성 제목.
   나쁜 예) 상세페이지 바꾸고 매출 23% 떨어진 이유
   좋은 예/질문형) 상세페이지 업체 추천부탁드립니다ㅠ

@@ -402,6 +402,8 @@ export default function NaverCafePage() {
   const [reflowBusy, setReflowBusy] = useState(false);
 
   const [estMap, setEstMap] = useState<Record<string, { at: string; note: string }>>({}); // 발행 대기 글별 예상 발행 시각
+  const [tasteInfo, setTasteInfo] = useState<{ active: boolean; approvedCount: number; rejectedCount: number; guidance: string[] } | null>(null); // 취향 학습 상태
+  const [obs, setObs] = useState<{ items: { title: string; last_seen: string }[]; observed_at?: string | null; tableMissing?: boolean } | null>(null); // 카페 관찰 데이터
   const loadAll = useCallback(() => {
     fetch("/api/naver-cafe/brands").then((r) => (r.ok ? r.json() : [])).then((j) => setBrands(j as Brand[])).catch(() => {});
     fetch("/api/naver-cafe/cafes")
@@ -433,6 +435,22 @@ export default function NaverCafePage() {
       post_style: (cafe as { post_style?: string }).post_style || "auto",
     });
   }, [cafe?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 취향 학습 상태(승인/반려 이력 집계) — 한 번만.
+  useEffect(() => {
+    fetch("/api/naver-cafe/taste").then((r) => r.json()).then((j) => { if (j?.ok) setTasteInfo(j); }).catch(() => {});
+  }, []);
+
+  // 카페 관찰 데이터(이 카페에 실제 올라오는 글) — 카페 바꿀 때마다.
+  useEffect(() => {
+    if (!cafe?.id) { setObs(null); return; }
+    let alive = true;
+    fetch(`/api/naver-cafe/observe?cafe_id=${cafe.id}`)
+      .then((r) => r.json())
+      .then((j) => { if (alive && j) setObs(j); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [cafe?.id]);
 
   // ── 액션 ──
   async function addCafe() {
@@ -1187,6 +1205,16 @@ export default function NaverCafePage() {
               <div className="flex flex-wrap items-center gap-2">
                 {pacingCard}
                 {agentBadge}
+                {tasteInfo && (
+                  <span
+                    title={tasteInfo.active
+                      ? `승인 ${tasteInfo.approvedCount} · 반려 ${tasteInfo.rejectedCount}건 학습 → 원고 생성에 반영 중${tasteInfo.guidance.length ? `\n· ${tasteInfo.guidance.join("\n· ")}` : ""}`
+                      : `데이터 모으는 중 — 승인 5건·반려 3건부터 생성에 반영돼요 (지금 승인 ${tasteInfo.approvedCount} · 반려 ${tasteInfo.rejectedCount})`}
+                    className={`flex items-center gap-1 rounded-full border px-2.5 py-1.5 text-xs font-medium ${tasteInfo.active ? "border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-700 dark:bg-violet-900/30 dark:text-violet-300" : "border-gray-200 bg-gray-50 text-gray-400 dark:border-gray-700 dark:bg-gray-800"}`}
+                  >
+                    🧠 취향 학습 {tasteInfo.active ? "ON" : "수집 중"}
+                  </span>
+                )}
                 <button onClick={() => setSettingsOpen(true)} className="flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"><Settings2 className="h-3.5 w-3.5" /> 운영설정</button>
                 <button onClick={removeCafe} className="flex items-center gap-1 rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-medium text-red-500 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-950/40"><Trash2 className="h-3.5 w-3.5" /> 삭제</button>
               </div>
@@ -1290,6 +1318,27 @@ export default function NaverCafePage() {
                         </div>
                       ))}
                     </div>
+                  )}
+                </div>
+                {/* 카페 관찰 — 워커가 하루 1회 이 카페에 들러 수집한 '실제 올라오는 글'. 원고가 이 결을 참고한다. */}
+                <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+                  <h2 className="mb-2 text-sm font-bold dark:text-gray-100">카페 관찰 <span className="ml-1 text-[11px] font-normal text-gray-400">— 이 카페에 실제 올라오는 글 (하루 1회 자동 수집 · 원고가 이 결에 맞춰 써져요)</span></h2>
+                  {obs?.tableMissing ? (
+                    <p className="py-3 text-center text-xs text-amber-600 dark:text-amber-300">Supabase 에서 db/naver-cafe-observe.sql 을 실행하면 수집이 시작돼요.</p>
+                  ) : !obs || obs.items.length === 0 ? (
+                    <p className="py-3 text-center text-xs text-gray-400">아직 수집된 글이 없어요. 노트북 에이전트가 켜져 있으면 하루 안에 자동으로 쌓입니다.</p>
+                  ) : (
+                    <>
+                      <div className="max-h-56 space-y-1 overflow-y-auto">
+                        {obs.items.map((it, i) => (
+                          <div key={i} className="flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800/60">
+                            <span className="min-w-0 flex-1 truncate text-gray-700 dark:text-gray-300">{it.title}</span>
+                            <span className="shrink-0 text-[10px] text-gray-400">{new Date(it.last_seen).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" })}</span>
+                          </div>
+                        ))}
+                      </div>
+                      {obs.observed_at && <p className="mt-2 text-right text-[10px] text-gray-400">마지막 관찰 {new Date(obs.observed_at).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</p>}
+                    </>
                   )}
                 </div>
               </div>

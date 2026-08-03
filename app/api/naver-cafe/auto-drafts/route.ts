@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getNaverSettings } from '@/lib/naver/settings'
 import { draftPost, splitTopics, archetypesForStyle, type DraftCafe } from '@/lib/naver/generate'
 import { titleSimilarity } from '@/lib/naver/dedupe'
+import { buildTasteProfile, cafeObservedTitles } from '@/lib/naver/taste'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -26,8 +27,11 @@ export async function POST(req: Request) {
   if (!cafes?.length) return NextResponse.json({ ok: true, made: 0, detail: [] })
 
   const { claude, options } = await getNaverSettings()
+  /* 취향 학습(승인/반려 이력) — 프롬프트 가이드 + 생성 후 점수 필터의 원천.
+     승인작은 '이미 발행된 글'이라 스타일 참고만 하고, 비슷하게 나온 후보는 아래 필터가 버린다. */
+  const taste = await buildTasteProfile()
   const today = new Date(); today.setHours(0, 0, 0, 0)
-  const detail: { cafe: string; made: number; skipped?: number; error?: string }[] = []
+  const detail: { cafe: string; made: number; skipped?: number; taste_skipped?: number; error?: string }[] = []
 
   for (const cafe of cafes) {
     try {
@@ -60,6 +64,9 @@ export async function POST(req: Request) {
         rules: (c.rules as DraftCafe['rules']) || null,
       }
 
+      // 이 카페에 '실제로 올라오는 글'(워커가 매일 관찰 수집) — 카페 결에 맞게 쓰는 재료.
+      const vibe = await cafeObservedTitles(String(cafe.id), 15)
+
       // "주로 업로드하는 컨텐츠"를 소주제로 쪼개(예: 마케팅과 상세페이지 → [마케팅, 상세페이지])
       // 원고마다 소주제를 돌려가며 배정 → 한 주제에만 쏠리지 않게.
       const subjects = splitTopics(dc.topics || '')
@@ -68,7 +75,7 @@ export async function POST(req: Request) {
       // 원고 N개 = API N개 병렬 호출(하나가 실패해도 나머지는 그대로). 유형·소주제를 돌려가며 배정.
       // '지금 다시 생성'(force)은 중복차단에 다 막혀 0개가 나오는 걸 막으려 몇 라운드 더 시도한다
       // — 매 라운드 지금까지 채택/회피한 제목을 회피 목록에 실어(generate 가 도입을 벌림) 새 제목을 뽑는다.
-      let made = 0, skipped = 0
+      let made = 0, skipped = 0, tasteSkipped = 0
       const seen = [...avoidTitles] // 최근 창 제목 + 이번에 채택한 제목(계속 누적 → 회피 목록)
       const maxRounds = forced ? 3 : 1
       for (let round = 0; round < maxRounds && made < need; round++) {
@@ -79,6 +86,8 @@ export async function POST(req: Request) {
             return draftPost(apiKey, dc, subjects.length ? subjects[idx % subjects.length] : '', claude.model, claude.max_tokens, {
               avoidTitles: seen.slice(-40),
               archetypeKey: stylePool[idx % stylePool.length].key,
+              taste: taste.active ? { active: true, approvedSamples: taste.approvedSamples, rejectedSamples: taste.rejectedSamples, guidance: taste.guidance } : undefined,
+              cafeVibe: vibe,
             })
           })
         )
@@ -87,6 +96,13 @@ export async function POST(req: Request) {
           const t = r.value.title
           // 최근 창 안에 비슷한 제목이 있으면 아예 만들지 않는다 — 같은 글 반복 방지.
           if (seen.some((old) => titleSimilarity(t, old) >= options.dup_similarity)) { skipped++; continue }
+          /* 취향 점수 필터:
+             ① 사장님이 반려했던 제목과 비슷하면 버림(싫어하는 결 재생산 방지)
+             ② 승인·발행된 제목과 비슷해도 버림 — 승인 = 이미 포스팅됨. 좋았다고 또 쓰면 반려 대상(사장님 룰)
+             ③ 이 카페에 실제 있는 남의 글 제목과 비슷하면 버림(따라 쓴 티) */
+          if (taste.active && taste.rejectedTitles.some((rt) => titleSimilarity(t, rt) >= 0.5)) { tasteSkipped++; continue }
+          if (taste.approvedTitles.some((at) => titleSimilarity(t, at) >= options.dup_similarity)) { tasteSkipped++; continue }
+          if (vibe.some((vt) => titleSimilarity(t, vt) >= 0.75)) { tasteSkipped++; continue }
           seen.push(t)
           const { error: insErr } = await supabaseAdmin
             .from('nc_posts')
@@ -95,7 +111,7 @@ export async function POST(req: Request) {
           if (made >= need) break
         }
       }
-      detail.push({ cafe: cafe.name, made, ...(skipped ? { skipped } : {}) })
+      detail.push({ cafe: cafe.name, made, ...(skipped ? { skipped } : {}), ...(tasteSkipped ? { taste_skipped: tasteSkipped } : {}) })
     } catch (e) {
       detail.push({ cafe: cafe.name, made: 0, error: String(e instanceof Error ? e.message : e).slice(0, 120) })
     }

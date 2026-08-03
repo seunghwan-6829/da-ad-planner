@@ -956,6 +956,57 @@ async function trackReactions() {
   await closeBrowserSession() // 측정용으로 연 창도 끝나면 닫아 대기 중 창이 남지 않게 한다.
 }
 
+/* ── 카페 관찰: 발행처 게시판에 들러 '실제로 올라오는 글 제목' 수집 ──
+   서버가 카페당 22시간에 1번만 배정(사람이 하루 한 번 눈팅하는 페이스).
+   수집된 제목은 원고 생성이 '이 카페의 말투·소재 결'을 맞추는 데 쓴다. */
+async function observeCafes() {
+  let j
+  try { j = await http('/api/naver-cafe/agent/observe', 'GET') } catch { return }
+  const cafe = j && j.cafe
+  if (!cafe || !cafe.cafe_url) return
+  try {
+    log(`카페 관찰: ${cafe.name || cafe.id} — 최근 글 제목 수집`)
+    const page = await getPage()
+    await page.goto(cafe.cafe_url, { waitUntil: 'domcontentloaded', timeout: 30000 })
+    await sleep(3500 + Math.random() * 2000) // 목록이 뒤늦게 그려지는 카페(클라이언트 렌더) 대비
+    const items = []
+    const seen = new Set()
+    for (const f of page.frames()) {
+      let rows = []
+      try {
+        rows = await f.evaluate(() => {
+          const out = []
+          // 신형(f-e: /articles/{id})과 구형(iframe: articleid=, a.article) 목록을 모두 커버
+          document.querySelectorAll('a[href*="/articles/"], a[href*="articleid="], a.article').forEach((a) => {
+            const t = (a.textContent || '').trim().replace(/\s+/g, ' ')
+            if (!t || t.length < 5 || t.length > 100) return
+            const href = a.href || ''
+            const m = href.match(/articles\/(\d+)/) || href.match(/articleid=(\d+)/i)
+            out.push({ title: t, article_id: m ? m[1] : null })
+          })
+          return out
+        })
+      } catch {}
+      for (const r of rows) {
+        const key = r.article_id || r.title
+        if (seen.has(key)) continue
+        seen.add(key)
+        items.push(r)
+      }
+    }
+    if (items.length) {
+      const res = await http('/api/naver-cafe/agent/observe', 'POST', { cafe_id: cafe.id, items: items.slice(0, 30) })
+      log(`  → 제목 ${res?.stored ?? 0}개 저장(다음 관찰은 내일)`)
+    } else {
+      log('  → 목록에서 글을 찾지 못했습니다(다음 관찰 때 재시도)')
+    }
+  } catch (e) {
+    log(`  관찰 실패: ${String((e && e.message) || e).slice(0, 120)}`)
+  } finally {
+    await closeBrowserSession()
+  }
+}
+
 // ── 최초 1회: 네이버 로그인 세션 만들기 ──
 async function loginSetup() {
   log('로그인 설정을 시작합니다. 열리는 웨일 창에서 네이버에 로그인해 주세요.')
@@ -1155,6 +1206,7 @@ if (MODE === 'login') {
   for (;;) {
     try { await publishTick() } catch (e) { log('루프 오류:', String((e && e.message) || e).slice(0, 200)) }
     try { await trackReactions() } catch (e) { log('추적 오류:', String((e && e.message) || e).slice(0, 200)) }
+    try { await observeCafes() } catch (e) { log('관찰 오류:', String((e && e.message) || e).slice(0, 200)) }
     await sleep(POLL)
   }
 }
