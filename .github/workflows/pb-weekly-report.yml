@@ -1,0 +1,18 @@
+name: PB Weekly AI Report
+
+on:
+  schedule:
+    # 매주 월요일 KST 오전 7시 30분 (UTC 일요일 22:30) — 지난주(월~일) 데이터로 AI 주간 진단 리포트 자동 작성
+    - cron: "30 22 * * 0"
+  workflow_dispatch: {}
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Call weekly report cron (deployed)
+        # Vercel 배포 라우트 호출 — ANTHROPIC_API_KEY 는 Vercel 환경변수 사용.
+        # 이미 그 주 리포트가 있으면 서버가 already 로 스킵(멱등)한다.
+        run: |
+          curl -sS "https://da-ad-planner.vercel.app/api/pb/weekly-report/cron" | head -c 800

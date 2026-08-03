@@ -29,7 +29,10 @@ const PROTECTED_API = ['/api/naver-cafe', '/api/pb', '/api/instagram', '/api/adm
      - 데이터 추적 수집 비컨: 고객사 사이트에서 익명으로 호출 — 막으면 추적이 죽는다 */
 /*   - /api/pb/replay: 세션 리플레이 청크 수집 — collect 와 같은 익명 비컨(방문자는 로그인이 없다).
        ⚠️ 읽기 라우트(/api/pb/replays)는 예외가 아니라서 계속 보호된다(startsWith 는 'replay/' 경계 매칭이라 replays 를 안 물음). */
-const API_EXCEPTIONS = ['/api/naver-cafe/agent', '/api/naver-cafe/tick', '/api/naver-cafe/auto-drafts', '/api/naver-cafe/reflow', '/api/instagram/cron', '/api/pb/collect', '/api/pb/replay']
+/*   - /api/pb/weekly-report/cron: 매주 월요일 GitHub Actions 가 호출(주간 리포트 자동 생성).
+       라우트 자체가 '그 주 리포트 있으면 skip' 멱등 가드를 갖고 있어 익명 반복 호출로 토큰이 새지 않는다.
+       (부모 /api/pb/weekly-report 는 예외가 아니라서 계속 보호됨) */
+const API_EXCEPTIONS = ['/api/naver-cafe/agent', '/api/naver-cafe/tick', '/api/naver-cafe/auto-drafts', '/api/naver-cafe/reflow', '/api/instagram/cron', '/api/pb/collect', '/api/pb/replay', '/api/pb/weekly-report/cron']
 
 // ── 광고주(크롤링 대상) 변경 — 체험 계정은 조회만 ──
 const TARGET_MUTATION_API = ['/api/meta-ad/targets', '/api/google-ads/targets', '/api/owned-media/creators']

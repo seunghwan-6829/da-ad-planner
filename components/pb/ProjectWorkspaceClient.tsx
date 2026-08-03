@@ -819,10 +819,11 @@ export function ProjectWorkspaceClient({ initialData, initialSelectedProjectId }
       <aside className="workspace-sidebar">
         <div className="workspace-sidebar-top">
           <div className="workspace-brand">
-            {selectedProject?.logoUrl ? <img className="workspace-brand-logo" src={selectedProject.logoUrl} alt={selectedProject.domain} /> : <div className="workspace-brand-fallback">P</div>}
+            {/* 전체 대시보드에서는 특정 프로젝트 아이콘·도메인을 숨긴다(특정 브랜드가 선택된 것처럼 보이는 혼동 방지) */}
+            {overviewOpen ? null : selectedProject?.logoUrl ? <img className="workspace-brand-logo" src={selectedProject.logoUrl} alt={selectedProject.domain} /> : <div className="workspace-brand-fallback">P</div>}
             <div>
               <strong>데이터 추적</strong>
-              <p>{selectedProject?.domain || "프로젝트 없음"}</p>
+              {overviewOpen ? null : <p>{selectedProject?.domain || "프로젝트 없음"}</p>}
             </div>
           </div>
           <button className="workspace-primary-button" onClick={() => setCreateOpen(true)}>+ 프로젝트 등록</button>
