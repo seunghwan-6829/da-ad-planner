@@ -11,7 +11,51 @@ import { useEffect, useState, type CSSProperties, type MouseEvent as ReactMouseE
 import type { OverviewData, OverviewSite } from "@/lib/pb/overview-data";
 import { DateRangePicker, type DateRange } from "@/components/pb/DateRangePicker";
 
-type Report = { week_key: string; content: string; created_at: string };
+// 리포트 저장 시점의 집계 스냅샷(stats jsonb) — 브랜드별 수치를 화면에서 표·미니차트로 붙인다.
+type ReportStats = {
+  전체?: { visitors: number; pageViews: number; avgStaySeconds: number; prevVisitors: number; prevPageViews: number; prevAvgStaySeconds: number };
+  브랜드별?: { 이름: string; 방문자: number; 지난주방문자: number; 페이지뷰: number; 지난주페이지뷰: number; 평균체류초: number; 지난주평균체류초: number; 이탈률: number }[];
+};
+type Report = { week_key: string; content: string; created_at: string; stats?: ReportStats | null };
+
+// AI 가 내는 구조화 리포트(JSON). 옛 리포트(마크다운)는 파싱 실패 → 폴백 렌더.
+type SReport = {
+  headline: string;
+  overview?: string;
+  brands: { name: string; status?: string; diag?: string; flag?: string }[];
+  internal?: string[];
+  macro?: { point: string; source?: string; url?: string }[];
+  actions?: { brand?: string; todo: string; why?: string }[];
+};
+
+function parseStructured(content: string): SReport | null {
+  try {
+    const m = content.match(/\{[\s\S]*\}/);
+    if (!m) return null;
+    const j = JSON.parse(m[0]) as SReport;
+    if (!j || typeof j.headline !== "string" || !Array.isArray(j.brands)) return null;
+    return j;
+  } catch {
+    return null;
+  }
+}
+
+const STATUS_META: Record<string, { dot: string; label: string; bg: string; fg: string }> = {
+  good: { dot: "#10b981", label: "양호", bg: "rgba(16,185,129,0.1)", fg: "#059669" },
+  watch: { dot: "#f59e0b", label: "관찰", bg: "rgba(245,158,11,0.12)", fg: "#b45309" },
+  bad: { dot: "#ef4444", label: "주의", bg: "rgba(239,68,68,0.1)", fg: "#dc2626" },
+};
+
+// 이번(위) vs 이전(아래) 미니 이중 막대 — 크기 비교가 눈에 바로 들어오게.
+function DuoBar({ cur, prev, width = 72 }: { cur: number; prev: number; width?: number | string }) {
+  const max = Math.max(cur, prev, 1);
+  return (
+    <div style={{ display: "grid", gap: 2, width }}>
+      <div style={{ height: 5, borderRadius: 3, width: `${Math.max(4, Math.round((cur / max) * 100))}%`, background: "#0f9ec3" }} />
+      <div style={{ height: 5, borderRadius: 3, width: `${Math.max(4, Math.round((prev / max) * 100))}%`, background: "#cbd5e1" }} />
+    </div>
+  );
+}
 
 // 모듈 메모리 캐시 — SPA 이동 중에는 살아있어 재진입이 즉시다(새로고침 시에만 초기화).
 let memOverview: OverviewData | null = null;
@@ -45,7 +89,7 @@ function Spark({ values }: { values: number[] }) {
   );
 }
 
-/* 리포트(마크다운)를 가볍게 HTML 로 — 외부 라이브러리 없이 ##/**/-/링크만 처리. XSS 방지로 먼저 이스케이프. */
+/* (폴백용) 리포트 마크다운 → HTML — 옛 포맷 리포트를 위해 표·구분선·코드까지 처리. XSS 방지로 먼저 이스케이프. */
 function mdToHtml(md: string): string {
   const esc = md.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const lines = esc.split(/\r?\n/);
@@ -53,13 +97,36 @@ function mdToHtml(md: string): string {
   let inList = false;
   const inline = (s: string) =>
     s
+      .replace(/`([^`]+)`/g, '<code style="background:rgba(15,23,42,0.06);border-radius:4px;padding:1px 5px;font-size:12px">$1</code>')
       .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
       .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" style="color:#0f9ec3;text-decoration:underline">$1</a>');
-  for (const raw of lines) {
-    const line = raw.trimEnd();
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trimEnd();
     const isLi = /^\s*[-*•]\s+/.test(line);
     if (inList && !isLi) { out.push("</ul>"); inList = false; }
     if (!line.trim()) continue;
+    // 구분선(---) → hr
+    if (/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+      out.push('<hr style="border:none;border-top:1px solid rgba(15,23,42,0.08);margin:14px 0">');
+      continue;
+    }
+    // 마크다운 표(| a | b |) → 진짜 표로
+    if (/^\s*\|.*\|\s*$/.test(line)) {
+      const rows: string[][] = [];
+      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i].trimEnd())) {
+        const cells = lines[i].trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+        if (!cells.every((c) => /^:?-{2,}:?$/.test(c))) rows.push(cells); // 구분행(---)은 버림
+        i++;
+      }
+      i--;
+      if (rows.length) {
+        const [head, ...body] = rows;
+        out.push('<div style="overflow-x:auto;margin:10px 0"><table style="width:100%;border-collapse:collapse;font-size:12.5px">');
+        out.push("<thead><tr>" + head.map((c) => `<th style="text-align:left;padding:7px 9px;border-bottom:1px solid rgba(15,23,42,0.12);color:#6b7686;font-weight:600;white-space:nowrap">${inline(c)}</th>`).join("") + "</tr></thead>");
+        out.push("<tbody>" + body.map((r) => "<tr>" + r.map((c) => `<td style="padding:7px 9px;border-bottom:1px solid rgba(15,23,42,0.05);line-height:1.55">${inline(c)}</td>`).join("") + "</tr>").join("") + "</tbody></table></div>");
+      }
+      continue;
+    }
     if (/^###\s+/.test(line)) out.push(`<h4 style="margin:14px 0 6px;font-size:13px;font-weight:700">${inline(line.replace(/^###\s+/, ""))}</h4>`);
     else if (/^##\s+/.test(line)) out.push(`<h3 style="margin:18px 0 8px;font-size:14px;font-weight:800">${inline(line.replace(/^##\s+/, ""))}</h3>`);
     else if (/^#\s+/.test(line)) out.push(`<h3 style="margin:18px 0 8px;font-size:15px;font-weight:800">${inline(line.replace(/^#\s+/, ""))}</h3>`);
@@ -146,6 +213,154 @@ function sparkTipNode(s: OverviewSite) {
       <div style={{ marginTop: 7, fontSize: 11, color: "#d1d5db" }}>
         {total > 0 ? <>🔥 피크 <b style={{ color: "#38bdf8" }}>{s.sparkLabels[peakIdx]}</b> · {s.spark[peakIdx]}명 &nbsp;·&nbsp; 기간 합 {total.toLocaleString()}명</> : "이 기간 방문 기록이 없어요"}
       </div>
+    </div>
+  );
+}
+
+/* 주간 리포트 인포그래픽 뷰 — AI 의 구조화 JSON + 저장된 수치(stats)를 합쳐
+   헤드라인/요약 칩/브랜드 표(상태등·증감·미니막대)/원인 2단/액션 카드로 그린다.
+   옛 마크다운 리포트는 mdToHtml 폴백. */
+function ReportView({ report }: { report: Report }) {
+  const s = parseStructured(report.content);
+  if (!s) return <div style={{ fontSize: 13 }} dangerouslySetInnerHTML={{ __html: mdToHtml(report.content) }} />;
+
+  const tot = report.stats?.전체;
+  const brandStats = new Map((report.stats?.브랜드별 ?? []).map((b) => [b.이름, b]));
+  const box: CSSProperties = { border: "1px solid rgba(15,23,42,0.08)", borderRadius: 12, padding: "12px 14px" };
+  const eyebrow: CSSProperties = { fontSize: 11, fontWeight: 800, color: "#6b7686", letterSpacing: 0.4, margin: "16px 0 8px" };
+  const smallDelta = (cur: number, prev: number) => {
+    const b = pctBadge(cur, prev);
+    return <span style={{ color: b.color, fontSize: 10.5, fontWeight: 700 }}>{b.text}</span>;
+  };
+
+  return (
+    <div style={{ fontSize: 13 }}>
+      {/* 헤드라인 */}
+      <div style={{ marginTop: 4, background: "linear-gradient(135deg, rgba(15,158,195,0.09), rgba(15,158,195,0.02))", border: "1px solid rgba(15,158,195,0.22)", borderRadius: 12, padding: "12px 14px", fontWeight: 800, fontSize: 14, lineHeight: 1.5 }}>
+        📊 {s.headline}
+      </div>
+      {s.overview ? <p style={{ margin: "10px 2px 0", lineHeight: 1.75, color: "#374151" }}>{s.overview}</p> : null}
+
+      {/* 전체 요약 칩(이번 vs 지난 이중 막대) */}
+      {tot ? (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10, marginTop: 12 }}>
+          {[
+            { label: "방문자", cur: tot.visitors, prev: tot.prevVisitors, unit: "명" },
+            { label: "페이지 뷰", cur: tot.pageViews, prev: tot.prevPageViews, unit: "회" },
+            { label: "평균 체류", cur: tot.avgStaySeconds, prev: tot.prevAvgStaySeconds, unit: "초" },
+          ].map((c) => (
+            <div key={c.label} style={box}>
+              <div style={{ fontSize: 11, color: "#6b7686" }}>{c.label}</div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginTop: 2 }}>
+                <b style={{ fontSize: 18 }}>{c.cur.toLocaleString()}{c.unit}</b>
+                {smallDelta(c.cur, c.prev)}
+              </div>
+              <div style={{ fontSize: 10.5, color: "#9aa4b2", marginTop: 1 }}>지난주 {c.prev.toLocaleString()}{c.unit}</div>
+              <div style={{ marginTop: 7 }}><DuoBar cur={c.cur} prev={c.prev} width="100%" /></div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {/* 브랜드별 진단 표 */}
+      <div style={eyebrow}>브랜드별 진단 <span style={{ fontWeight: 500, color: "#9aa4b2" }}>· 막대: <span style={{ color: "#0f9ec3" }}>■ 이번 주</span> <span style={{ color: "#94a3b8" }}>■ 지난주</span></span></div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+          <thead>
+            <tr style={{ textAlign: "left", color: "#6b7686" }}>
+              {["브랜드", "상태", "방문자", "페이지 뷰", "체류", "진단"].map((h) => (
+                <th key={h} style={{ padding: "7px 9px", borderBottom: "1px solid rgba(15,23,42,0.1)", fontWeight: 600, whiteSpace: "nowrap" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {s.brands.map((b) => {
+              const st = STATUS_META[b.status ?? ""] ?? STATUS_META.watch;
+              const bs = brandStats.get(b.name);
+              return (
+                <tr key={b.name} style={{ borderBottom: "1px solid rgba(15,23,42,0.05)", verticalAlign: "top" }}>
+                  <td style={{ padding: "9px", fontWeight: 700, whiteSpace: "nowrap" }}>{b.name}</td>
+                  <td style={{ padding: "9px", whiteSpace: "nowrap" }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, background: st.bg, color: st.fg, borderRadius: 999, padding: "3px 9px", fontSize: 11, fontWeight: 700 }}>
+                      <span style={{ width: 7, height: 7, borderRadius: 99, background: st.dot }} /> {st.label}
+                    </span>
+                  </td>
+                  <td style={{ padding: "9px", whiteSpace: "nowrap" }}>
+                    {bs ? (
+                      <div style={{ display: "grid", gap: 3 }}>
+                        <div><b>{bs.방문자.toLocaleString()}</b> {smallDelta(bs.방문자, bs.지난주방문자)}</div>
+                        <DuoBar cur={bs.방문자} prev={bs.지난주방문자} />
+                      </div>
+                    ) : "—"}
+                  </td>
+                  <td style={{ padding: "9px", whiteSpace: "nowrap" }}>
+                    {bs ? <>{bs.페이지뷰.toLocaleString()} {smallDelta(bs.페이지뷰, bs.지난주페이지뷰)}</> : "—"}
+                  </td>
+                  <td style={{ padding: "9px", whiteSpace: "nowrap" }}>
+                    {bs ? <>{bs.평균체류초}초 {smallDelta(bs.평균체류초, bs.지난주평균체류초)}</> : "—"}
+                  </td>
+                  <td style={{ padding: "9px", minWidth: 200, lineHeight: 1.55 }}>
+                    {b.diag}
+                    {b.flag ? <span style={{ marginLeft: 6, background: "rgba(239,68,68,0.09)", color: "#dc2626", borderRadius: 6, padding: "1px 7px", fontSize: 10.5, fontWeight: 700, whiteSpace: "nowrap" }}>{b.flag}</span> : null}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* 원인 2단: 내부 vs 거시·뉴스 */}
+      {(s.internal?.length || s.macro?.length) ? (
+        <>
+          <div style={eyebrow}>왜 이런 흐름인가</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
+            {s.internal?.length ? (
+              <div style={box}>
+                <div style={{ fontWeight: 800, fontSize: 12.5, marginBottom: 6 }}>🔍 내부 요인 (우리 데이터)</div>
+                <ul style={{ paddingLeft: 16, display: "grid", gap: 5 }}>
+                  {s.internal.map((t, i) => <li key={i} style={{ lineHeight: 1.6, listStyle: "disc" }}>{t}</li>)}
+                </ul>
+              </div>
+            ) : null}
+            {s.macro?.length ? (
+              <div style={box}>
+                <div style={{ fontWeight: 800, fontSize: 12.5, marginBottom: 6 }}>🌏 거시 요인 (시장·뉴스)</div>
+                <ul style={{ paddingLeft: 16, display: "grid", gap: 5 }}>
+                  {s.macro.map((m, i) => (
+                    <li key={i} style={{ lineHeight: 1.6, listStyle: "disc" }}>
+                      {m.point}
+                      {m.source ? (
+                        m.url ? (
+                          <a href={m.url} target="_blank" rel="noopener noreferrer" style={{ marginLeft: 6, color: "#0f9ec3", fontSize: 11, textDecoration: "underline", whiteSpace: "nowrap" }}>{m.source} ↗</a>
+                        ) : (
+                          <span style={{ marginLeft: 6, color: "#9aa4b2", fontSize: 11 }}>{m.source}</span>
+                        )
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        </>
+      ) : null}
+
+      {/* 다음 주 액션 카드 */}
+      {s.actions?.length ? (
+        <>
+          <div style={eyebrow}>다음 주 액션</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+            {s.actions.map((a, i) => (
+              <div key={i} style={{ border: "1px solid rgba(15,158,195,0.25)", background: "rgba(15,158,195,0.04)", borderRadius: 12, padding: "11px 13px" }}>
+                <div style={{ fontSize: 10.5, fontWeight: 800, color: "#0f9ec3", letterSpacing: 0.5 }}>ACTION {i + 1}{a.brand ? ` · ${a.brand}` : ""}</div>
+                <div style={{ fontWeight: 700, marginTop: 4, lineHeight: 1.5 }}>{a.todo}</div>
+                {a.why ? <div style={{ fontSize: 11.5, color: "#6b7686", marginTop: 3 }}>{a.why}</div> : null}
+              </div>
+            ))}
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -348,11 +563,11 @@ export function OverviewClient({ onOpenProject }: { onOpenProject: (id: string) 
               <span style={{ fontSize: 11, color: "#9aa4b2", border: "1px solid rgba(15,23,42,0.1)", borderRadius: 999, padding: "4px 10px" }}>⏰ 매주 월요일 07:30 자동</span>
             </div>
             {report ? (
-              <div style={{ marginTop: 12, borderTop: "1px solid rgba(15,23,42,0.08)", paddingTop: 6 }}>
-                <p style={{ fontSize: 11, color: "#9aa4b2" }}>
+              <div style={{ marginTop: 12, borderTop: "1px solid rgba(15,23,42,0.08)", paddingTop: 8 }}>
+                <p style={{ fontSize: 11, color: "#9aa4b2", marginBottom: 6 }}>
                   {report.week_key} 마감 주 기준 · {new Date(report.created_at).toLocaleString("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} 생성
                 </p>
-                <div style={{ fontSize: 13 }} dangerouslySetInnerHTML={{ __html: mdToHtml(report.content) }} />
+                <ReportView report={report} />
               </div>
             ) : (
               <p style={{ marginTop: 12, fontSize: 13, color: "#9aa4b2" }}>

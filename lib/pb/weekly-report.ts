@@ -40,6 +40,8 @@ export async function generateWeeklyReport(
   };
 
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
+  /* 출력은 마크다운이 아니라 '구조화 JSON'만 받는다 — 표·상태등·차트·액션 카드는 화면이 직접
+     인포그래픽으로 그린다(AI 가 쓴 마크다운 표가 그대로 노출돼 읽기 힘들던 문제의 근본 해결). */
   const prompt = `너는 퍼포먼스 마케팅 대행사의 시니어 데이터 분석가다. 아래는 우리가 추적 중인 고객사 사이트들의 ${periodNote || "최근 7일 vs 이전 7일"} 요약 데이터다.
 
 오늘 날짜: ${today} (계절·시기 맥락을 반드시 반영)
@@ -47,24 +49,22 @@ export async function generateWeeklyReport(
 [추적 데이터 요약]
 ${JSON.stringify(compact, null, 1)}
 
-위 데이터로 '주간 진단 리포트'를 한국어 마크다운으로 작성해라.
-
 [웹 검색 지시]
-- 웹 검색으로 "이번 주 한국 소비/커머스/광고 시장" 관련 최신 뉴스·지표(소비심리, 시즌 이슈, 경기 흐름)를 2~3건 확인하고, 리포트의 '거시 요인' 근거로 짧게 인용해라(매체·날짜 표기).
-- 검색은 최대 3회만. 못 찾으면 일반적인 계절·경기 상식으로 대신하되 '추정'이라고 표시.
+- 웹 검색으로 "이번 주 한국 소비/커머스/광고 시장" 관련 최신 뉴스·지표(소비심리, 시즌 이슈, 경기 흐름)를 2~3건 확인하고 macro 항목의 근거로 인용해라(source 에 매체·날짜, url 에 링크).
+- 검색은 최대 3회만. 못 찾으면 일반적인 계절·경기 상식으로 대신하되 point 문장에 '(추정)'을 붙여라.
 
-[리포트 구성 — 이 순서 그대로, 전체 1,300자 이내로 간결하게]
-## 이번 주 총평
-- 전체 방문·체류 흐름 두세 문장. 수치는 데이터에 있는 것만.
-## 브랜드별 진단
-- 브랜드마다 딱 한 줄: **이름** — 핵심 변화(↑↓%)와 원인 추정 한 마디. 전 브랜드 포함.
-## 왜 이런 흐름인가
-- 내부 요인(데이터에서 보이는 것: 유입경로 변화, 특정 페이지 쏠림, 이탈률 등) 2~3개
-- 거시 요인(계절/소비심리/경기/뉴스 — 웹 검색 근거 인용) 2~3개. 예: 여름 휴가철 소비 위축 같은 시기 요인.
-## 다음 주 액션 3가지
-- 구체적이고 바로 실행 가능한 것만(어느 브랜드의 무엇을 어떻게).
+[출력 — 아래 형식의 "완결된 JSON" 하나만. 마크다운·설명·코드펜스 금지]
+{"headline":"이번 주 전체 상황 한 줄(핵심 수치 포함, 40자 내외)",
+"overview":"이번 주 총평 2~3문장(전체 방문·체류 흐름, 데이터에 있는 수치만)",
+"brands":[{"name":"(입력 데이터의 '이름'과 글자까지 똑같이)","status":"good|watch|bad","diag":"한 줄 진단 — 핵심 변화(↑↓%)와 원인 추정 한 마디(60자 내외)","flag":"주의 딱지 짧게(예: 표본 적음, 추적 스크립트 점검) 없으면 빈 문자열"}],
+"internal":["내부 요인(유입경로 변화·특정 페이지 쏠림·이탈률 등 데이터에서 보이는 것) 2~3개, 각 80자 내외"],
+"macro":[{"point":"거시 요인(계절/소비심리/경기/뉴스) 문장 80자 내외","source":"매체명 · 날짜(없으면 빈 문자열)","url":"기사 링크(없으면 빈 문자열)"}],
+"actions":[{"brand":"대상 브랜드 이름(전체면 '전체')","todo":"다음 주 할 일 한 문장(구체적으로)","why":"근거 한 마디(30자 내외)"}]}
 
-규칙: 과장 금지, 데이터에 없는 수치 창작 금지, 방문자가 매우 적은 브랜드(주 10명 미만)는 "표본 적음"을 명시하고 과대해석하지 말 것.`;
+규칙:
+- brands 는 입력의 모든 브랜드 포함, name 은 입력 '이름'과 정확히 일치(화면이 이 이름으로 수치를 붙인다).
+- status: good=성장/양호, watch=관찰 필요, bad=하락/문제.
+- actions 는 정확히 3개. 과장 금지, 데이터에 없는 수치 창작 금지, 주 10명 미만 브랜드는 flag 에 "표본 적음".`;
 
   async function callClaude(useSearch: boolean) {
     const body: Record<string, unknown> = {
@@ -85,10 +85,21 @@ ${JSON.stringify(compact, null, 1)}
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.error?.message ?? "Anthropic API 오류");
 
-  const content = Array.isArray(data.content)
+  const rawText = Array.isArray(data.content)
     ? data.content.filter((b: { type: string }) => b.type === "text").map((b: { text: string }) => b.text).join("\n").trim()
     : "";
-  if (!content) throw new Error("리포트 생성 결과가 비어 있어요.");
+  if (!rawText) throw new Error("리포트 생성 결과가 비어 있어요.");
+
+  /* JSON 만 추출해 저장(화면이 구조를 그대로 인포그래픽으로 렌더).
+     혹시 JSON 추출에 실패하면 원문 텍스트를 저장 — 화면의 마크다운 폴백이 처리한다. */
+  let content = rawText;
+  const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (parsed && typeof parsed.headline === "string" && Array.isArray(parsed.brands)) content = JSON.stringify(parsed);
+    } catch { /* 폴백: 원문 유지 */ }
+  }
 
   const weekKey = overview.range.end;
   let saved = false;
@@ -101,13 +112,22 @@ ${JSON.stringify(compact, null, 1)}
 }
 
 // 해당 주(week_key) 리포트가 이미 있는지 — 크론 멱등 가드(익명 반복 호출로 토큰이 새는 걸 막는 핵심).
-export async function reportExists(weekKey: string): Promise<{ exists: boolean; tableMissing: boolean }> {
+// structured: 최신 건이 새 포맷(구조화 JSON)인지 — 포맷 마이그레이션(force) 판단용.
+export async function reportExists(weekKey: string): Promise<{ exists: boolean; tableMissing: boolean; structured: boolean }> {
   const { data, error } = await supabaseAdmin
     .from("pb_weekly_reports")
-    .select("id")
+    .select("content")
     .eq("week_key", weekKey)
+    .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  if (error) return { exists: false, tableMissing: true };
-  return { exists: !!data, tableMissing: false };
+  if (error) return { exists: false, tableMissing: true, structured: false };
+  let structured = false;
+  if (data?.content) {
+    try {
+      const j = JSON.parse(data.content as string);
+      structured = !!j && typeof j.headline === "string" && Array.isArray(j.brands);
+    } catch { structured = false; }
+  }
+  return { exists: !!data, tableMissing: false, structured };
 }

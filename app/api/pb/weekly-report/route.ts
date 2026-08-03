@@ -11,9 +11,10 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 export async function GET() {
+  // stats(생성 당시 집계 스냅샷)도 함께 — 화면이 브랜드별 수치를 붙여 인포그래픽으로 그린다.
   const { data, error } = await supabaseAdmin
     .from("pb_weekly_reports")
-    .select("id, week_key, content, created_at")
+    .select("id, week_key, content, stats, created_at")
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();

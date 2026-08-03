@@ -13,19 +13,22 @@ import { lastCompletedWeekRange } from "@/lib/pb/overview-data";
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
-export async function GET() {
+export async function GET(req: Request) {
   const apiKey = process.env.ANTHROPIC_API_KEY || "";
   if (!apiKey) return NextResponse.json({ ok: false, error: "서버 ANTHROPIC_API_KEY 미설정" }, { status: 401 });
 
   const range = lastCompletedWeekRange();
-  const { exists, tableMissing } = await reportExists(range.end);
+  const { exists, tableMissing, structured } = await reportExists(range.end);
   if (tableMissing) {
     return NextResponse.json(
       { ok: false, error: "pb_weekly_reports 테이블이 없어요 — Supabase 에서 db/pb-replays.sql 을 먼저 실행하세요." },
       { status: 503 },
     );
   }
-  if (exists) return NextResponse.json({ ok: true, already: true, week_key: range.end });
+  /* force=1: 옛 포맷(마크다운) 리포트를 새 포맷(구조화 JSON)으로 1회 재생성하는 마이그레이션 스위치.
+     이미 새 포맷이면 force 여도 skip → 익명으로 반복 호출돼도 재생성은 포맷 전환 때 한 번뿐(토큰 안전). */
+  const force = new URL(req.url).searchParams.get("force") === "1";
+  if (exists && (!force || structured)) return NextResponse.json({ ok: true, already: true, week_key: range.end, structured });
 
   try {
     const report = await generateWeeklyReport(apiKey, range, `지난주(월~일: ${range.start}~${range.end}) 마감`);
