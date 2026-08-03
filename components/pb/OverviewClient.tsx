@@ -1,21 +1,27 @@
 "use client";
 
-/* 데이터 추적 '전체 대시보드' — 모든 브랜드의 최근 7일 현황(vs 이전 7일)을 한 화면에.
+/* 데이터 추적 '전체 대시보드' — 모든 브랜드의 현황을 한 화면에(기본 최근 7일, 기간 지정 가능).
    ⚡ 렉 제거: 결과를 모듈 메모리에 캐시 — 프로젝트를 오가다 다시 들어와도 로딩 없이 즉시 뜨고,
-      뒤에서 조용히 최신값으로 갱신한다(서버도 5분 캐시라 재집계 자체가 드물다).
-   🖱 호버: 숫자 셀에 마우스를 올리면 지난주 수치·증감 툴팁, 추이(7일)에 올리면
-      일별 방문자 막대 차트 + 피크 날짜 팝오버가 뜬다.
+      뒤에서 조용히 최신값으로 갱신한다(서버도 기간별 5분 캐시라 재집계가 드물다).
+   📅 기간: 프로젝트 대시보드와 같은 선택기(오늘/최근 7·14·30일/이번 달/직접 지정) — 비교는 항상 '직전 같은 길이 구간'.
+   🖱 호버: 숫자 셀 = 이전 기간 수치·증감 툴팁, 추이 = 일별(장기간은 라인) 차트 + 피크 팝오버.
    📋 AI 주간 리포트: 매주 월요일 아침 크론이 자동 작성 — 사람이 누를 버튼은 없다. */
 
 import { useEffect, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import type { OverviewData, OverviewSite } from "@/lib/pb/overview-data";
+import { DateRangePicker, type DateRange } from "@/components/pb/DateRangePicker";
 
 type Report = { week_key: string; content: string; created_at: string };
 
 // 모듈 메모리 캐시 — SPA 이동 중에는 살아있어 재진입이 즉시다(새로고침 시에만 초기화).
 let memOverview: OverviewData | null = null;
+let memRange: DateRange | null = null; // null = 기본(최근 7일)
 let memReport: Report | null = null;
 let memReportMissing = false;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const kstTodayYmd = () => new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+const addD = (s: string, n: number) => new Date(Date.parse(`${s}T00:00:00Z`) + n * DAY_MS).toISOString().slice(0, 10);
 
 function pctBadge(cur: number, prev: number) {
   if (!prev) return { text: cur > 0 ? "NEW" : "—", color: cur > 0 ? "#0f9ec3" : "#9aa4b2" };
@@ -75,27 +81,59 @@ function numTipNode(label: string, curText: string, prevText: string, curN: numb
   return (
     <div>
       <div style={{ fontWeight: 800, marginBottom: 5 }}>{label}</div>
-      <div>이번 주 <b>{curText}</b></div>
-      <div style={{ color: "#9ca3af" }}>지난 주 {prevText}</div>
+      <div>이번 기간 <b>{curText}</b></div>
+      <div style={{ color: "#9ca3af" }}>이전 기간 {prevText}</div>
       <div style={{ marginTop: 5, fontWeight: 700, color: d > 0 ? "#38bdf8" : d < 0 ? "#fb923c" : "#9ca3af" }}>
         {d > 0 ? "▲" : d < 0 ? "▼" : "—"} {Math.abs(d).toLocaleString()}
-        {pct !== null ? ` (${pct > 0 ? "+" : ""}${pct}%)` : curN > 0 ? " (지난주 0 → NEW)" : ""}
+        {pct !== null ? ` (${pct > 0 ? "+" : ""}${pct}%)` : curN > 0 ? " (이전 기간 0 → NEW)" : ""}
       </div>
     </div>
   );
 }
 
 function sparkTipNode(s: OverviewSite) {
+  const n = s.spark.length;
   const max = Math.max(...s.spark, 1);
   const total = s.spark.reduce((a, b) => a + b, 0);
   const peakIdx = s.spark.indexOf(Math.max(...s.spark));
+
+  // 포인트가 많으면(장기간·시간단위) 막대 대신 라인 차트 + 요약으로.
+  if (n > 16) {
+    const w = 300;
+    const h = 70;
+    const pts = s.spark
+      .map((v, i) => `${((i / Math.max(n - 1, 1)) * w).toFixed(1)},${(h - (v / max) * (h - 8) - 4).toFixed(1)}`)
+      .join(" ");
+    const px = (peakIdx / Math.max(n - 1, 1)) * w;
+    const py = h - (s.spark[peakIdx] / max) * (h - 8) - 4;
+    return (
+      <div style={{ width: w }}>
+        <div style={{ fontWeight: 800, marginBottom: 8 }}>{s.name} · 기간 내 방문자</div>
+        <svg width={w} height={h}>
+          <polyline points={pts} fill="none" stroke="#38bdf8" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" />
+          {total > 0 ? <circle cx={px} cy={py} r={3.5} fill="#38bdf8" /> : null}
+        </svg>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "#9ca3af", marginTop: 2 }}>
+          <span>{s.sparkLabels[0]}</span>
+          <span>{s.sparkLabels[n - 1]}</span>
+        </div>
+        <div style={{ marginTop: 7, fontSize: 11, color: "#d1d5db" }}>
+          {total > 0
+            ? <>🔥 피크 <b style={{ color: "#38bdf8" }}>{s.sparkLabels[peakIdx]}</b> · {s.spark[peakIdx].toLocaleString()}명 · 합 {total.toLocaleString()}명 · 평균 {Math.round(total / n).toLocaleString()}명</>
+            : "이 기간 방문 기록이 없어요"}
+        </div>
+      </div>
+    );
+  }
+
+  const showAllValues = n <= 10;
   return (
-    <div style={{ width: 252 }}>
+    <div style={{ width: Math.max(252, n * 34) }}>
       <div style={{ fontWeight: 800, marginBottom: 8 }}>{s.name} · 일별 방문자</div>
       <div style={{ display: "flex", alignItems: "flex-end", gap: 5, height: 78 }}>
         {s.spark.map((v, i) => (
           <div key={i} style={{ flex: 1, textAlign: "center" }}>
-            <div style={{ fontSize: 10, fontWeight: i === peakIdx && total > 0 ? 800 : 500, color: i === peakIdx && total > 0 ? "#38bdf8" : "#d1d5db" }}>{v}</div>
+            <div style={{ fontSize: 10, fontWeight: i === peakIdx && total > 0 ? 800 : 500, color: i === peakIdx && total > 0 ? "#38bdf8" : "#d1d5db", visibility: showAllValues || i === peakIdx ? "visible" : "hidden" }}>{v}</div>
             <div style={{ height: Math.max(4, Math.round((v / max) * 52)), background: i === peakIdx && total > 0 ? "#38bdf8" : "#4b5563", borderRadius: 3, marginTop: 2 }} />
           </div>
         ))}
@@ -106,7 +144,7 @@ function sparkTipNode(s: OverviewSite) {
         ))}
       </div>
       <div style={{ marginTop: 7, fontSize: 11, color: "#d1d5db" }}>
-        {total > 0 ? <>🔥 피크 <b style={{ color: "#38bdf8" }}>{s.sparkLabels[peakIdx]}</b> · {s.spark[peakIdx]}명 &nbsp;·&nbsp; 주간 합 {total.toLocaleString()}명</> : "이번 주 방문 기록이 없어요"}
+        {total > 0 ? <>🔥 피크 <b style={{ color: "#38bdf8" }}>{s.sparkLabels[peakIdx]}</b> · {s.spark[peakIdx]}명 &nbsp;·&nbsp; 기간 합 {total.toLocaleString()}명</> : "이 기간 방문 기록이 없어요"}
       </div>
     </div>
   );
@@ -114,14 +152,20 @@ function sparkTipNode(s: OverviewSite) {
 
 export function OverviewClient({ onOpenProject }: { onOpenProject: (id: string) => void }) {
   const [data, setData] = useState<OverviewData | null>(memOverview);
+  const [dateRange, setDateRange] = useState<DateRange | null>(memRange);
+  const [rangeLoading, setRangeLoading] = useState(false);
   const [loadErr, setLoadErr] = useState("");
   const [report, setReport] = useState<Report | null>(memReport);
   const [reportMissing, setReportMissing] = useState(memReportMissing);
   const [tip, setTip] = useState<TipState>(null);
 
+  function overviewUrl(range: DateRange | null) {
+    return range ? `/api/pb/overview?start=${range.startDate}&end=${range.endDate}` : "/api/pb/overview";
+  }
+
   // 캐시가 있으면 즉시 그리고, 뒤에서 조용히 최신값으로 바꾼다(로딩 화면 없음).
   useEffect(() => {
-    fetch("/api/pb/overview", { cache: "no-store" })
+    fetch(overviewUrl(memRange), { cache: "no-store" })
       .then(async (r) => {
         const j = await r.json().catch(() => ({}));
         if (!r.ok || !j.ok) throw new Error(j.error || "전체 현황을 불러오지 못했어요.");
@@ -140,6 +184,25 @@ export function OverviewClient({ onOpenProject }: { onOpenProject: (id: string) 
       .catch(() => {});
   }, []);
 
+  // 기간 적용 — 표는 그대로 두고 위에 로딩 표시만(화면 덜컹임 없음). 같은 기간 재선택은 서버 캐시라 즉시.
+  async function applyRange(range: DateRange) {
+    setRangeLoading(true);
+    setLoadErr("");
+    try {
+      const r = await fetch(overviewUrl(range), { cache: "no-store" });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) throw new Error(j.error || "기간 데이터를 불러오지 못했어요.");
+      memOverview = j as OverviewData;
+      memRange = range;
+      setData(memOverview);
+      setDateRange(range);
+    } catch (e) {
+      setLoadErr(e instanceof Error ? e.message : "기간 변경 실패");
+    } finally {
+      setRangeLoading(false);
+    }
+  }
+
   function showTip(e: ReactMouseEvent<HTMLElement>, node: ReactNode) {
     const r = e.currentTarget.getBoundingClientRect();
     setTip({ x: r.left + r.width / 2, y: r.top, node });
@@ -154,19 +217,26 @@ export function OverviewClient({ onOpenProject }: { onOpenProject: (id: string) 
   };
   const tipCell: CSSProperties = { padding: "10px", whiteSpace: "nowrap", cursor: "default" };
 
+  const pickerStart = dateRange?.startDate ?? data?.range.start ?? addD(kstTodayYmd(), -6);
+  const pickerEnd = dateRange?.endDate ?? data?.range.end ?? kstTodayYmd();
+
   return (
     <>
       <header className="workspace-topbar">
         <div className="workspace-title-block">
           <p className="workspace-eyebrow">전체 대시보드</p>
           <div className="workspace-title-row">
-            <h1>이번 주 전 브랜드 현황</h1>
+            <h1>전 브랜드 현황</h1>
             <a className="workspace-secondary-button workspace-settings-trigger" href="/data-tracking/replays">
               세션 리플레이
             </a>
+            {/* 프로젝트 대시보드와 같은 기간 선택기 — 기본 최근 7일, 자유 지정 가능 */}
+            <DateRangePicker startDate={pickerStart} endDate={pickerEnd} disabled={rangeLoading} onApply={(r) => void applyRange(r)} />
           </div>
           <p className="workspace-subtle">
-            {data ? `최근 7일 (${data.range.start} ~ ${data.range.end}) · 이전 7일 대비` : "최근 7일 · 이전 7일 대비"}
+            {data
+              ? `${data.range.start} ~ ${data.range.end} · 이전 기간(${data.range.prevStart} ~ ${data.range.prevEnd}) 대비${rangeLoading ? " · 계산 중…" : ""}`
+              : "최근 7일 · 이전 7일 대비"}
           </p>
         </div>
       </header>
@@ -176,15 +246,15 @@ export function OverviewClient({ onOpenProject }: { onOpenProject: (id: string) 
       {!data ? (
         <div className="workspace-blank-state">
           <h2>전체 현황을 계산하는 중…</h2>
-          <p>브랜드별 최근 7일 데이터를 모으고 있어요. (한 번 열리면 다음부터는 즉시 떠요)</p>
+          <p>브랜드별 데이터를 모으고 있어요. (한 번 열리면 다음부터는 즉시 떠요)</p>
         </div>
       ) : (
         <>
-          {/* 전체 합계 — 호버 시 지난주 수치 */}
-          <section className="workspace-stats-grid workspace-stats-grid-compact workspace-stats-grid-triple">
+          {/* 전체 합계 — 호버 시 이전 기간 수치 */}
+          <section className="workspace-stats-grid workspace-stats-grid-compact workspace-stats-grid-triple" style={rangeLoading ? { opacity: 0.6 } : undefined}>
             {[
-              { label: "이번 주 방문자", value: data.totals.visitors.toLocaleString(), cur: data.totals.visitors, prev: data.totals.prevVisitors, prevText: `${data.totals.prevVisitors.toLocaleString()}명` },
-              { label: "이번 주 페이지 뷰", value: data.totals.pageViews.toLocaleString(), cur: data.totals.pageViews, prev: data.totals.prevPageViews, prevText: `${data.totals.prevPageViews.toLocaleString()}회` },
+              { label: "기간 내 방문자", value: data.totals.visitors.toLocaleString(), cur: data.totals.visitors, prev: data.totals.prevVisitors, prevText: `${data.totals.prevVisitors.toLocaleString()}명` },
+              { label: "기간 내 페이지 뷰", value: data.totals.pageViews.toLocaleString(), cur: data.totals.pageViews, prev: data.totals.prevPageViews, prevText: `${data.totals.prevPageViews.toLocaleString()}회` },
               { label: "평균 체류시간", value: `${data.totals.avgStaySeconds}초`, cur: data.totals.avgStaySeconds, prev: data.totals.prevAvgStaySeconds, prevText: `${data.totals.prevAvgStaySeconds}초` },
             ].map((c) => {
               const b = pctBadge(c.cur, c.prev);
@@ -197,23 +267,23 @@ export function OverviewClient({ onOpenProject }: { onOpenProject: (id: string) 
                 >
                   <span>{c.label}</span>
                   <strong>{c.value}</strong>
-                  <p style={{ color: b.color, fontWeight: 700 }}>{b.text} <span style={{ color: "#9aa4b2", fontWeight: 500 }}>지난 7일 대비</span></p>
+                  <p style={{ color: b.color, fontWeight: 700 }}>{b.text} <span style={{ color: "#9aa4b2", fontWeight: 500 }}>이전 기간 대비</span></p>
                 </article>
               );
             })}
           </section>
 
-          {/* 브랜드별 표 — 숫자 호버=지난주 비교, 추이 호버=일별 차트+피크 */}
-          <section style={{ ...cardStyle, marginTop: 16 }}>
+          {/* 브랜드별 표 — 숫자 호버=이전 기간 비교, 추이 호버=일별 차트+피크 */}
+          <section style={{ ...cardStyle, marginTop: 16, ...(rangeLoading ? { opacity: 0.6 } : {}) }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
-              <h2 style={{ fontSize: 15, fontWeight: 800 }}>브랜드별 이번 주</h2>
-              <span style={{ fontSize: 12, color: "#9aa4b2" }}>숫자에 마우스를 올리면 지난주 비교 · 행 클릭 시 브랜드 대시보드</span>
+              <h2 style={{ fontSize: 15, fontWeight: 800 }}>브랜드별 현황</h2>
+              <span style={{ fontSize: 12, color: "#9aa4b2" }}>숫자에 마우스를 올리면 이전 기간 비교 · 행 클릭 시 브랜드 대시보드</span>
             </div>
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <thead>
                   <tr style={{ textAlign: "left", color: "#6b7686" }}>
-                    {["브랜드", "방문자", "페이지 뷰", "평균 체류", "이탈률", "추이(7일)", "많이 본 페이지"].map((h) => (
+                    {["브랜드", "방문자", "페이지 뷰", "평균 체류", "이탈률", "추이", "많이 본 페이지"].map((h) => (
                       <th key={h} style={{ padding: "8px 10px", borderBottom: "1px solid rgba(15,23,42,0.08)", fontWeight: 600, whiteSpace: "nowrap" }}>{h}</th>
                     ))}
                   </tr>
@@ -300,7 +370,7 @@ export function OverviewClient({ onOpenProject }: { onOpenProject: (id: string) 
         <div
           style={{
             position: "fixed",
-            left: Math.min(Math.max(tip.x, 150), (typeof window !== "undefined" ? window.innerWidth : 1200) - 150),
+            left: Math.min(Math.max(tip.x, 165), (typeof window !== "undefined" ? window.innerWidth : 1200) - 165),
             top: tip.y - 10,
             transform: "translate(-50%, -100%)",
             zIndex: 70,

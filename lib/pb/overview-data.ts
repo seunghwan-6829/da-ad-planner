@@ -57,6 +57,17 @@ export function rollingWeekRange(now = new Date()): OverviewRange {
   };
 }
 
+/* 사용자 지정 기간 → 비교 기간은 '직전 같은 길이 구간'.
+   예) 8/1~8/14(14일) 를 고르면 7/18~7/31 과 비교한다. */
+export function customOverviewRange(start: string, end: string): OverviewRange {
+  const sMs = Date.parse(`${start}T00:00:00Z`);
+  const eMs = Date.parse(`${end}T00:00:00Z`);
+  const lenDays = Math.max(1, Math.round((eMs - sMs) / DAY_MS) + 1);
+  const toKey = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+  const prevEndMs = sMs - DAY_MS;
+  return { start, end, prevStart: toKey(prevEndMs - (lenDays - 1) * DAY_MS), prevEnd: toKey(prevEndMs) };
+}
+
 /* 주간 리포트용: '지난 완결 주(월~일)' vs 그 전 주.
    월요일 아침 크론이 부르면 방금 끝난 월~일 한 주가 잡힌다. */
 export function lastCompletedWeekRange(now = new Date()): OverviewRange {
@@ -130,25 +141,31 @@ async function computeOverview(range: OverviewRange): Promise<OverviewData> {
   };
 }
 
-// 기본(롤링 7일) 결과 5분 캐시 — 재계산 중 다른 요청이 겹치면 같은 promise 를 공유(중복 집계 방지).
+/* 결과 5분 캐시(기간별 키) — 기본 7일이든 사용자 지정 기간이든, 같은 기간을 다시 열면 즉시.
+   재계산 중 같은 기간 요청이 겹치면 promise 를 공유해 중복 집계를 막는다. */
 const OVERVIEW_TTL_MS = 5 * 60 * 1000;
-let overviewCache: { at: number; key: string; data: OverviewData } | null = null;
-let overviewInflight: Promise<OverviewData> | null = null;
+const overviewCacheMap = new Map<string, { at: number; data: OverviewData }>();
+const overviewInflightMap = new Map<string, Promise<OverviewData>>();
 
 export async function buildOverviewData(range?: OverviewRange): Promise<OverviewData> {
-  if (range) return computeOverview(range); // 커스텀 구간(주간 리포트)은 캐시 없이 정확 계산
-
-  const def = rollingWeekRange();
+  const def = range ?? rollingWeekRange();
   const key = `${def.start}~${def.end}`;
-  if (overviewCache && overviewCache.key === key && Date.now() - overviewCache.at < OVERVIEW_TTL_MS) {
-    return overviewCache.data;
-  }
-  if (overviewInflight) return overviewInflight;
-  overviewInflight = computeOverview(def)
+
+  const hit = overviewCacheMap.get(key);
+  if (hit && Date.now() - hit.at < OVERVIEW_TTL_MS) return hit.data;
+  const inflight = overviewInflightMap.get(key);
+  if (inflight) return inflight;
+
+  const p = computeOverview(def)
     .then((data) => {
-      overviewCache = { at: Date.now(), key, data };
+      overviewCacheMap.set(key, { at: Date.now(), data });
+      if (overviewCacheMap.size > 24) {
+        const oldest = [...overviewCacheMap.entries()].sort((a, b) => a[1].at - b[1].at)[0]?.[0];
+        if (oldest) overviewCacheMap.delete(oldest);
+      }
       return data;
     })
-    .finally(() => { overviewInflight = null; });
-  return overviewInflight;
+    .finally(() => { overviewInflightMap.delete(key); });
+  overviewInflightMap.set(key, p);
+  return p;
 }
