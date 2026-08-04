@@ -4,6 +4,7 @@ import { getNaverSettings } from '@/lib/naver/settings'
 import { draftPost, splitTopics, archetypesForStyle, type DraftCafe } from '@/lib/naver/generate'
 import { titleSimilarity } from '@/lib/naver/dedupe'
 import { buildTasteProfile, cafeObservedTitles } from '@/lib/naver/taste'
+import { getMeta } from '@/lib/naver/pacing'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -35,6 +36,10 @@ export async function POST(req: Request) {
 
   for (const cafe of cafes) {
     try {
+      // 자동 일시정지된 발행처(연속 실패)는 초안도 만들지 않는다 — 재개 전까지 쌓이기만 할 뿐이라 낭비.
+      const paused = await getMeta(`pause:${String(cafe.id)}`)
+      if (paused) { detail.push({ cafe: cafe.name, made: 0, error: '일시정지 중(재개 후 생성)' }); continue }
+
       // 오늘 이미 만든 자동 초안 수 + 중복 방지용 최근 제목(모든 상태, dup 창=기본 30일)
       const { data: todays } = await supabaseAdmin
         .from('nc_posts').select('id').eq('cafe_id', cafe.id).eq('origin', 'auto')

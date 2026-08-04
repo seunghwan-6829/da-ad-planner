@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getNaverSettings } from '@/lib/naver/settings'
-import { canAct, scheduleNext, publishTargetAt } from '@/lib/naver/pacing'
+import { canAct, scheduleNext, publishTargetAt, getMeta } from '@/lib/naver/pacing'
 import { findRecentDuplicate } from '@/lib/naver/dedupe'
 import { getAgentState } from '@/lib/naver/notify'
 
@@ -75,13 +75,21 @@ export async function GET(req: Request) {
   // '지금 바로 발행'(force_publish)이 찍힌 글은 주기·페이스 무시하고 최우선.
   let item = ready.find((r) => (r as { force_publish?: boolean }).force_publish === true)
   let intervalHeld = false
+  let pausedHeld = false
   if (!item) {
     /* 발행처별 '업로드 주기'(interval_days)를 지킨다 — 최근 발행 후 그 일수가 안 지났으면 그 발행처는 건너뛴다.
        오래된 승인 글부터 훑되, 주기가 찬 발행처의 글을 고른다.
        (봇처럼 한 발행처가 몰아서 나가는 걸 막는 핵심 장치 — 계정 안전) */
     const lastCache = new Map<string, number | null>()
+    const pauseCache = new Map<string, string | null>()
     for (const cand of ready) {
       const cafeId = (cand as { cafe_id: string }).cafe_id
+      /* 자동 일시정지된 발행처(연속 실패)는 건너뛴다 — 글을 반려하지 않고 그대로 두므로
+         [재개]하면 이어서 발행된다. 다른 발행처는 이 줄 덕분에 계속 돈다.
+         ('지금 바로 발행' force_publish 는 위에서 이미 선택됨 — 사람의 명시적 지시는 일시정지보다 우선) */
+      let paused = pauseCache.get(cafeId)
+      if (paused === undefined) { paused = await getMeta(`pause:${cafeId}`); pauseCache.set(cafeId, paused) }
+      if (paused) { pausedHeld = true; continue }
       const intervalDays = Math.max(1, Number((cand as { nc_cafes?: { interval_days?: number } }).nc_cafes?.interval_days) || 3)
       let lastAt = lastCache.get(cafeId)
       if (lastAt === undefined) { lastAt = await lastPublishAtMs(cafeId); lastCache.set(cafeId, lastAt) }
@@ -103,14 +111,14 @@ export async function GET(req: Request) {
       .limit(1)
     item = drafts?.[0]
     simulated = !!item
-    note('승인된 글', false, intervalHeld ? '승인 글은 있지만 발행처 업로드 주기가 아직 안 됐어요 — 최신 초안으로 경로만 점검' : '승인 대기 0건 — 최신 초안으로 대신 점검합니다(실제 발행 대상 아님)')
+    note('승인된 글', false, intervalHeld ? '승인 글은 있지만 발행처 업로드 주기가 아직 안 됐어요 — 최신 초안으로 경로만 점검' : pausedHeld ? '승인 글이 전부 일시정지된 발행처 소속 — 카페 화면에서 [재개]하면 발행 재개' : '승인 대기 0건 — 최신 초안으로 대신 점검합니다(실제 발행 대상 아님)')
   } else if (item) {
     note('승인된 글', true, `${(cands || []).length}건 중 가장 오래된 건부터 발행`)
   }
 
   if (!item) {
     if (dry) return NextResponse.json({ dry: true, none: true, reason: '승인된 글도 초안도 없습니다', checks })
-    return NextResponse.json({ none: true, reason: intervalHeld ? '발행처 업로드 주기가 아직 안 됐어요(과다 발행 방지)' : '발행할 승인 항목이 없습니다' })
+    return NextResponse.json({ none: true, reason: intervalHeld ? '발행처 업로드 주기가 아직 안 됐어요(과다 발행 방지)' : pausedHeld ? '일시정지된 발행처의 글만 대기 중 — 카페 화면에서 [재개]를 누르면 이어서 발행돼요' : '발행할 승인 항목이 없습니다' })
   }
   if (!dry && simulated) return NextResponse.json({ none: true, reason: '발행할 승인 항목이 없습니다' })
 

@@ -57,7 +57,7 @@ export async function POST(req: Request) {
       await scheduleNext(pacing) // 다음 동작 허용 시각 랜덤 예약
       // 알림 + 연속 실패 카운터 초기화
       const row = flipped[0] as { title?: string; nc_cafes?: { name?: string } }
-      await onPublishSuccess(row.title || '', row.nc_cafes?.name || '', typeof b.published_url === 'string' ? b.published_url : null)
+      await onPublishSuccess(row.title || '', row.nc_cafes?.name || '', typeof b.published_url === 'string' ? b.published_url : null, cafeId)
 
       /* 이번에 실제로 쓰인 게시판 이름을 발행처 설정에 채운다(비어 있을 때만).
          한 번 성공하면 다음부터는 이름으로 정확히 고를 수 있어, 새 카페를 추가해도 저절로 자리를 잡는다. */
@@ -84,10 +84,11 @@ export async function POST(req: Request) {
         .in('status', ['publishing', 'preview'])
       const { pacing, options } = await getNaverSettings()
       await scheduleNext(pacing) // 재시도도 사람처럼 간격(25~90분) — 20초 재시도 폭주 방지
-      // 알림 + 연속 실패 누적 → 상한에 닿으면 에이전트 자동 중단(같은 실패 반복 방지)
+      /* 실패 처리 2단: 같은 카페 연속 실패 → 그 발행처만 자동 일시정지(나머지는 계속),
+         여러 발행처에 걸친 연속 실패(로그인 만료류) → 기존처럼 전체 중단. */
       const cafeName = (cur as { nc_cafes?: { name?: string } }).nc_cafes?.name || ''
-      const halted = await onPublishFailure(cur.title || '', cafeName, note || '알 수 없는 오류', options.halt_after_failures)
-      return NextResponse.json({ ok: true, halted })
+      const { halted, cafePaused } = await onPublishFailure(cur.title || '', cafeName, note || '알 수 없는 오류', options.halt_after_failures, cafeId)
+      return NextResponse.json({ ok: true, halted, cafePaused })
     }
   }
   return NextResponse.json({ ok: true })

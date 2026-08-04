@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { getMeta, setMeta } from '@/lib/naver/pacing'
 
 /* 발행 결과 알림 + 에이전트 상태(자동 중단) 관리.
 
@@ -83,20 +84,61 @@ export async function getAgentState(): Promise<AgentState> {
   }
 }
 
-/** 발행 성공 — 연속 실패 카운터를 0으로 되돌린다. */
-export async function onPublishSuccess(title: string, cafeName: string, url?: string | null): Promise<void> {
+/** 발행 성공 — 전역·해당 카페의 연속 실패 카운터를 0으로 되돌린다. */
+export async function onPublishSuccess(title: string, cafeName: string, url?: string | null, cafeId?: string | null): Promise<void> {
   try {
     await supabaseAdmin.from('nc_agent').upsert({ id: 1, fail_streak: 0, last_event: `발행 완료 · ${cafeName} · ${title}`.slice(0, 300), last_event_at: new Date().toISOString() })
   } catch {}
+  if (cafeId) { try { await setMeta(`failstreak:${cafeId}`, '0') } catch {} }
   await notify(`✅ 네이버 카페 발행 완료\n· ${cafeName}\n· ${title}${url ? `\n· ${url}` : ''}`)
 }
 
-/**
- * 발행 실패 — 연속 실패를 세고, 상한(haltAfter)에 닿으면 에이전트를 자동 중단한다.
- * 같은 실패를 무한히 반복하며 카페에 이상한 흔적을 남기는 것을 막는 장치다.
- * @returns 이번 실패로 중단됐는지
- */
-export async function onPublishFailure(title: string, cafeName: string, reason: string, haltAfter: number): Promise<boolean> {
+/* 발행 실패 처리 — "한 카페 문제로 전체가 멈추지 않게" 2단 구조.
+
+   ① 카페별 연속 실패(failstreak:{cafeId}) ≥ 상한
+      → 그 발행처만 자동 일시정지(nc_meta pause:{cafeId}) 하고 나머지 발행은 계속.
+        대기 글은 반려되지 않고 그대로 남는다(재개하면 이어서 발행). 전역 카운터는 0으로(원인 규명됨).
+   ② 전역 연속 실패 ≥ 상한 — ①이 먼저 걸리므로 여기 닿는 건 '여러 발행처에 걸친' 실패뿐
+      → 로그인 만료·브라우저 고장 같은 전역 문제 신호 → 기존처럼 전체 자동 중단.
+
+   @returns { halted: 전체 중단됨, cafePaused: 이 발행처만 일시정지됨 } */
+export async function onPublishFailure(
+  title: string,
+  cafeName: string,
+  reason: string,
+  haltAfter: number,
+  cafeId?: string | null,
+): Promise<{ halted: boolean; cafePaused: boolean }> {
+  const limit = haltAfter > 0 ? haltAfter : 3
+  const nowISO = new Date().toISOString()
+
+  // ① 카페별 연속 실패 → 그 카페만 일시정지
+  if (cafeId) {
+    let cafeStreak = 1
+    try { cafeStreak = (Number(await getMeta(`failstreak:${cafeId}`)) || 0) + 1 } catch {}
+    try { await setMeta(`failstreak:${cafeId}`, String(cafeStreak)) } catch {}
+
+    if (cafeStreak >= limit) {
+      const pauseReason = `연속 ${cafeStreak}회 실패로 자동 일시정지 — ${reason}`.slice(0, 200)
+      try { await setMeta(`pause:${cafeId}`, pauseReason) } catch {}
+      try { await setMeta(`failstreak:${cafeId}`, '0') } catch {}
+      // 실패 원인이 이 카페로 규명됐으니 전역 카운터는 리셋 — 다른 카페 발행은 계속된다.
+      try {
+        await supabaseAdmin.from('nc_agent').upsert({
+          id: 1,
+          fail_streak: 0,
+          last_event: `발행처 일시정지 · ${cafeName} — ${reason}`.slice(0, 300),
+          last_event_at: nowISO,
+        })
+      } catch {}
+      await notify(
+        `⏸️ 발행처 자동 일시정지\n"${cafeName}"에서 연속 ${cafeStreak}회 실패해 이 발행처만 멈췄습니다.\n· ${title}\n· ${reason}\n\n다른 발행처 발행은 계속됩니다. 원인 확인 후 카페 화면에서 [재개]를 눌러주세요.`
+      )
+      return { halted: false, cafePaused: true }
+    }
+  }
+
+  // ② 전역 연속 실패 — 같은 카페 연속이면 ①이 먼저 걸리므로, 여기 닿으면 여러 발행처에 걸친 실패다.
   let streak = 1
   try {
     const { data } = await supabaseAdmin.from('nc_agent').select('fail_streak').eq('id', 1).maybeSingle()
@@ -108,19 +150,19 @@ export async function onPublishFailure(title: string, cafeName: string, reason: 
     id: 1,
     fail_streak: streak,
     last_event: `발행 실패(${streak}회 연속) · ${cafeName} · ${title} — ${reason}`.slice(0, 300),
-    last_event_at: new Date().toISOString(),
+    last_event_at: nowISO,
   }
   if (shouldHalt) {
     patch.halted = true
-    patch.halted_at = new Date().toISOString()
-    patch.halt_reason = `연속 ${streak}회 실패로 자동 중단 — ${reason}`.slice(0, 300)
+    patch.halted_at = nowISO
+    patch.halt_reason = `여러 발행처에 걸쳐 연속 ${streak}회 실패 — 로그인 만료·브라우저 문제일 수 있어 전체 중단 (${reason})`.slice(0, 300)
   }
   try { await supabaseAdmin.from('nc_agent').upsert(patch) } catch {}
 
   await notify(
     shouldHalt
-      ? `🛑 네이버 카페 자동 중단\n연속 ${streak}회 실패해서 발행을 멈췄습니다.\n· ${cafeName}\n· ${title}\n· ${reason}\n\n원인을 확인한 뒤 대시보드에서 [재개]를 눌러주세요.`
-      : `⚠️ 네이버 카페 발행 실패(${streak}회 연속)\n· ${cafeName}\n· ${title}\n· ${reason}`
+      ? `🛑 네이버 카페 전체 자동 중단\n여러 발행처에 걸쳐 연속 ${streak}회 실패했습니다 — 로그인 만료나 브라우저 문제일 수 있어요.\n· 마지막: ${cafeName} · ${title}\n· ${reason}\n\n원인을 확인한 뒤 대시보드에서 [재개]를 눌러주세요.`
+      : `⚠️ 네이버 카페 발행 실패(전역 ${streak}회 연속)\n· ${cafeName}\n· ${title}\n· ${reason}`
   )
-  return shouldHalt
+  return { halted: shouldHalt, cafePaused: false }
 }

@@ -60,7 +60,13 @@ async function updateWithFallback(id: string, patch: Record<string, unknown>) {
 export async function GET() {
   const { data, error } = await supabaseAdmin.from('nc_cafes').select('*').order('created_at', { ascending: true })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json(data ?? [])
+  // 자동 일시정지 상태(nc_meta pause:{cafeId})를 겹쳐 UI 가 ⏸ 배지·[재개] 버튼을 보여줄 수 있게.
+  let pauseMap = new Map<string, string>()
+  try {
+    const { data: metas } = await supabaseAdmin.from('nc_meta').select('key, value').like('key', 'pause:%')
+    pauseMap = new Map((metas ?? []).map((m) => [String((m as { key: string }).key).slice('pause:'.length), String((m as { value?: string }).value || '')]))
+  } catch {}
+  return NextResponse.json((data ?? []).map((c) => ({ ...c, paused_reason: pauseMap.get(String((c as { id: string }).id)) ?? null })))
 }
 
 export async function POST(req: Request) {
@@ -82,6 +88,12 @@ export async function PATCH(req: Request) {
   const b = await req.json().catch(() => ({}))
   const id = (b.id || '').toString()
   if (!id) return NextResponse.json({ error: 'id 필요' }, { status: 400 })
+  // [재개] — 연속 실패로 자동 일시정지된 발행처를 다시 살린다(정지 사유·실패 카운터 삭제).
+  if (b.resume_pause === true) {
+    const { error } = await supabaseAdmin.from('nc_meta').delete().in('key', [`pause:${id}`, `failstreak:${id}`])
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ ok: true, resumed: true })
+  }
   const patch = buildRow(b, false)
   if (!Object.keys(patch).length) return NextResponse.json({ error: '변경 내용 없음' }, { status: 400 })
   const { error } = await updateWithFallback(id, patch)

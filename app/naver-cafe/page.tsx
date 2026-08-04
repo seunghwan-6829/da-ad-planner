@@ -68,6 +68,7 @@ type Cafe = {
   allow_comment?: boolean | null;
   auto_mode?: boolean | null;
   interval_days?: number | null;
+  paused_reason?: string | null; // 연속 실패 자동 일시정지 사유(nc_meta, 서버가 GET 에 겹쳐줌)
   auto_publish?: boolean | null;
   rules?: { promo_banned?: boolean; notes?: string } | null;
 };
@@ -462,6 +463,12 @@ export default function NaverCafePage() {
       if (j.cafe?.id) setSel(j.cafe.id);
     } catch (e) { alert(e instanceof Error ? e.message : "추가 실패"); }
   }
+  // 연속 실패로 자동 일시정지된 발행처 재개 — 대기 글은 그대로 남아 있어 바로 이어서 발행된다.
+  async function resumeCafe() {
+    if (!cafe) return;
+    try { await api("/api/naver-cafe/cafes", "PATCH", { id: cafe.id, resume_pause: true }); loadAll(); }
+    catch (e) { alert(e instanceof Error ? e.message : "재개 실패"); }
+  }
   async function saveCafeForm() {
     if (!cafe) return;
     setSavingCafe(true);
@@ -784,7 +791,7 @@ export default function NaverCafePage() {
                 </div>
                 {list.map((c) => (
                   <button key={c.id} onClick={() => setSel(c.id)} className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm font-medium ${sel === c.id ? "bg-primary text-white" : "text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"}`}>
-                    <span className="truncate">{c.name}</span>
+                    <span className="truncate">{c.paused_reason ? "⏸ " : ""}{c.name}</span>
                     {c.auto_mode && <Sparkles className="ml-auto h-3 w-3 shrink-0 text-violet-400" aria-label="자동 스케줄" />}
                   </button>
                 ))}
@@ -1205,6 +1212,12 @@ export default function NaverCafePage() {
               <div className="flex flex-wrap items-center gap-2">
                 {pacingCard}
                 {agentBadge}
+                {cafe.paused_reason && (
+                  <span title={cafe.paused_reason} className="flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-700 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+                    ⏸ 자동 일시정지
+                    <button onClick={resumeCafe} className="rounded bg-amber-600 px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-amber-700">재개</button>
+                  </span>
+                )}
                 {tasteInfo && (
                   <span
                     title={tasteInfo.active
