@@ -25,6 +25,9 @@ export interface NaverOptions {
   halt_after_failures: number     // 연속 N회 실패하면 에이전트 자동 중단(0=끄기)
   dup_window_days: number         // 최근 N일 안의 발행글과 비교
   dup_similarity: number          // 제목 유사도 이 값 이상이면 중복으로 보고 보류(0~1)
+  /* 완전 자동(생성 즉시 승인)의 신뢰 게이트 — 그 발행처에서 '사람 검수를 거쳐 발행된 글'이
+     이 개수 이상일 때만 auto_publish 가 실제로 작동한다. 그 전엔 켜도 초안(검수 대기)으로만 생성. */
+  autopilot_min_published: number
 }
 
 export const DEFAULT_OPTIONS: NaverOptions = {
@@ -35,6 +38,7 @@ export const DEFAULT_OPTIONS: NaverOptions = {
   halt_after_failures: 2,
   dup_window_days: 30, // 같은 카페에 최근 30일(≈1달) 안엔 비슷한 글을 다시 안 낸다.
   dup_similarity: 0.6,
+  autopilot_min_published: 3, // 사람 검수 발행 3개부터 완전 자동 허용(사장님 컨펌 여러 번 = 신뢰 확보)
 }
 
 export interface NaverSettings {
@@ -80,12 +84,13 @@ function normalizeOptions(raw: Partial<NaverOptions> | null | undefined): NaverO
   // 기본이 false 이므로 "명시적으로 true 일 때만" 켠다.
   // (!== false 로 두면 저장된 값이 null/undefined 일 때 켜져 버려, 아무도 기다리지 않는 확인 대기에 빠진다)
   o.preview_before_publish = o.preview_before_publish === true
-  for (const k of ['halt_after_failures', 'dup_window_days', 'dup_similarity'] as const) {
+  for (const k of ['halt_after_failures', 'dup_window_days', 'dup_similarity', 'autopilot_min_published'] as const) {
     const v = Number((o as Record<string, unknown>)[k])
     ;(o as Record<string, unknown>)[k] = Number.isFinite(v) ? v : DEFAULT_OPTIONS[k]
   }
   o.dup_similarity = Math.min(1, Math.max(0, o.dup_similarity))
   o.dup_window_days = Math.max(30, o.dup_window_days) // 중복 방지는 '최소 1달' 보장 — DB 저장값이 작아도 30일 이상.
+  o.autopilot_min_published = Math.min(20, Math.max(1, o.autopilot_min_published)) // 최소 1개는 사람 검수 필수
   return o
 }
 

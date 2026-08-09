@@ -1537,8 +1537,23 @@ export default function NaverCafePage() {
                   <div className="mt-3 space-y-2">
                     <p className="text-[11px] text-gray-500 dark:text-gray-400">위에서 정한 <b>업로드 주기</b>마다 초안이 자동 생성돼요. (발행도 그 주기를 지킵니다)</p>
                     <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
-                      <input type="checkbox" checked={!!cafeForm.auto_publish} onChange={(e) => setCafeForm({ ...cafeForm, auto_publish: e.target.checked })} /> 생성 즉시 승인(검수 생략)
+                      <input type="checkbox" checked={!!cafeForm.auto_publish} onChange={(e) => setCafeForm({ ...cafeForm, auto_publish: e.target.checked })} /> 🤖 완전 자동(생성 즉시 승인 — 검수 생략)
                     </label>
+                    {cafeForm.auto_publish ? (() => {
+                      // 신뢰 게이트 안내 — 이 발행처에서 '사람 검수로 발행된 글' 3개부터 완전 자동이 실제 작동(서버 tick 이 강제).
+                      const pubCnt = posts.filter((p) => p.cafe_id === cafe.id && p.status === "published").length;
+                      return pubCnt >= 3 ? (
+                        <p className="rounded-lg bg-emerald-50 px-2.5 py-2 text-[11px] leading-relaxed text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">
+                          ✅ <b>자동 발행 자격 충족</b> (발행 이력 {pubCnt}개) — 생성 즉시 승인되어 업로드 주기·랜덤 시각·25~90분 간격 규칙대로 자동 발행돼요.
+                          자동 글은 소구점·강조어를 빼고 <b>더 짧고 무심한 &apos;일상글 톤&apos;</b>으로 써져 광고 오인을 피합니다.
+                        </p>
+                      ) : (
+                        <p className="rounded-lg bg-amber-50 px-2.5 py-2 text-[11px] leading-relaxed text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+                          ⏳ <b>아직 자동 발행 자격 전</b> — 이 발행처에서 사람이 승인해 발행된 글 {pubCnt}/3개.
+                          자격 전엔 켜 두어도 <b>초안(검수 대기)으로만</b> 생성돼 안전해요. 승인 발행 3개가 쌓이면 자동으로 전환됩니다.
+                        </p>
+                      );
+                    })() : null}
                   </div>
                 )}
               </div>
