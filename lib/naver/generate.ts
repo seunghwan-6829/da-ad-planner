@@ -237,6 +237,9 @@ export interface DraftOpts {
     guidance: string[]
   }
   cafeVibe?: string[]      // 이 카페에 실제 올라온 최근 글 제목(워커 관찰 수집) — 결 맞추기용
+  /* 이 카페에서 반응이 검증된 글(인기글) 1건 — '주제/니즈'만 차용하는 소재 시드.
+     본문은 수집 자체를 안 해서 물리적으로 베낄 수 없고, 제목 유사 후보는 생성 후 필터가 버린다. */
+  remakeSeed?: { title: string; views?: number | null; comments?: number | null }
 }
 
 export async function draftPost(
@@ -283,6 +286,13 @@ ${taste.rejectedSamples.map((t) => `  · ${t}`).join('\n')}${taste.guidance.leng
 ${vibe.length ? `[👀 이 카페에 '실제로' 올라오는 최근 글 제목들 — 이 카페의 말투·소재 결]
 ${vibe.map((t) => `· ${t}`).join('\n')}
   → 여기 사람들이 쓰는 어휘·관심사·제목 온도에 자연스럽게 섞여들게 써라. 단, 위 제목들을 따라 쓰거나 변형하는 건 금지(남의 글이다).` : ''}
+${opts.remakeSeed ? `[🔥 소재 시드 — 이 카페에서 반응이 검증된 인기글]
+"${opts.remakeSeed.title}"${opts.remakeSeed.views ? ` (조회 ${opts.remakeSeed.views.toLocaleString()}${opts.remakeSeed.comments ? ` · 댓글 ${opts.remakeSeed.comments}` : ''})` : ''}
+  → 이 글이 증명한 건 "이 주제에 이 카페 사람들의 니즈가 있다"는 사실 하나뿐이다. 가져올 것은 그 주제/니즈뿐.
+  → 같은 주제를 '내 상황·내 경험·내 궁금증'으로 완전히 새로 써라. 제목은 전혀 다른 문장이어야 한다.
+  ⛔ 절대 금지: 그 글의 문장·구성·예시·수치 재사용, 내용 요약이나 재서술, 노하우 옮겨쓰기.
+     원글이 정보글이라면 특히 조심 — 남의 노하우를 내 것처럼 쓰면 표절 시비가 난다.
+     정보 주제는 방향을 틀어라: 그 주제에 대한 '내 경험담'이나 '질문(다들 어떻게 하세요?)'으로.` : ''}
 
 [제목 — 여기가 제일 중요]
 - 진짜 사람이 폰으로 급하게 친 것처럼. 짧게(10~28자). 컨셉의 말투로.

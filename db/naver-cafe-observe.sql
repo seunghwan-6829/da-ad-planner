@@ -15,5 +15,11 @@ create table if not exists nc_cafe_posts (
 );
 create index if not exists idx_nc_cafe_posts_cafe_time on nc_cafe_posts (cafe_id, last_seen desc);
 
+-- 인기글 수집(2026-08-05 확장): 카페 인기글 페이지 + 목록의 조회·댓글 수까지 저장.
+-- 반응이 검증된 글을 '소재 시드'로 원고에 활용(주제만 차용, 문장·노하우 재사용은 생성 단계에서 금지·차단).
+alter table nc_cafe_posts add column if not exists views integer;
+alter table nc_cafe_posts add column if not exists comments integer;
+alter table nc_cafe_posts add column if not exists is_popular boolean default false;
+
 -- 서버(service_role)만 접근 — 브라우저 anon 직접 접근 차단.
 alter table nc_cafe_posts enable row level security;

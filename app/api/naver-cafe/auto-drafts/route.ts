@@ -3,7 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getNaverSettings } from '@/lib/naver/settings'
 import { draftPost, splitTopics, archetypesForStyle, type DraftCafe } from '@/lib/naver/generate'
 import { titleSimilarity } from '@/lib/naver/dedupe'
-import { buildTasteProfile, cafeObservedTitles } from '@/lib/naver/taste'
+import { buildTasteProfile, cafeObservedTitles, cafePopularPosts } from '@/lib/naver/taste'
 import { getMeta } from '@/lib/naver/pacing'
 
 export const dynamic = 'force-dynamic'
@@ -71,6 +71,8 @@ export async function POST(req: Request) {
 
       // 이 카페에 '실제로 올라오는 글'(워커가 매일 관찰 수집) — 카페 결에 맞게 쓰는 재료.
       const vibe = await cafeObservedTitles(String(cafe.id), 15)
+      // 반응 검증된 인기글(최근 7일) — 배치당 1개 원고에만 '주제 시드'로 주입(복제는 프롬프트 금지 + 유사도 필터가 차단).
+      const populars = await cafePopularPosts(String(cafe.id), 5)
 
       // "주로 업로드하는 컨텐츠"를 소주제로 쪼개(예: 마케팅과 상세페이지 → [마케팅, 상세페이지])
       // 원고마다 소주제를 돌려가며 배정 → 한 주제에만 쏠리지 않게.
@@ -93,6 +95,8 @@ export async function POST(req: Request) {
               archetypeKey: stylePool[idx % stylePool.length].key,
               taste: taste.active ? { active: true, approvedSamples: taste.approvedSamples, rejectedSamples: taste.rejectedSamples, guidance: taste.guidance } : undefined,
               cafeVibe: vibe,
+              // 배치의 첫 원고에만 인기글 시드(날마다 다른 인기글로 회전) — 나머지는 자유 소재로 다양성 유지.
+              remakeSeed: populars.length && i === 0 ? populars[(startIdx + round) % populars.length] : undefined,
             })
           })
         )

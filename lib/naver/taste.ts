@@ -117,3 +117,38 @@ export async function cafeObservedTitles(cafeId: string, limit = 15): Promise<st
     return []
   }
 }
+
+/* 이 카페에서 최근 7일 '반응이 검증된 글'(인기글 페이지 수집 or 조회·댓글 상위) — 원고 소재 시드용.
+   ⚠️ 시드는 '주제'만 차용한다 — 본문은 애초에 수집하지 않아 물리적으로 베낄 수 없고,
+      제목 유사도 필터(auto-drafts ≥0.75)가 비슷한 제목도 차단한다. */
+export interface PopularPost { title: string; views: number | null; comments: number | null }
+export async function cafePopularPosts(cafeId: string, limit = 5): Promise<PopularPost[]> {
+  try {
+    const since = new Date(Date.now() - 7 * 86400_000).toISOString()
+    const { data, error } = await supabaseAdmin
+      .from('nc_cafe_posts')
+      .select('*')
+      .eq('cafe_id', cafeId)
+      .gte('last_seen', since)
+      .order('last_seen', { ascending: false })
+      .limit(80)
+    if (error || !data) return []
+    const scored = (data as Record<string, unknown>[])
+      .map((r) => ({
+        title: String(r.title || '').trim(),
+        views: typeof r.views === 'number' ? (r.views as number) : null,
+        comments: typeof r.comments === 'number' ? (r.comments as number) : null,
+        popular: r.is_popular === true,
+      }))
+      .filter((r) => r.title && (r.popular || (r.views ?? 0) > 0 || (r.comments ?? 0) > 0))
+    scored.sort(
+      (a, b) =>
+        Number(b.popular) - Number(a.popular) ||
+        (b.views ?? -1) - (a.views ?? -1) ||
+        (b.comments ?? -1) - (a.comments ?? -1),
+    )
+    return scored.slice(0, limit).map(({ title, views, comments }) => ({ title, views, comments }))
+  } catch {
+    return []
+  }
+}

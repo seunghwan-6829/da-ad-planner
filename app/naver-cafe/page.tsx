@@ -404,7 +404,7 @@ export default function NaverCafePage() {
 
   const [estMap, setEstMap] = useState<Record<string, { at: string; note: string }>>({}); // 발행 대기 글별 예상 발행 시각
   const [tasteInfo, setTasteInfo] = useState<{ active: boolean; approvedCount: number; rejectedCount: number; guidance: string[] } | null>(null); // 취향 학습 상태
-  const [obs, setObs] = useState<{ items: { title: string; last_seen: string }[]; observed_at?: string | null; tableMissing?: boolean } | null>(null); // 카페 관찰 데이터
+  const [obs, setObs] = useState<{ items: { title: string; last_seen: string; views?: number | null; comments?: number | null; is_popular?: boolean }[]; observed_at?: string | null; tableMissing?: boolean } | null>(null); // 카페 관찰 데이터(인기글 포함)
   const loadAll = useCallback(() => {
     fetch("/api/naver-cafe/brands").then((r) => (r.ok ? r.json() : [])).then((j) => setBrands(j as Brand[])).catch(() => {});
     fetch("/api/naver-cafe/cafes")
@@ -1343,10 +1343,16 @@ export default function NaverCafePage() {
                   ) : (
                     <>
                       <div className="max-h-56 space-y-1 overflow-y-auto">
-                        {obs.items.map((it, i) => (
+                        {/* 인기글(🔥)을 위로 — 반응 검증된 소재 시드로 원고 1개에 자동 반영됨(주제만 차용, 복제 차단) */}
+                        {[...obs.items].sort((a, b) => Number(!!b.is_popular) - Number(!!a.is_popular)).map((it, i) => (
                           <div key={i} className="flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800/60">
-                            <span className="min-w-0 flex-1 truncate text-gray-700 dark:text-gray-300">{it.title}</span>
-                            <span className="shrink-0 text-[10px] text-gray-400">{new Date(it.last_seen).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" })}</span>
+                            <span className="min-w-0 flex-1 truncate text-gray-700 dark:text-gray-300">
+                              {it.is_popular ? <span title="이 카페 인기글 — 원고 소재 시드로 활용돼요">🔥 </span> : null}{it.title}
+                            </span>
+                            <span className="shrink-0 text-[10px] text-gray-400">
+                              {(it.views ?? 0) > 0 ? `조회 ${Number(it.views).toLocaleString()} · ` : ""}{(it.comments ?? 0) > 0 ? `댓글 ${it.comments} · ` : ""}
+                              {new Date(it.last_seen).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" })}
+                            </span>
                           </div>
                         ))}
                       </div>

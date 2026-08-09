@@ -956,47 +956,85 @@ async function trackReactions() {
   await closeBrowserSession() // 측정용으로 연 창도 끝나면 닫아 대기 중 창이 남지 않게 한다.
 }
 
-/* ── 카페 관찰: 발행처 게시판에 들러 '실제로 올라오는 글 제목' 수집 ──
+/* ── 카페 관찰: 발행처 게시판 + '인기글' 페이지에 들러 글 제목·조회수·댓글수 수집 ──
    서버가 카페당 22시간에 1번만 배정(사람이 하루 한 번 눈팅하는 페이스).
-   수집된 제목은 원고 생성이 '이 카페의 말투·소재 결'을 맞추는 데 쓴다. */
+   · 최근 글 목록 → 카페의 말투·소재 결 맞추기
+   · 인기글(조회·댓글 포함) → 반응이 검증된 '소재 시드'(주제만 차용해 우리 글로 재창작 — 복제는 서버가 차단) */
+async function extractCafePosts(page) {
+  const items = []
+  const seen = new Set()
+  for (const f of page.frames()) {
+    let rows = []
+    try {
+      rows = await f.evaluate(() => {
+        const out = []
+        // 신형(f-e: /articles/{id})과 구형(iframe: articleid=, a.article) 목록을 모두 커버
+        document.querySelectorAll('a[href*="/articles/"], a[href*="articleid="], a.article').forEach((a) => {
+          let t = (a.textContent || '').trim().replace(/\s+/g, ' ')
+          if (!t || t.length < 5 || t.length > 100) return
+          const href = a.href || ''
+          const m = href.match(/articles\/(\d+)/) || href.match(/articleid=(\d+)/i)
+          // 행에서 조회·댓글 수를 최대한 읽는다(카페 스킨마다 달라 best-effort, 없으면 null)
+          const row = a.closest('li, tr, [class*="item"], [class*="article"]') || a.parentElement
+          const text = row ? (row.innerText || '') : ''
+          const vm = text.match(/조회\s*([\d,]+)/)
+          const cm = text.match(/댓글\s*([\d,]+)/) || t.match(/\[(\d+)\]\s*$/)
+          t = t.replace(/\s*\[\d+\]\s*$/, '') // 제목 끝의 [댓글수] 꼬리 제거
+          out.push({
+            title: t,
+            article_id: m ? m[1] : null,
+            views: vm ? Number(vm[1].replace(/,/g, '')) : null,
+            comments: cm ? Number(String(cm[1]).replace(/,/g, '')) : null,
+          })
+        })
+        return out
+      })
+    } catch {}
+    for (const r of rows) {
+      const key = r.article_id || r.title
+      if (seen.has(key) || !r.title || r.title.length < 5) continue
+      seen.add(key)
+      items.push(r)
+    }
+  }
+  return items
+}
+
 async function observeCafes() {
   let j
   try { j = await http('/api/naver-cafe/agent/observe', 'GET') } catch { return }
   const cafe = j && j.cafe
   if (!cafe || !cafe.cafe_url) return
   try {
-    log(`카페 관찰: ${cafe.name || cafe.id} — 최근 글 제목 수집`)
+    log(`카페 관찰: ${cafe.name || cafe.id} — 최근 글 + 인기글 수집`)
     const page = await getPage()
+
+    // ① 발행 게시판 최근 글
     await page.goto(cafe.cafe_url, { waitUntil: 'domcontentloaded', timeout: 30000 })
     await sleep(3500 + Math.random() * 2000) // 목록이 뒤늦게 그려지는 카페(클라이언트 렌더) 대비
-    const items = []
-    const seen = new Set()
-    for (const f of page.frames()) {
-      let rows = []
+    const recent = await extractCafePosts(page)
+
+    // ② 카페 인기글 페이지(신형 UI) — 없거나 실패해도 조용히 넘어간다(best-effort)
+    let popular = []
+    const cm = String(cafe.cafe_url || '').match(/cafe\.naver\.com\/(?:f-e\/|ca-fe\/)?cafes\/(\d+)/i)
+    const clubId = cafe.club_id || cm?.[1] || null
+    if (clubId) {
       try {
-        rows = await f.evaluate(() => {
-          const out = []
-          // 신형(f-e: /articles/{id})과 구형(iframe: articleid=, a.article) 목록을 모두 커버
-          document.querySelectorAll('a[href*="/articles/"], a[href*="articleid="], a.article').forEach((a) => {
-            const t = (a.textContent || '').trim().replace(/\s+/g, ' ')
-            if (!t || t.length < 5 || t.length > 100) return
-            const href = a.href || ''
-            const m = href.match(/articles\/(\d+)/) || href.match(/articleid=(\d+)/i)
-            out.push({ title: t, article_id: m ? m[1] : null })
-          })
-          return out
-        })
+        await page.goto(`https://cafe.naver.com/f-e/cafes/${clubId}/popular`, { waitUntil: 'domcontentloaded', timeout: 30000 })
+        await sleep(3000 + Math.random() * 1500)
+        popular = await extractCafePosts(page)
       } catch {}
-      for (const r of rows) {
-        const key = r.article_id || r.title
-        if (seen.has(key)) continue
-        seen.add(key)
-        items.push(r)
-      }
     }
+
+    // 합치기 — 인기글이 우선(같은 글이면 is_popular 로 승격)
+    const byKey = new Map()
+    for (const r of recent) byKey.set(r.article_id || r.title, { ...r, is_popular: false })
+    for (const r of popular.slice(0, 15)) byKey.set(r.article_id || r.title, { ...r, is_popular: true })
+    const items = [...byKey.values()]
+
     if (items.length) {
-      const res = await http('/api/naver-cafe/agent/observe', 'POST', { cafe_id: cafe.id, items: items.slice(0, 30) })
-      log(`  → 제목 ${res?.stored ?? 0}개 저장(다음 관찰은 내일)`)
+      const res = await http('/api/naver-cafe/agent/observe', 'POST', { cafe_id: cafe.id, items: items.slice(0, 40) })
+      log(`  → 제목 ${res?.stored ?? 0}개 저장(인기글 ${popular.length ? Math.min(popular.length, 15) : 0}개 포함, 다음 관찰은 내일)`)
     } else {
       log('  → 목록에서 글을 찾지 못했습니다(다음 관찰 때 재시도)')
     }

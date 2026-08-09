@@ -11,9 +11,10 @@ export async function GET(req: Request) {
   const cafeId = searchParams.get('cafe_id')
   if (!cafeId) return NextResponse.json({ error: 'cafe_id 필요' }, { status: 400 })
 
+  // select('*') — 인기글 컬럼(views/comments/is_popular) 마이그레이션 전이어도 에러 없이 동작.
   const { data, error } = await supabaseAdmin
     .from('nc_cafe_posts')
-    .select('title, first_seen, last_seen')
+    .select('*')
     .eq('cafe_id', cafeId)
     .order('last_seen', { ascending: false })
     .limit(30)

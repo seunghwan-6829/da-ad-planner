@@ -55,25 +55,41 @@ export async function POST(req: Request) {
   if (!authOk(req)) return NextResponse.json({ error: 'agent unauthorized' }, { status: 401 })
   const b = await req.json().catch(() => ({}))
   const cafeId = (b.cafe_id || '').toString()
-  const items = Array.isArray(b.items) ? b.items.slice(0, 30) : []
+  const items = Array.isArray(b.items) ? b.items.slice(0, 40) : []
   if (!cafeId || !items.length) return NextResponse.json({ error: 'cafe_id/items 필요' }, { status: 400 })
 
+  const num = (v: unknown) => {
+    const n = Number(v)
+    return Number.isFinite(n) && n >= 0 ? Math.min(Math.round(n), 99_999_999) : null
+  }
+
   const nowISO = new Date().toISOString()
-  const rows = []
+  const rows: Record<string, unknown>[] = []
   const seen = new Set<string>()
   for (const it of items) {
-    const title = cleanTitle((it as { title?: unknown })?.title)
+    const o = it as { title?: unknown; article_id?: unknown; views?: unknown; comments?: unknown; is_popular?: unknown }
+    const title = cleanTitle(o?.title)
     if (!title || seen.has(title)) continue
     seen.add(title)
-    const articleId = (it as { article_id?: unknown })?.article_id
-    rows.push({ cafe_id: cafeId, title, article_id: articleId ? String(articleId) : null, last_seen: nowISO })
+    rows.push({
+      cafe_id: cafeId,
+      title,
+      article_id: o?.article_id ? String(o.article_id) : null,
+      views: num(o?.views),
+      comments: num(o?.comments),
+      is_popular: o?.is_popular === true,
+      last_seen: nowISO,
+    })
   }
   if (!rows.length) return NextResponse.json({ ok: true, stored: 0 })
 
-  // (cafe_id, title) upsert — 이미 본 글은 last_seen 만 갱신, 새 글은 first_seen 자동.
-  const { error } = await supabaseAdmin
-    .from('nc_cafe_posts')
-    .upsert(rows, { onConflict: 'cafe_id,title' })
+  // (cafe_id, title) upsert — 이미 본 글은 last_seen·지표만 갱신, 새 글은 first_seen 자동.
+  let { error } = await supabaseAdmin.from('nc_cafe_posts').upsert(rows, { onConflict: 'cafe_id,title' })
+  if (error && /views|comments|is_popular/.test(error.message)) {
+    // 인기글 컬럼 마이그레이션 전 폴백 — 제목만이라도 저장(기능 무중단)
+    const stripped = rows.map(({ cafe_id, title, article_id, last_seen }) => ({ cafe_id, title, article_id, last_seen }))
+    ;({ error } = await supabaseAdmin.from('nc_cafe_posts').upsert(stripped, { onConflict: 'cafe_id,title' }))
+  }
   if (error) {
     const missing = /nc_cafe_posts/.test(error.message)
     return NextResponse.json(
