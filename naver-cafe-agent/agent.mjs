@@ -1085,10 +1085,22 @@ async function observeCafes() {
       } catch {}
     }
 
-    // 합치기 — 인기글이 우선(같은 글이면 is_popular 로 승격)
+    /* 합치기 — 같은 글이면 is_popular 로 승격하되, 지표는 '필드 단위'로 합친다.
+       ⚠️ 통째로 덮어쓰면 인기글 페이지에 조회수가 없을 때(레이아웃이 달라 자주 그렇다)
+          게시판 목록에서 방금 읽은 조회·댓글이 날아가 결국 '측정 불가'가 된다. */
     const byKey = new Map()
     for (const r of recent) byKey.set(r.article_id || r.title, { ...r, is_popular: false })
-    for (const r of popular.slice(0, 15)) byKey.set(r.article_id || r.title, { ...r, is_popular: true })
+    for (const r of popular.slice(0, 15)) {
+      const key = r.article_id || r.title
+      const prev = byKey.get(key)
+      byKey.set(key, {
+        ...(prev || {}),
+        ...r,
+        views: r.views ?? prev?.views ?? null,
+        comments: r.comments ?? prev?.comments ?? null,
+        is_popular: true,
+      })
+    }
     const items = [...byKey.values()]
 
     if (items.length) {
