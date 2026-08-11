@@ -43,7 +43,7 @@ async function build() {
   const todayStart = kstTodayStartMs(nowMs)
   const evalDueBefore = nowMs - EVAL_AFTER_MS
 
-  const [cafesRes, metaRes, rowsRes, feedRes, agentRes] = await Promise.all([
+  const [cafesRes, metaRes, rowsRes, feedRes, agentRes, lastEvalRes] = await Promise.all([
     supabaseAdmin.from('nc_cafes').select('id, name, cafe_url, enabled, brand_id').order('created_at', { ascending: true }),
     supabaseAdmin.from('nc_meta').select('key, value').limit(1000),
     supabaseAdmin
@@ -53,6 +53,8 @@ async function build() {
       .limit(ROWS_LIMIT),
     supabaseAdmin.from('nc_cafe_posts').select('*').order('last_seen', { ascending: false }).limit(FEED_LIMIT),
     supabaseAdmin.from('nc_agent').select('last_seen, halted, halt_reason, last_event, last_event_at').eq('id', 1).maybeSingle(),
+    // 평가 크론이 실제로 돌고 있는지 — 마지막 판정 시각(멈추면 판정 대기만 쌓인다)
+    supabaseAdmin.from('nc_cafe_posts').select('evaluated_at').not('evaluated_at', 'is', null).order('evaluated_at', { ascending: false }).limit(1).maybeSingle(),
   ])
 
   const cafes = (cafesRes.data ?? []) as { id: string; name: string; cafe_url: string | null; enabled: boolean | null; brand_id: string | null }[]
@@ -161,6 +163,7 @@ async function build() {
     },
     // 카페 간 간격이 끝나는 시각(이 전에는 어떤 카페도 배정되지 않는다)
     next_slot_at: Number.isNaN(lastAnyMs) ? null : new Date(lastAnyMs + OBSERVE_GLOBAL_GAP_MS).toISOString(),
+    last_evaluated_at: (lastEvalRes.data as { evaluated_at?: string } | null)?.evaluated_at ?? null,
     totals: { ...totals, cafes: cafes.length, collectable: cafeRows.filter((c) => c.collectable).length },
     cafes: cafeRows,
     recent,

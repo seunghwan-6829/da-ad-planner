@@ -28,6 +28,7 @@ type Overview = {
   rules: { observe_gap_hours: number; global_gap_min: number; eval_after_hours: number };
   agent: { online: boolean; last_seen: string | null; halted: boolean; halt_reason: string | null; last_event: string | null; last_event_at: string | null };
   next_slot_at: string | null;
+  last_evaluated_at: string | null;
   totals: Counts & { cafes: number; collectable: number };
   cafes: CafeRow[];
   recent: FeedRow[];
@@ -61,7 +62,7 @@ function rel(iso: string | null, nowMs: number): string {
 const clock = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
 
-export function ObserveDashboard() {
+export function ObserveDashboard({ onOpenCafe }: { onOpenCafe?: (cafeId: string) => void }) {
   const [data, setData] = useState<Overview | null>(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -110,6 +111,10 @@ export function ObserveDashboard() {
   const nextCafe = [...data.cafes]
     .filter((c) => c.collectable && c.next_observe_at)
     .sort((a, b) => (a.next_observe_at || "") < (b.next_observe_at || "") ? -1 : 1)[0];
+  /* 평가 크론 이상 감지 — 판정 대기가 쌓였는데 최근 3시간 안에 판정 기록이 없으면 크론이 멎은 것.
+     (크론은 매시각이므로 3시간이면 최소 2번은 걸렀어야 한다) */
+  const lastEvalMs = data.last_evaluated_at ? Date.parse(data.last_evaluated_at) : NaN;
+  const evalStalled = t.dueEval > 0 && (Number.isNaN(lastEvalMs) || nowMs - lastEvalMs > 3 * 3600_000);
 
   return (
     <>
@@ -224,7 +229,14 @@ export function ObserveDashboard() {
           <div className="rounded-xl border border-gray-200 p-3 dark:border-gray-700">
             <p className="text-xs font-bold dark:text-gray-200">⚖️ 평가(서버 크론)</p>
             <p className="mt-1 text-sm font-bold dark:text-gray-100">매시각 자동</p>
-            <p className="mt-0.5 text-[11px] text-gray-400">지금 판정 대기 {t.dueEval}건</p>
+            <p className="mt-0.5 text-[11px] text-gray-400">
+              지금 판정 대기 {t.dueEval}건 · 마지막 판정 {rel(data.last_evaluated_at, nowMs)}
+            </p>
+            {evalStalled && (
+              <p className="mt-1 rounded bg-amber-50 px-1.5 py-1 text-[10px] font-medium text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+                ⚠ 판정 대기가 쌓였는데 최근 판정 기록이 없어요 — 서버 크론(naver-cafe tick)이 도는지 확인이 필요합니다.
+              </p>
+            )}
             <p className="mt-2 text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">
               첫 수집 {data.rules.eval_after_hours}시간 뒤 조회·댓글 <b>증가폭</b>을 재고, 광고·잡글을 걸러낸 뒤
               그 카페 평소 수준과 비교해 <b>좋은 글만</b> 남깁니다.
@@ -270,7 +282,13 @@ export function ObserveDashboard() {
                   return (
                     <tr key={c.id} className="border-b last:border-0 dark:border-gray-800">
                       <td className="px-2 py-2.5">
-                        <p className="font-semibold dark:text-gray-200">{c.name}</p>
+                        {onOpenCafe ? (
+                          <button onClick={() => onOpenCafe(c.id)} title="이 발행처 상세로 이동" className="text-left font-semibold hover:text-primary hover:underline dark:text-gray-200">
+                            {c.name}
+                          </button>
+                        ) : (
+                          <p className="font-semibold dark:text-gray-200">{c.name}</p>
+                        )}
                         {c.cafe_url && <p className="max-w-[220px] truncate text-[10px] text-gray-400">{c.cafe_url.replace(/^https?:\/\//, "")}</p>}
                       </td>
                       <td className="px-2 py-2.5 whitespace-nowrap">
