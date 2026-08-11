@@ -962,6 +962,13 @@ async function trackReactions() {
    서버가 첫 수집 24시간 뒤 그 증가폭으로 '잘 나온 글'을 가려낸다(광고는 자동 제외).
    · 최근 글 목록 → 카페의 말투·소재 결 맞추기
    · 인기글(조회·댓글 포함) → 반응이 검증된 '소재 시드'(주제만 차용해 우리 글로 재창작 — 복제는 서버가 차단) */
+/* 목록에서 글을 뽑아낸다. 카페 스킨(신형 f-e / 구형 iframe)마다 구조가 달라 여러 전략을 겹쳐 쓴다.
+   ⚠️ 예전 버전의 두 가지 문제를 고쳤다:
+     ① 같은 글의 '댓글 수 링크'(<a>[4]</a>)까지 별도 게시글로 수집돼 제목이 "[ 4 ]" 인 쓰레기 행이 생겼다.
+        → 글 번호(article_id)로 묶고, 숫자뿐인 링크는 제목이 아니라 '댓글 수'로 쓴다.
+     ② 조회수를 "조회 123" 라벨로만 찾아서, 라벨 없이 숫자만 있는 신형 목록에서 항상 null 이 됐다.
+        → 지표를 못 읽으면 24시간 증가폭을 못 재고 전부 '측정 불가'가 된다(실제로 그렇게 됐음).
+        → 라벨 → 클래스명 → '날짜/시각 뒤 첫 숫자' 순으로 겹쳐 찾는다(대부분 목록이 제목·작성자·날짜·조회 순). */
 async function extractCafePosts(page) {
   const items = []
   const seen = new Set()
@@ -969,32 +976,82 @@ async function extractCafePosts(page) {
     let rows = []
     try {
       rows = await f.evaluate(() => {
-        const out = []
-        // 신형(f-e: /articles/{id})과 구형(iframe: articleid=, a.article) 목록을 모두 커버
+        const num = (s) => {
+          if (s === null || s === undefined) return null
+          const m = String(s).replace(/,/g, '').match(/\d+/)
+          if (!m) return null
+          const n = Number(m[0])
+          return Number.isFinite(n) && n >= 0 && n < 10000000 ? n : null
+        }
+
+        // 같은 글의 여러 링크(제목·댓글수)를 글 번호로 묶는다
+        const groups = new Map()
         document.querySelectorAll('a[href*="/articles/"], a[href*="articleid="], a.article').forEach((a) => {
-          let t = (a.textContent || '').trim().replace(/\s+/g, ' ')
-          if (!t || t.length < 5 || t.length > 100) return
           const href = a.href || ''
           const m = href.match(/articles\/(\d+)/) || href.match(/articleid=(\d+)/i)
-          // 행에서 조회·댓글 수를 최대한 읽는다(카페 스킨마다 달라 best-effort, 없으면 null)
-          const row = a.closest('li, tr, [class*="item"], [class*="article"]') || a.parentElement
-          const text = row ? (row.innerText || '') : ''
-          const vm = text.match(/조회\s*([\d,]+)/)
-          const cm = text.match(/댓글\s*([\d,]+)/) || t.match(/\[(\d+)\]\s*$/)
-          t = t.replace(/\s*\[\d+\]\s*$/, '') // 제목 끝의 [댓글수] 꼬리 제거
-          out.push({
-            title: t,
-            article_id: m ? m[1] : null,
-            views: vm ? Number(vm[1].replace(/,/g, '')) : null,
-            comments: cm ? Number(String(cm[1]).replace(/,/g, '')) : null,
-          })
+          const id = m ? m[1] : null
+          const raw = (a.textContent || '').replace(/\s+/g, ' ').trim()
+          const key = id || raw
+          if (!key) return
+          let g = groups.get(key)
+          if (!g) { g = { article_id: id, titles: [], comments: null, row: null }; groups.set(key, g) }
+          // 텍스트가 숫자(또는 [숫자])뿐인 링크 = 댓글 수. 제목으로 쓰면 안 된다.
+          const cm = raw.match(/^\[?\s*(\d{1,5})\s*\]?$/)
+          if (cm) {
+            const n = Number(cm[1])
+            if (g.comments === null || n > g.comments) g.comments = n
+          } else if (raw.length >= 2) {
+            g.titles.push(raw)
+          }
+          if (!g.row) g.row = a.closest('tr, li, .board-list, [class*="ArticleItem"], [class*="article-board"], [class*="item"]') || a.parentElement
+        })
+
+        const out = []
+        groups.forEach((g) => {
+          // 제목 = 후보 중 가장 긴 것(아이콘·배지 텍스트 배제), 끝의 [댓글수] 꼬리는 제거
+          let title = g.titles.sort((a, b) => b.length - a.length)[0] || ''
+          title = title.replace(/\s*\[\s*\d+\s*\]\s*$/, '').trim()
+          if (!title) return
+          // \s 는 줄바꿈과   (nbsp) 를 모두 포함 — 한 줄 문자열로 눌러야 아래 정규식들이 안정적으로 걸린다
+          const rowText = g.row ? String(g.row.innerText || '').replace(/\s+/g, ' ').trim() : ''
+
+          // ── 댓글 수 ──
+          let comments = g.comments
+          if (comments === null) {
+            const lm = rowText.match(/댓글\s*([\d,]+)/)
+            if (lm) comments = num(lm[1])
+          }
+          if (comments === null && g.row) {
+            const el = g.row.querySelector('[class*="comment" i], [class*="cmt" i], [class*="reply" i]')
+            if (el) comments = num(el.textContent)
+          }
+
+          // ── 조회수 ──
+          let views = null
+          const vm = rowText.match(/조회\s*([\d,]+)/)
+          if (vm) views = num(vm[1])
+          if (views === null && g.row) {
+            const el = g.row.querySelector('[class*="view_count" i], [class*="viewCount" i], [class*="td_view" i], [class*="article_view" i], [class*="num_view" i], [class*="count_view" i]')
+            if (el) views = num(el.textContent)
+          }
+          if (views === null && rowText) {
+            // 목록 대부분이 "제목 … 작성자 … 2026.08.12. … 15" 순 — 날짜(또는 오늘 글의 시각) 뒤 첫 숫자를 조회수로 본다
+            const afterDate = rowText.split(/\d{4}\.\s?\d{1,2}\.\s?\d{1,2}\.?/)[1]
+            if (afterDate) views = num(afterDate)
+            if (views === null) {
+              const afterTime = rowText.split(/\b\d{1,2}:\d{2}\b/)[1]
+              if (afterTime) views = num(afterTime)
+            }
+          }
+
+          out.push({ title, article_id: g.article_id, views, comments })
         })
         return out
       })
     } catch {}
     for (const r of rows) {
       const key = r.article_id || r.title
-      if (seen.has(key) || !r.title || r.title.length < 5) continue
+      if (seen.has(key) || !r.title || r.title.length < 5 || r.title.length > 100) continue
       seen.add(key)
       items.push(r)
     }

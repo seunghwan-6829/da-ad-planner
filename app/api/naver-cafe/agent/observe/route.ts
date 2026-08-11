@@ -31,6 +31,9 @@ function cleanTitle(raw: unknown): string {
   const t = String(raw ?? '').replace(/\s+/g, ' ').trim()
   if (!t || t.length < 5 || t.length > 100) return ''
   if (UI_LABELS.test(t)) return ''
+  /* 숫자·괄호뿐인 문자열("[ 4 ]", "12")은 글 제목이 아니라 '댓글 수 배지'다.
+     워커에서 이미 걸러지지만, 스킨이 다른 카페에서 또 새 나갈 수 있어 서버에서도 막는다. */
+  if (/^\[?\s*\d{1,5}\s*\]?$/.test(t)) return ''
   return t
 }
 

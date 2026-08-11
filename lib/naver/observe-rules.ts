@@ -11,6 +11,20 @@ export const OBSERVE_GAP_MS = 11 * 60 * 60 * 1000     // 카페당 수집 간격
 export const OBSERVE_GLOBAL_GAP_MS = 25 * 60 * 1000   // 카페 간 최소 간격(연속 방문 방지)
 export const EVAL_AFTER_MS = 24 * 60 * 60 * 1000      // 첫 관측 후 이만큼 지나야 평가
 
+/* 카페 주소에서 클럽 ID 추출 — 발행처에 club_id 가 비어 있어도 cafe_url 에서 얻는다.
+   예) https://cafe.naver.com/f-e/cafes/30790560/menus/37 → "30790560" */
+export function resolveClubId(cafeUrl: string | null | undefined, clubId?: string | null): string | null {
+  if (clubId) return String(clubId)
+  const m = String(cafeUrl || '').match(/cafe\.naver\.com\/(?:f-e\/|ca-fe\/)?cafes\/(\d+)/i)
+  return m?.[1] ?? null
+}
+
+/** 수집한 글의 실제 카페 주소 — 목록에서 바로 원문을 열어볼 수 있게. 둘 중 하나라도 없으면 null. */
+export function cafeArticleUrl(clubId: string | null, articleId: string | null | undefined): string | null {
+  if (!clubId || !articleId) return null
+  return `https://cafe.naver.com/f-e/cafes/${clubId}/articles/${articleId}`
+}
+
 // 댓글 1개는 조회 30 정도의 가치(카페 글은 댓글이 진짜 반응) — 점수 = 조회증가 + 댓글증가*30
 export const COMMENT_WEIGHT = 30
 // 표본이 적을 때 쓰는 절대 하한 — 이만큼도 안 움직였으면 반응 없음으로 본다.

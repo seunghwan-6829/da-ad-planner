@@ -7,12 +7,12 @@
    검색·카페 필터·정렬·페이지네이션은 서버에서 처리(/api/naver-cafe/observe/posts). */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Copy, Loader2, RefreshCw, Search } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, ExternalLink, Loader2, RefreshCw, Search } from "lucide-react";
 
 export type PostsMode = "good" | "all" | "filtered";
 
 type Item = {
-  cafe_id: string; cafe_name: string; title: string; verdict: string; verdict_reason: string | null;
+  cafe_id: string; cafe_name: string; url: string | null; title: string; verdict: string; verdict_reason: string | null;
   views: number | null; comments: number | null; views_delta: number | null; comments_delta: number | null;
   score: number | null; is_popular: boolean; first_seen: string; last_seen: string; evaluated_at: string | null;
 };
@@ -109,7 +109,8 @@ export function ObservePosts({ mode, cafes }: { mode: PostsMode; cafes: { id: st
   useEffect(() => {
     alive.current = true;
     void load();
-    const t = setInterval(() => void load(), 30_000); // 계속 갱신
+    // 목록은 60초 주기(현황 화면보다 길게) — 갱신은 계속하되 서버 부담을 줄인다
+    const t = setInterval(() => void load(), 60_000);
     return () => { alive.current = false; clearInterval(t); };
   }, [load]);
 
@@ -128,9 +129,9 @@ export function ObservePosts({ mode, cafes }: { mode: PostsMode; cafes: { id: st
       <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-sm font-bold dark:text-gray-100">
-            {cfg.title} <span className="ml-1 text-[11px] font-normal text-gray-400">— 총 {total.toLocaleString()}건</span>
+            {cfg.title} <span className="ml-1 text-xs font-normal text-gray-400">— 총 {total.toLocaleString()}건</span>
           </h2>
-          <p className="mt-0.5 max-w-2xl text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">{cfg.desc}</p>
+          <p className="mt-0.5 max-w-2xl text-xs leading-relaxed text-gray-500 dark:text-gray-400">{cfg.desc}</p>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           {mode === "good" && items.length > 0 && (
@@ -186,11 +187,13 @@ export function ObservePosts({ mode, cafes }: { mode: PostsMode; cafes: { id: st
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
-              <tr className="border-b text-left text-[11px] text-gray-500 dark:border-gray-800 dark:text-gray-400">
+              <tr className="border-b text-left text-xs text-gray-500 dark:border-gray-800 dark:text-gray-400">
                 <th className="px-2 py-2 font-medium">판정</th>
                 <th className="px-2 py-2 font-medium">제목</th>
                 <th className="px-2 py-2 font-medium">카페</th>
-                <th className="px-2 py-2 font-medium">24h 반응</th>
+                <th className="px-2 py-2 font-medium">조회</th>
+                <th className="px-2 py-2 font-medium">댓글</th>
+                <th className="px-2 py-2 font-medium">24h 증가</th>
                 <th className="px-2 py-2 font-medium">점수</th>
                 <th className="px-2 py-2 font-medium">최근 확인</th>
               </tr>
@@ -202,21 +205,37 @@ export function ObservePosts({ mode, cafes }: { mode: PostsMode; cafes: { id: st
                 return (
                   <tr key={`${it.cafe_id}-${i}`} title={it.verdict_reason || undefined} className="border-b last:border-0 hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-800/60">
                     <td className="whitespace-nowrap px-2 py-2.5">
-                      <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${v.chip}`}>{v.icon} {v.label}</span>
+                      <span className={`rounded px-1.5 py-0.5 text-[11px] font-bold ${v.chip}`}>{v.icon} {v.label}</span>
                     </td>
-                    <td className={`max-w-[420px] px-2 py-2.5 ${muted ? "text-gray-400 line-through" : "dark:text-gray-200"}`}>
-                      <span className="line-clamp-2">{it.is_popular ? <span title="카페 인기글">🔥 </span> : null}{it.title}</span>
+                    <td className={`max-w-[380px] px-2 py-2.5 ${muted ? "text-gray-400" : "dark:text-gray-200"}`}>
+                      {/* 원문 주소 — 눌러서 실제 카페 글을 새 탭에서 확인 */}
+                      {it.url ? (
+                        <a href={it.url} target="_blank" rel="noopener noreferrer" title="카페에서 원문 열기" className={`line-clamp-2 hover:text-primary hover:underline ${muted ? "line-through" : ""}`}>
+                          {it.is_popular ? <span title="카페 인기글">🔥 </span> : null}{it.title}
+                          <ExternalLink className="ml-1 inline h-3 w-3 align-[-1px] text-gray-300" />
+                        </a>
+                      ) : (
+                        <span className={`line-clamp-2 ${muted ? "line-through" : ""}`} title="원문 주소를 알 수 없어요(글 번호 미수집)">
+                          {it.is_popular ? <span title="카페 인기글">🔥 </span> : null}{it.title}
+                        </span>
+                      )}
                     </td>
                     <td className="whitespace-nowrap px-2 py-2.5 text-gray-500 dark:text-gray-400">{it.cafe_name}</td>
                     <td className="whitespace-nowrap px-2 py-2.5 text-gray-600 dark:text-gray-300">
+                      {it.views !== null ? it.views.toLocaleString() : <span className="text-gray-300">—</span>}
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-2.5 text-gray-600 dark:text-gray-300">
+                      {it.comments !== null ? it.comments.toLocaleString() : <span className="text-gray-300">—</span>}
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-2.5 text-gray-600 dark:text-gray-300">
                       {it.views_delta !== null || it.comments_delta !== null ? (
-                        <>조회 <b>+{it.views_delta ?? 0}</b>{it.comments_delta ? <> · 댓글 <b>+{it.comments_delta}</b></> : null}</>
+                        <>조회 <b className="text-primary">+{it.views_delta ?? 0}</b>{it.comments_delta ? <> · 댓글 <b className="text-primary">+{it.comments_delta}</b></> : null}</>
                       ) : (
-                        <span className="text-gray-400">{(it.views ?? 0) > 0 ? `조회 ${Number(it.views).toLocaleString()}` : "측정 전"}</span>
+                        <span className="text-gray-400">측정 전</span>
                       )}
                     </td>
                     <td className="whitespace-nowrap px-2 py-2.5 font-semibold dark:text-gray-200">{it.score !== null ? it.score.toLocaleString() : <span className="font-normal text-gray-400">—</span>}</td>
-                    <td className="whitespace-nowrap px-2 py-2.5 text-[10px] text-gray-400">{fmtDate(it.last_seen)}</td>
+                    <td className="whitespace-nowrap px-2 py-2.5 text-[11px] text-gray-400">{fmtDate(it.last_seen)}</td>
                   </tr>
                 );
               })}
@@ -230,13 +249,13 @@ export function ObservePosts({ mode, cafes }: { mode: PostsMode; cafes: { id: st
           <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1} className="rounded-lg border border-gray-200 px-2 py-1 text-xs text-gray-600 disabled:opacity-40 dark:border-gray-700 dark:text-gray-300">
             <ChevronLeft className="h-3.5 w-3.5" />
           </button>
-          <span className="text-[11px] text-gray-500 dark:text-gray-400">{page} / {pages}</span>
+          <span className="text-xs text-gray-500 dark:text-gray-400">{page} / {pages}</span>
           <button onClick={() => setPage((p) => Math.min(pages, p + 1))} disabled={page >= pages} className="rounded-lg border border-gray-200 px-2 py-1 text-xs text-gray-600 disabled:opacity-40 dark:border-gray-700 dark:text-gray-300">
             <ChevronRight className="h-3.5 w-3.5" />
           </button>
         </div>
       )}
-      <p className="mt-2 text-right text-[10px] text-gray-400">각 줄에 마우스를 올리면 판정 이유가 보여요 · 30초마다 자동 갱신</p>
+      <p className="mt-2 text-right text-[11px] text-gray-400">제목을 누르면 카페 원문이 새 탭에서 열려요 · 각 줄에 마우스를 올리면 판정 이유 표시 · 60초마다 자동 갱신</p>
     </section>
   );
 }

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { resolveClubId, cafeArticleUrl } from '@/lib/naver/observe-rules'
 
 /* 수집된 글 목록 조회(보호 라우트) — '글 수집 현황'의 하위 페이지들이 쓴다.
      GET ?verdict=keep         좋은 원고 모음
@@ -53,13 +54,19 @@ export async function GET(req: Request) {
       return NextResponse.json({ ok: true, items: [], total: 0, page, limit, tableMissing: true })
     }
 
-    // 카페 이름을 붙여준다(목록에서 어느 카페 글인지 바로 보이게)
-    const { data: cafes } = await supabaseAdmin.from('nc_cafes').select('id, name')
-    const nameOf = new Map((cafes ?? []).map((c) => [String((c as { id: string }).id), String((c as { name: string }).name ?? '')]))
+    // 카페 이름 + 원문 주소 조립용 클럽 ID(목록에서 어느 카페 글인지 보이고, 눌러서 원문을 열 수 있게)
+    const { data: cafes } = await supabaseAdmin.from('nc_cafes').select('id, name, cafe_url, club_id')
+    const nameOf = new Map<string, string>()
+    const clubOf = new Map<string, string | null>()
+    for (const c of (cafes ?? []) as { id: string; name: string; cafe_url: string | null; club_id: string | null }[]) {
+      nameOf.set(String(c.id), String(c.name ?? ''))
+      clubOf.set(String(c.id), resolveClubId(c.cafe_url, c.club_id))
+    }
 
     const items = ((data ?? []) as Record<string, unknown>[]).map((r) => ({
       cafe_id: String(r.cafe_id ?? ''),
       cafe_name: nameOf.get(String(r.cafe_id ?? '')) ?? '(삭제된 발행처)',
+      url: cafeArticleUrl(clubOf.get(String(r.cafe_id ?? '')) ?? null, r.article_id ? String(r.article_id) : null),
       title: String(r.title ?? ''),
       verdict: String(r.verdict ?? 'pending'),
       verdict_reason: r.verdict_reason ? String(r.verdict_reason) : null,

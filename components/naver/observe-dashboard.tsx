@@ -20,7 +20,7 @@ type CafeRow = {
   counts: Counts;
 };
 type FeedRow = {
-  cafe_id: string; cafe_name: string; title: string; verdict: string; verdict_reason: string | null;
+  cafe_id: string; cafe_name: string; url: string | null; title: string; verdict: string; verdict_reason: string | null;
   views: number | null; comments: number | null; views_delta: number | null; comments_delta: number | null;
   is_popular: boolean; first_seen: string; last_seen: string; evaluated_at: string | null; is_new_today: boolean;
 };
@@ -63,6 +63,25 @@ function rel(iso: string | null, nowMs: number): string {
 const clock = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
 
+/** "2일 3시간 15분 전" 처럼 자세히 — 에이전트 점검 안내에 쓴다. */
+function agoLong(iso: string | null, nowMs: number): string {
+  if (!iso) return "기록 없음";
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return "기록 없음";
+  let s = Math.max(0, Math.floor((nowMs - t) / 1000));
+  const d = Math.floor(s / 86400); s -= d * 86400;
+  const h = Math.floor(s / 3600); s -= h * 3600;
+  const m = Math.floor(s / 60);
+  const parts: string[] = [];
+  if (d) parts.push(`${d}일`);
+  if (h) parts.push(`${h}시간`);
+  if (m || !parts.length) parts.push(`${m}분`);
+  return `${parts.join(" ")} 전`;
+}
+
+// 화면 자동 갱신 주기(현황). 표시 문구와 실제 타이머가 어긋나지 않게 한 곳에서만 정의한다.
+const REFRESH_MS = 15_000;
+
 export function ObserveDashboard({ onOpenCafe }: { onOpenCafe?: (cafeId: string) => void }) {
   const [data, setData] = useState<Overview | null>(null);
   const [err, setErr] = useState("");
@@ -92,7 +111,7 @@ export function ObserveDashboard({ onOpenCafe }: { onOpenCafe?: (cafeId: string)
   useEffect(() => {
     alive.current = true;
     void load();
-    const t = setInterval(() => void load(), 15_000); // 계속 갱신
+    const t = setInterval(() => void load(), REFRESH_MS); // 계속 갱신
     const tick = setInterval(() => setNowMs(Date.now()), 30_000); // 상대 시각 갱신
     return () => { alive.current = false; clearInterval(t); clearInterval(tick); };
   }, [load]);
@@ -131,12 +150,12 @@ export function ObserveDashboard({ onOpenCafe }: { onOpenCafe?: (cafeId: string)
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <span className="flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">
+          <span className="flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">
             <span className="relative flex h-2 w-2">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
               <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
             </span>
-            자동 갱신 중 · {clock(data.now)} 기준
+            {Math.round(REFRESH_MS / 1000)}초마다 자동 갱신 · {clock(data.now)} 기준
           </span>
           <button onClick={() => void load(true)} disabled={busy} className="flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} 새로고침
@@ -173,8 +192,8 @@ export function ObserveDashboard({ onOpenCafe }: { onOpenCafe?: (cafeId: string)
       <div className="mb-4 flex flex-wrap gap-1 border-b border-gray-200 dark:border-gray-800">
         {([
           { k: "overview" as const, label: "현황", n: null },
-          { k: "good" as const, label: "✅ 좋은 원고", n: t.keep },
           { k: "all" as const, label: "전체 수집 로그", n: t.total },
+          { k: "good" as const, label: "✅ 좋은 원고", n: t.keep },
           { k: "filtered" as const, label: "🚫 걸러진 글", n: t.ad + t.noise },
         ]).map((x) => (
           <button
@@ -187,7 +206,7 @@ export function ObserveDashboard({ onOpenCafe }: { onOpenCafe?: (cafeId: string)
             }`}
           >
             {x.label}
-            {x.n !== null && <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${tab === x.k ? "bg-primary/10 text-primary" : "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"}`}>{x.n.toLocaleString()}</span>}
+            {x.n !== null && <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[11px] font-bold ${tab === x.k ? "bg-primary/10 text-primary" : "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"}`}>{x.n.toLocaleString()}</span>}
           </button>
         ))}
       </div>
@@ -204,31 +223,31 @@ export function ObserveDashboard({ onOpenCafe }: { onOpenCafe?: (cafeId: string)
         </div>
         <div className="grid gap-2 md:grid-cols-[1fr_auto_1fr_auto_1fr]">
           <div className="rounded-xl border border-gray-200 p-3 text-center dark:border-gray-700">
-            <p className="text-[11px] text-gray-500 dark:text-gray-400">① 수집</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">① 수집</p>
             <p className="mt-1 text-2xl font-bold dark:text-gray-100">{t.total.toLocaleString()}</p>
-            <p className="mt-0.5 text-[11px] text-gray-400">
+            <p className="mt-0.5 text-xs text-gray-400">
               누적 글 · 오늘 <b className="text-primary">+{t.today}</b>
               {data.truncated ? <span title="집계는 최근 5,000건까지만 셉니다(그 이전 글은 숫자에 미포함)" className="ml-1 text-amber-500">*</span> : null}
             </p>
           </div>
           <div className="hidden items-center justify-center text-gray-300 md:flex">→</div>
           <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-3 text-center dark:border-blue-900 dark:bg-blue-950/20">
-            <p className="text-[11px] text-blue-600 dark:text-blue-300">② {data.rules.eval_after_hours}시간 뒤 재측정</p>
+            <p className="text-xs text-blue-600 dark:text-blue-300">② {data.rules.eval_after_hours}시간 뒤 재측정</p>
             <p className="mt-1 text-2xl font-bold text-blue-700 dark:text-blue-300">{t.pending.toLocaleString()}</p>
-            <p className="mt-0.5 text-[11px] text-blue-500/80 dark:text-blue-300/70">측정 중 · 판정 대기 <b>{t.dueEval}</b></p>
+            <p className="mt-0.5 text-xs text-blue-500/80 dark:text-blue-300/70">측정 중 · 판정 대기 <b>{t.dueEval}</b></p>
           </div>
           <div className="hidden items-center justify-center text-gray-300 md:flex">→</div>
           <div className="rounded-xl border border-gray-200 p-3 text-center dark:border-gray-700">
-            <p className="text-[11px] text-gray-500 dark:text-gray-400">③ 판정 완료</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">③ 판정 완료</p>
             <p className="mt-1 text-2xl font-bold dark:text-gray-100">{collected.toLocaleString()}</p>
             {/* 6종 전부 표기 — 일부만 보이면 "수집 n건인데 판정 0"처럼 숫자가 안 맞아 보인다 */}
-            <p className="mt-0.5 text-[11px] text-gray-400">✅ {t.keep} · 🚫 {t.ad} · 🧹 {t.noise} · 💤 {t.drop} · ❔ {t.unrated}</p>
+            <p className="mt-0.5 text-xs text-gray-400">✅ {t.keep} · 🚫 {t.ad} · 🧹 {t.noise} · 💤 {t.drop} · ❔ {t.unrated}</p>
           </div>
         </div>
         <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-6">
           {ORDER.map((k) => (
             <div key={k} className="rounded-lg border border-gray-100 p-2 text-center dark:border-gray-800">
-              <p className="text-[10px] text-gray-400">{VERDICT[k].icon} {VERDICT[k].label}</p>
+              <p className="text-[11px] text-gray-400">{VERDICT[k].icon} {VERDICT[k].label}</p>
               <p className="text-sm font-bold dark:text-gray-200">{t[k].toLocaleString()}</p>
             </div>
           ))}
@@ -238,7 +257,7 @@ export function ObserveDashboard({ onOpenCafe }: { onOpenCafe?: (cafeId: string)
       {/* ② 데이터 흐름(워커 ↔ 서버 ↔ 평가) */}
       <section className={`${card} mb-4`}>
         <div className="mb-3 flex items-center gap-2 text-sm font-bold dark:text-gray-100">
-          <ServerCog className="h-4 w-4 text-primary" /> 데이터 흐름 <span className="text-[11px] font-normal text-gray-400">— 노트북 에이전트와 서버가 주고받는 내용</span>
+          <ServerCog className="h-4 w-4 text-primary" /> 데이터 흐름 <span className="text-xs font-normal text-gray-400">— 노트북 에이전트와 서버가 주고받는 내용</span>
         </div>
         <div className="grid gap-2 md:grid-cols-3">
           <div className="rounded-xl border border-gray-200 p-3 dark:border-gray-700">
@@ -246,8 +265,18 @@ export function ObserveDashboard({ onOpenCafe }: { onOpenCafe?: (cafeId: string)
             <p className={`mt-1 text-sm font-bold ${data.agent.online ? "text-emerald-600 dark:text-emerald-400" : "text-gray-400"}`}>
               {data.agent.online ? "동작 중" : "오프라인"}
             </p>
-            <p className="mt-0.5 text-[11px] text-gray-400">마지막 신호 {rel(data.agent.last_seen, nowMs)}</p>
-            <p className="mt-2 text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">
+            <p className="mt-0.5 text-xs text-gray-400">마지막 신호 {rel(data.agent.last_seen, nowMs)}</p>
+            {/* 연결 점검 결과 — 언제 확인했고 이상이 없었는지 문장으로 알려준다(에이전트가 30초마다 신호를 보낸다) */}
+            {data.agent.online ? (
+              <p className="mt-2 rounded-lg bg-emerald-50 px-2 py-1.5 text-xs font-medium leading-relaxed text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">
+                ✅ {agoLong(data.agent.last_seen, nowMs)} 확인했는데 <b>연결 이상 없었어요.</b> 30초마다 자동으로 점검합니다.
+              </p>
+            ) : (
+              <p className="mt-2 rounded-lg bg-amber-50 px-2 py-1.5 text-xs font-medium leading-relaxed text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+                ⚠️ 마지막으로 정상 확인된 건 <b>{agoLong(data.agent.last_seen, nowMs)}</b>이고, 지금은 응답이 없어요. 노트북에서 에이전트(bat)가 켜져 있는지 확인해 주세요.
+              </p>
+            )}
+            <p className="mt-2 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
               서버에 20초마다 <b>&quot;다음에 볼 카페 있어?&quot;</b> 물어보고, 배정받으면 그 카페 게시판·인기글을 열어 제목·조회·댓글을 읽어 서버로 보냅니다.
             </p>
           </div>
@@ -256,10 +285,10 @@ export function ObserveDashboard({ onOpenCafe }: { onOpenCafe?: (cafeId: string)
             <p className="mt-1 text-sm font-bold dark:text-gray-100">
               {nextCafe ? <>다음 <span className="text-primary">{nextCafe.name}</span></> : "대기 중"}
             </p>
-            <p className="mt-0.5 text-[11px] text-gray-400">
+            <p className="mt-0.5 text-xs text-gray-400">
               {nextCafe ? `${rel(nextCafe.next_observe_at, nowMs)} (${clock(nextCafe.next_observe_at)})` : "배정 가능한 카페 없음"}
             </p>
-            <p className="mt-2 text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">
+            <p className="mt-2 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
               카페당 <b>{data.rules.observe_gap_hours}시간에 1번(하루 2회)</b>, 카페 사이엔 최소 <b>{data.rules.global_gap_min}분</b>을 띄웁니다
               — 여러 카페를 연달아 방문하면 그 자체가 봇 패턴이라서요.
               {data.next_slot_at && Date.parse(data.next_slot_at) > nowMs ? <> 지금은 간격 대기 중({rel(data.next_slot_at, nowMs)} 해제).</> : null}
@@ -268,29 +297,29 @@ export function ObserveDashboard({ onOpenCafe }: { onOpenCafe?: (cafeId: string)
           <div className="rounded-xl border border-gray-200 p-3 dark:border-gray-700">
             <p className="text-xs font-bold dark:text-gray-200">⚖️ 평가(서버 크론)</p>
             <p className="mt-1 text-sm font-bold dark:text-gray-100">매시각 자동</p>
-            <p className="mt-0.5 text-[11px] text-gray-400">
+            <p className="mt-0.5 text-xs text-gray-400">
               지금 판정 대기 {t.dueEval}건 · 마지막 판정 {rel(data.last_evaluated_at, nowMs)}
             </p>
             {evalStalled && (
-              <p className="mt-1 rounded bg-amber-50 px-1.5 py-1 text-[10px] font-medium text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+              <p className="mt-1 rounded bg-amber-50 px-1.5 py-1 text-[11px] font-medium text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
                 ⚠ 판정 대기가 쌓였는데 최근 판정 기록이 없어요 — 서버 크론(naver-cafe tick)이 도는지 확인이 필요합니다.
               </p>
             )}
-            <p className="mt-2 text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">
+            <p className="mt-2 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
               첫 수집 {data.rules.eval_after_hours}시간 뒤 조회·댓글 <b>증가폭</b>을 재고, 광고·잡글을 걸러낸 뒤
               그 카페 평소 수준과 비교해 <b>좋은 글만</b> 남깁니다.
             </p>
           </div>
         </div>
         {data.agent.last_event && (
-          <p className="mt-2 truncate text-[11px] text-gray-400">최근 동작: {data.agent.last_event} <span className="text-gray-300">({rel(data.agent.last_event_at, nowMs)})</span></p>
+          <p className="mt-2 truncate text-xs text-gray-400">최근 동작: {data.agent.last_event} <span className="text-gray-300">({rel(data.agent.last_event_at, nowMs)})</span></p>
         )}
       </section>
 
       {/* ③ 카페별 수집 현황 */}
       <section className={`${card} mb-4`}>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-bold dark:text-gray-100">카페별 수집 현황 <span className="ml-1 text-[11px] font-normal text-gray-400">— 수집 대상 {t.collectable}/{t.cafes}곳</span></h2>
+          <h2 className="text-sm font-bold dark:text-gray-100">카페별 수집 현황 <span className="ml-1 text-xs font-normal text-gray-400">— 수집 대상 {t.collectable}/{t.cafes}곳</span></h2>
         </div>
         {data.cafes.length === 0 ? (
           <p className="py-6 text-center text-xs text-gray-400">등록된 발행처가 없어요.</p>
@@ -298,7 +327,7 @@ export function ObserveDashboard({ onOpenCafe }: { onOpenCafe?: (cafeId: string)
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
-                <tr className="border-b text-left text-[11px] text-gray-500 dark:border-gray-800 dark:text-gray-400">
+                <tr className="border-b text-left text-xs text-gray-500 dark:border-gray-800 dark:text-gray-400">
                   <th className="px-2 py-2 font-medium">카페</th>
                   <th className="px-2 py-2 font-medium">상태</th>
                   <th className="px-2 py-2 font-medium">마지막 수집</th>
@@ -328,19 +357,19 @@ export function ObserveDashboard({ onOpenCafe }: { onOpenCafe?: (cafeId: string)
                         ) : (
                           <p className="font-semibold dark:text-gray-200">{c.name}</p>
                         )}
-                        {c.cafe_url && <p className="max-w-[220px] truncate text-[10px] text-gray-400">{c.cafe_url.replace(/^https?:\/\//, "")}</p>}
+                        {c.cafe_url && <p className="max-w-[220px] truncate text-[11px] text-gray-400">{c.cafe_url.replace(/^https?:\/\//, "")}</p>}
                       </td>
                       <td className="px-2 py-2.5 whitespace-nowrap">
                         {c.collectable ? (
-                          <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">수집 중</span>
+                          <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">수집 중</span>
                         ) : (
-                          <span title={c.paused_reason || undefined} className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+                          <span title={c.paused_reason || undefined} className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-bold text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
                             {c.blocked_reason ?? "중지"}
                           </span>
                         )}
                       </td>
                       <td className="px-2 py-2.5 whitespace-nowrap text-gray-600 dark:text-gray-300">
-                        {c.last_collected_at ? <>{rel(c.last_collected_at, nowMs)}<span className="ml-1 text-[10px] text-gray-400">{clock(c.last_collected_at)}</span></> : <span className="text-gray-400">아직 없음</span>}
+                        {c.last_collected_at ? <>{rel(c.last_collected_at, nowMs)}<span className="ml-1 text-[11px] text-gray-400">{clock(c.last_collected_at)}</span></> : <span className="text-gray-400">아직 없음</span>}
                       </td>
                       <td className="px-2 py-2.5 whitespace-nowrap">
                         {!c.collectable ? (
@@ -358,11 +387,11 @@ export function ObserveDashboard({ onOpenCafe }: { onOpenCafe?: (cafeId: string)
                       </td>
                       <td className="px-2 py-2.5 whitespace-nowrap">
                         <b className="dark:text-gray-200">{cc.total.toLocaleString()}</b>
-                        {cc.today > 0 && <span className="ml-1 text-[10px] font-bold text-primary">+{cc.today}</span>}
+                        {cc.today > 0 && <span className="ml-1 text-[11px] font-bold text-primary">+{cc.today}</span>}
                       </td>
                       <td className="px-2 py-2.5">
                         {cc.total === 0 ? (
-                          <span className="text-[10px] text-gray-400">—</span>
+                          <span className="text-[11px] text-gray-400">—</span>
                         ) : (
                           <div className="min-w-[150px]">
                             <div className="flex h-2 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
@@ -370,7 +399,7 @@ export function ObserveDashboard({ onOpenCafe }: { onOpenCafe?: (cafeId: string)
                                 <div key={s.k} className={VERDICT[s.k].bar} style={{ width: `${(s.n / cc.total) * 100}%` }} title={`${VERDICT[s.k].label} ${s.n}건`} />
                               ))}
                             </div>
-                            <p className="mt-1 text-[10px] text-gray-400">
+                            <p className="mt-1 text-[11px] text-gray-400">
                               ✅{cc.keep} ⏳{cc.pending} 💤{cc.drop} 🚫{cc.ad} 🧹{cc.noise} ❔{cc.unrated}
                             </p>
                           </div>
@@ -388,11 +417,11 @@ export function ObserveDashboard({ onOpenCafe }: { onOpenCafe?: (cafeId: string)
       {/* ④ 최근 수집·판정 피드 */}
       <section className={card}>
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-bold dark:text-gray-100">최근 수집된 글 <span className="ml-1 text-[11px] font-normal text-gray-400">— 전체 카페 통합 · 최신순</span></h2>
+          <h2 className="text-sm font-bold dark:text-gray-100">최근 수집된 글 <span className="ml-1 text-xs font-normal text-gray-400">— 전체 카페 통합 · 최신순</span></h2>
           <div className="flex flex-wrap gap-1">
-            <button onClick={() => setFilter("all")} className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${filter === "all" ? "border-primary bg-primary/10 text-primary" : "border-gray-200 text-gray-500 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-400"}`}>전체 {data.recent.length}</button>
+            <button onClick={() => setFilter("all")} className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${filter === "all" ? "border-primary bg-primary/10 text-primary" : "border-gray-200 text-gray-500 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-400"}`}>전체 {data.recent.length}</button>
             {ORDER.filter((k) => data.recent.some((r) => r.verdict === k)).map((k) => (
-              <button key={k} onClick={() => setFilter(k)} className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${filter === k ? "border-primary bg-primary/10 text-primary" : "border-gray-200 text-gray-500 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-400"}`}>
+              <button key={k} onClick={() => setFilter(k)} className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${filter === k ? "border-primary bg-primary/10 text-primary" : "border-gray-200 text-gray-500 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-400"}`}>
                 {VERDICT[k].icon} {VERDICT[k].label} {data.recent.filter((r) => r.verdict === k).length}
               </button>
             ))}
@@ -409,26 +438,33 @@ export function ObserveDashboard({ onOpenCafe }: { onOpenCafe?: (cafeId: string)
               const hasDelta = r.views_delta !== null || r.comments_delta !== null;
               return (
                 <div key={`${r.cafe_id}-${i}`} title={r.verdict_reason || undefined} className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800/60">
-                  <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${v.chip}`}>{v.icon} {v.label}</span>
+                  <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-bold ${v.chip}`}>{v.icon} {v.label}</span>
                   {r.is_new_today
-                    ? <span title="오늘 처음 발견한 글" className="shrink-0 rounded bg-primary/10 px-1 py-0.5 text-[9px] font-bold text-primary">NEW</span>
-                    : <span title="이전에 봤던 글을 다시 확인(지표 갱신)" className="shrink-0 text-[9px] text-gray-300">재확인</span>}
-                  <span className="w-24 shrink-0 truncate text-[10px] text-gray-400">{r.cafe_name}</span>
-                  <span className={`min-w-0 flex-1 truncate ${r.verdict === "ad" || r.verdict === "noise" ? "text-gray-400 line-through" : "text-gray-700 dark:text-gray-300"}`}>
-                    {r.is_popular ? <span title="카페 인기글">🔥 </span> : null}{r.title}
-                  </span>
-                  <span className="shrink-0 text-[10px] text-gray-400">
+                    ? <span title="오늘 처음 발견한 글" className="shrink-0 rounded bg-primary/10 px-1 py-0.5 text-[10px] font-bold text-primary">NEW</span>
+                    : <span title="이전에 봤던 글을 다시 확인(지표 갱신)" className="shrink-0 text-[10px] text-gray-300">재확인</span>}
+                  <span className="w-24 shrink-0 truncate text-[11px] text-gray-400">{r.cafe_name}</span>
+                  {r.url ? (
+                    <a href={r.url} target="_blank" rel="noopener noreferrer" title="카페에서 원문 열기"
+                      className={`min-w-0 flex-1 truncate hover:text-primary hover:underline ${r.verdict === "ad" || r.verdict === "noise" ? "text-gray-400 line-through" : "text-gray-700 dark:text-gray-300"}`}>
+                      {r.is_popular ? <span title="카페 인기글">🔥 </span> : null}{r.title}
+                    </a>
+                  ) : (
+                    <span className={`min-w-0 flex-1 truncate ${r.verdict === "ad" || r.verdict === "noise" ? "text-gray-400 line-through" : "text-gray-700 dark:text-gray-300"}`}>
+                      {r.is_popular ? <span title="카페 인기글">🔥 </span> : null}{r.title}
+                    </span>
+                  )}
+                  <span className="shrink-0 text-[11px] text-gray-400">
                     {hasDelta
                       ? `24h 조회 +${r.views_delta ?? 0}${r.comments_delta ? ` · 댓글 +${r.comments_delta}` : ""}`
                       : (r.views ?? 0) > 0 ? `조회 ${Number(r.views).toLocaleString()}` : ""}
                   </span>
-                  <span className="w-16 shrink-0 text-right text-[10px] text-gray-400">{rel(r.last_seen, nowMs)}</span>
+                  <span className="w-16 shrink-0 text-right text-[11px] text-gray-400">{rel(r.last_seen, nowMs)}</span>
                 </div>
               );
             })}
           </div>
         )}
-        <p className="mt-2 text-right text-[10px] text-gray-400">각 줄에 마우스를 올리면 판정 이유가 보여요 · 광고로 걸러진 글도 지우지 않고 그대로 보관합니다</p>
+        <p className="mt-2 text-right text-[11px] text-gray-400">각 줄에 마우스를 올리면 판정 이유가 보여요 · 광고로 걸러진 글도 지우지 않고 그대로 보관합니다</p>
       </section>
       </>
       )}

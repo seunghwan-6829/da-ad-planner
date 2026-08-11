@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { OBSERVE_GAP_MS, OBSERVE_GLOBAL_GAP_MS, EVAL_AFTER_MS } from '@/lib/naver/observe-rules'
+import { OBSERVE_GAP_MS, OBSERVE_GLOBAL_GAP_MS, EVAL_AFTER_MS, resolveClubId, cafeArticleUrl } from '@/lib/naver/observe-rules'
 
 /* '글 수집 현황' 전용 페이지가 쓰는 집계 API(보호 라우트 — /api/naver-cafe/* 는 middleware 가 지킨다).
    카페별 수집 상태 + 판정 분포 + 최근 활동 + 워커/평가 상태를 한 번에 준다.
@@ -43,49 +43,63 @@ async function build() {
   const todayStart = kstTodayStartMs(nowMs)
   const evalDueBefore = nowMs - EVAL_AFTER_MS
 
-  const [cafesRes, metaRes, rowsRes, feedRes, agentRes, lastEvalRes] = await Promise.all([
-    supabaseAdmin.from('nc_cafes').select('id, name, cafe_url, enabled, brand_id').order('created_at', { ascending: true }),
+  const [cafesRes, metaRes, statsRes, feedRes, agentRes, lastEvalRes] = await Promise.all([
+    supabaseAdmin.from('nc_cafes').select('id, name, cafe_url, club_id, enabled, brand_id').order('created_at', { ascending: true }),
     supabaseAdmin.from('nc_meta').select('key, value').limit(1000),
-    supabaseAdmin
-      .from('nc_cafe_posts')
-      .select('cafe_id, verdict, first_seen, last_seen, first_metric_at')
-      .order('last_seen', { ascending: false })
-      .limit(ROWS_LIMIT),
+    /* 집계는 DB 에서 (카페 × 판정) 으로 접어 받는다 — 결과가 수십 행뿐이라 글이 수십 배 늘어도 응답이 일정하다.
+       (마이그레이션 전 환경에서는 아래 폴백이 예전처럼 행을 훑는다) */
+    supabaseAdmin.rpc('nc_observe_stats'),
     supabaseAdmin.from('nc_cafe_posts').select('*').order('last_seen', { ascending: false }).limit(FEED_LIMIT),
     supabaseAdmin.from('nc_agent').select('last_seen, halted, halt_reason, last_event, last_event_at').eq('id', 1).maybeSingle(),
     // 평가 크론이 실제로 돌고 있는지 — 마지막 판정 시각(멈추면 판정 대기만 쌓인다)
     supabaseAdmin.from('nc_cafe_posts').select('evaluated_at').not('evaluated_at', 'is', null).order('evaluated_at', { ascending: false }).limit(1).maybeSingle(),
   ])
 
-  const cafes = (cafesRes.data ?? []) as { id: string; name: string; cafe_url: string | null; enabled: boolean | null; brand_id: string | null }[]
+  const cafes = (cafesRes.data ?? []) as { id: string; name: string; cafe_url: string | null; club_id: string | null; enabled: boolean | null; brand_id: string | null }[]
   const meta = new Map((metaRes.data ?? []).map((m) => [String((m as { key: string }).key), String((m as { value?: string }).value ?? '')]))
-
-  // nc_cafe_posts 가 아직 없으면(마이그레이션 전) 카페 목록만 보여주고 안내한다.
-  const tableMissing = !!rowsRes.error
 
   const perCafe = new Map<string, Counts & { lastCollectedAt: string | null }>()
   for (const c of cafes) perCafe.set(c.id, { ...zero(), lastCollectedAt: null })
-
   const totals = zero()
-  const rawRows = (rowsRes.data ?? []) as Record<string, unknown>[]
-  // 상한에 걸렸으면 숫자가 '전체'가 아님을 화면에 알려야 한다(조용히 축소되면 잘못된 판단을 부른다).
-  const truncated = rawRows.length >= ROWS_LIMIT
-  if (!tableMissing) {
-    for (const raw of rawRows) {
-      const cid = String(raw.cafe_id ?? '')
-      const slot = perCafe.get(cid)
+  const bucket = (v: string) => (['keep', 'drop', 'ad', 'noise', 'unrated'] as const).find((k) => k === v) ?? 'pending'
+
+  let tableMissing = false
+  let truncated = false
+
+  if (!statsRes.error && Array.isArray(statsRes.data)) {
+    // ── 빠른 경로: DB 집계(정확한 전체 카운트, 행 수와 무관하게 일정한 비용) ──
+    for (const r of statsRes.data as { cafe_id: string; verdict: string; cnt: number; today_cnt: number; due_cnt: number; last_collected: string | null }[]) {
+      const slot = perCafe.get(String(r.cafe_id))
       if (!slot) continue // 삭제된 발행처의 잔여 행은 집계에서 제외
-      const v = String(raw.verdict ?? 'pending')
-      const key = (['keep', 'drop', 'ad', 'noise', 'unrated'] as const).find((k) => k === v) ?? 'pending'
-      slot[key] += 1
-      slot.total += 1
-      totals[key] += 1
-      totals.total += 1
+      const key = bucket(String(r.verdict ?? 'pending'))
+      const cnt = Number(r.cnt) || 0
+      const today = Number(r.today_cnt) || 0
+      const due = Number(r.due_cnt) || 0
+      slot[key] += cnt; slot.total += cnt; slot.today += today; slot.dueEval += due
+      totals[key] += cnt; totals.total += cnt; totals.today += today; totals.dueEval += due
+      if (r.last_collected && (!slot.lastCollectedAt || r.last_collected > slot.lastCollectedAt)) slot.lastCollectedAt = r.last_collected
+    }
+  } else {
+    /* ── 폴백: 집계 함수(nc_observe_stats)가 아직 없는 환경 ──
+       예전처럼 최근 행을 훑는다. 느리고 상한이 있어 truncated 로 알린다(최신 SQL 을 실행하면 위 경로로 간다). */
+    const scan = await supabaseAdmin
+      .from('nc_cafe_posts')
+      .select('cafe_id, verdict, first_seen, last_seen, first_metric_at')
+      .order('last_seen', { ascending: false })
+      .limit(ROWS_LIMIT)
+    tableMissing = !!scan.error
+    const rawRows = (scan.data ?? []) as Record<string, unknown>[]
+    truncated = rawRows.length >= ROWS_LIMIT
+    for (const raw of rawRows) {
+      const slot = perCafe.get(String(raw.cafe_id ?? ''))
+      if (!slot) continue
+      const key = bucket(String(raw.verdict ?? 'pending'))
+      slot[key] += 1; slot.total += 1
+      totals[key] += 1; totals.total += 1
 
       const firstSeenMs = raw.first_seen ? Date.parse(String(raw.first_seen)) : NaN
       if (!Number.isNaN(firstSeenMs) && firstSeenMs >= todayStart) { slot.today += 1; totals.today += 1 }
 
-      // 평가 대기: pending 인데 첫 관측 후 24시간이 지난 것(다음 크론에서 판정됨)
       const fmaMs = raw.first_metric_at ? Date.parse(String(raw.first_metric_at)) : NaN
       if (key === 'pending' && !Number.isNaN(fmaMs) && fmaMs <= evalDueBefore) { slot.dueEval += 1; totals.dueEval += 1 }
 
@@ -117,6 +131,7 @@ async function build() {
   })
 
   const cafeNames = new Map(cafes.map((c) => [c.id, c.name]))
+  const cafeClubs = new Map(cafes.map((c) => [c.id, resolveClubId(c.cafe_url, c.club_id)]))
   const recent = tableMissing
     ? []
     : ((feedRes.data ?? []) as Record<string, unknown>[])
@@ -124,6 +139,8 @@ async function build() {
         .map((r) => ({
           cafe_id: String(r.cafe_id ?? ''),
           cafe_name: cafeNames.get(String(r.cafe_id ?? '')) ?? '',
+          // 원문 주소 — 목록에서 바로 카페 글을 열어볼 수 있게
+          url: cafeArticleUrl(cafeClubs.get(String(r.cafe_id ?? '')) ?? null, r.article_id ? String(r.article_id) : null),
           title: String(r.title ?? ''),
           verdict: String(r.verdict ?? 'pending'),
           verdict_reason: r.verdict_reason ? String(r.verdict_reason) : null,

@@ -47,5 +47,53 @@ update nc_cafe_posts
  where (verdict is null or verdict = 'pending')
    and first_metric_at is null;
 
+/* 수집 파싱 버그로 들어온 쓰레기 행 정리(2026-08-12).
+   같은 글의 '댓글 수 링크'(<a>[4]</a>)를 게시글로 오인해 제목이 "[ 4 ]" 같은 행이 생겼다.
+   ⚠️ 지우지 않는다(데이터 보존 원칙) — '잡글'로 표시해 집계·소재에서만 빠지게 한다. */
+update nc_cafe_posts
+   set verdict = 'noise',
+       verdict_reason = '수집 파싱 오류로 들어온 댓글 수 배지(글 아님)'
+ where title ~ '^\[?\s*[0-9]{1,5}\s*\]?$'
+   and coalesce(verdict, 'pending') not in ('noise');
+
+-- ── 성능(2026-08-12) ──
+-- 글이 수십 배로 늘어도 '글 수집 현황'이 느려지지 않게: 목록 정렬·필터에 쓰는 인덱스.
+create index if not exists idx_nc_cafe_posts_last_seen on nc_cafe_posts (last_seen desc);
+create index if not exists idx_nc_cafe_posts_cafe_verdict on nc_cafe_posts (cafe_id, verdict);
+create index if not exists idx_nc_cafe_posts_score on nc_cafe_posts (score desc nulls last);
+create index if not exists idx_nc_cafe_posts_first_seen on nc_cafe_posts (first_seen desc);
+
+/* 현황 집계를 DB 에서 한 번에 끝낸다.
+   예전에는 서버가 최근 5,000행을 통째로 읽어 JS 로 셌는데, 글이 쌓일수록 그대로 느려진다.
+   이 함수는 (카페 × 판정) 단위로 접혀 나오므로 결과가 수십 행뿐 — 데이터가 늘어도 응답이 일정하다. */
+create or replace function nc_observe_stats()
+returns table (
+  cafe_id uuid,
+  verdict text,
+  cnt bigint,
+  today_cnt bigint,
+  due_cnt bigint,
+  last_collected timestamptz
+)
+language sql
+stable
+as $$
+  select
+    p.cafe_id,
+    coalesce(p.verdict, 'pending') as verdict,
+    count(*)::bigint as cnt,
+    count(*) filter (
+      where p.first_seen >= (date_trunc('day', (now() at time zone 'Asia/Seoul')) at time zone 'Asia/Seoul')
+    )::bigint as today_cnt,
+    count(*) filter (
+      where coalesce(p.verdict, 'pending') = 'pending'
+        and p.first_metric_at is not null
+        and p.first_metric_at <= now() - interval '24 hours'
+    )::bigint as due_cnt,
+    max(p.last_seen) as last_collected
+  from nc_cafe_posts p
+  group by p.cafe_id, coalesce(p.verdict, 'pending');
+$$;
+
 -- 서버(service_role)만 접근 — 브라우저 anon 직접 접근 차단.
 alter table nc_cafe_posts enable row level security;
