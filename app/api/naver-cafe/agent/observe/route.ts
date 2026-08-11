@@ -1,17 +1,22 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { getMeta, setMeta } from '@/lib/naver/pacing'
+import { setMeta } from '@/lib/naver/pacing'
+import { mergeObservedRow, type ObservedPrev } from '@/lib/naver/observe-rules'
 
-/* 카페 관찰 — 워커(노트북)가 발행처 게시판에 들러 '실제로 올라오는 글 제목'을 수집한다.
-   GET  → 지금 관찰할 카페 1곳(카페당 22시간에 1번만 배정 — 사람이 하루 한 번 눈팅하는 수준의 페이스)
-   POST → 수집한 제목들 저장(nc_cafe_posts upsert)
-   원고 생성이 이 데이터로 카페의 말투·소재 결을 맞춘다. 수집 실패해도 다음 배정(22h 후)에 재시도.
+/* 카페 관찰 — 워커(노트북)가 발행처 게시판에 들러 '실제로 올라오는 글'을 수집한다.
+   GET  → 지금 관찰할 카페 1곳 배정
+          · 카페당 11시간에 1번(= 하루 2번). 오전/오후 다른 시간대에 자연스럽게 걸린다.
+          · 카페 사이엔 최소 25분 간격 — 5개 카페를 20초 만에 연속 방문하는 '봇 패턴'을 막는다.
+   POST → 수집 결과 저장. 첫 관측치(views_first/comments_first)는 한 번만 박고 이후엔 최신값만 갱신
+          → 24시간 뒤 증가폭(반응)을 잴 수 있다. 평가는 lib/naver/observe-eval.ts 가 크론에서 수행.
    ⚠️ /api/naver-cafe/agent/* 는 middleware 예외(워커는 사용자 세션이 없다) — x-agent-token 으로 인증. */
 
 export const dynamic = 'force-dynamic'
 
-const OBSERVE_GAP_MS = 22 * 60 * 60 * 1000 // 22시간 — 매일 다른 시각에 자연스럽게 돌게 딱 하루보다 짧게
+const OBSERVE_GAP_MS = 11 * 60 * 60 * 1000  // 카페당 11시간 = 하루 2번
+const GLOBAL_GAP_MS = 25 * 60 * 1000        // 카페 간 최소 25분(연속 방문 방지)
 const META_PREFIX = 'observe:'
+const GLOBAL_KEY = 'observe_last_any'
 
 function authOk(req: Request): boolean {
   const need = process.env.NC_AGENT_TOKEN || ''
@@ -32,24 +37,40 @@ function cleanTitle(raw: unknown): string {
 export async function GET(req: Request) {
   if (!authOk(req)) return NextResponse.json({ error: 'agent unauthorized' }, { status: 401 })
 
+  const nowMs = Date.now()
+
+  /* 워커가 20초마다 부르는 엔드포인트라 쿼리 수를 고정해 둔다.
+     (카페마다 getMeta 를 부르면 카페 수 × 2회 × 하루 4320번 = 수만 쿼리) → nc_meta 를 한 번에 읽어 Map 으로 본다. */
+  const { data: metaRows } = await supabaseAdmin.from('nc_meta').select('key, value').limit(1000)
+  const meta = new Map((metaRows ?? []).map((m) => [String((m as { key: string }).key), String((m as { value?: string }).value ?? '')]))
+
+  // 카페 간 최소 간격 — 직전 관찰이 25분 이내면 이번엔 배정하지 않는다(사람처럼 띄엄띄엄).
+  const lastAnyMs = Date.parse(meta.get(GLOBAL_KEY) || '')
+  if (!Number.isNaN(lastAnyMs) && nowMs - lastAnyMs < GLOBAL_GAP_MS) {
+    return NextResponse.json({ none: true, reason: '카페 간 간격 대기 중' })
+  }
+
   const { data: cafes } = await supabaseAdmin
     .from('nc_cafes')
     .select('id, name, cafe_url, club_id, board_id')
     .eq('enabled', true)
     .order('created_at', { ascending: true })
-  const nowMs = Date.now()
 
   for (const cafe of cafes || []) {
     if (!cafe.cafe_url) continue
-    const last = await getMeta(`${META_PREFIX}${cafe.id}`)
-    const lastMs = last ? Date.parse(last) : NaN
+    // 연속 실패로 일시정지된 발행처는 관찰도 쉰다(문제 카페를 계속 두드리지 않게).
+    if (meta.get(`pause:${cafe.id}`)) continue
+    const lastMs = Date.parse(meta.get(`${META_PREFIX}${cafe.id}`) || '')
     if (!Number.isNaN(lastMs) && nowMs - lastMs < OBSERVE_GAP_MS) continue
-    // 배정 시각을 지금 기록 — 수집이 실패해도 22시간 뒤에나 재시도(같은 카페를 계속 두드리지 않게)
+    // 배정 시각을 지금 기록 — 수집이 실패해도 11시간 뒤에나 재시도(같은 카페를 계속 두드리지 않게)
     await setMeta(`${META_PREFIX}${cafe.id}`, new Date(nowMs).toISOString())
+    await setMeta(GLOBAL_KEY, new Date(nowMs).toISOString())
     return NextResponse.json({ cafe })
   }
   return NextResponse.json({ none: true })
 }
+
+type ExistingRow = ObservedPrev & { title: string }
 
 export async function POST(req: Request) {
   if (!authOk(req)) return NextResponse.json({ error: 'agent unauthorized' }, { status: 401 })
@@ -64,30 +85,57 @@ export async function POST(req: Request) {
   }
 
   const nowISO = new Date().toISOString()
-  const rows: Record<string, unknown>[] = []
+  type Incoming = { title: string; article_id: string | null; views: number | null; comments: number | null; is_popular: boolean }
+  const incoming: Incoming[] = []
   const seen = new Set<string>()
   for (const it of items) {
     const o = it as { title?: unknown; article_id?: unknown; views?: unknown; comments?: unknown; is_popular?: unknown }
     const title = cleanTitle(o?.title)
     if (!title || seen.has(title)) continue
     seen.add(title)
-    rows.push({
-      cafe_id: cafeId,
+    incoming.push({
       title,
       article_id: o?.article_id ? String(o.article_id) : null,
       views: num(o?.views),
       comments: num(o?.comments),
       is_popular: o?.is_popular === true,
-      last_seen: nowISO,
     })
   }
-  if (!rows.length) return NextResponse.json({ ok: true, stored: 0 })
+  if (!incoming.length) return NextResponse.json({ ok: true, stored: 0 })
 
-  // (cafe_id, title) upsert — 이미 본 글은 last_seen·지표만 갱신, 새 글은 first_seen 자동.
+  /* 기존 행을 먼저 읽어 '병합값'을 직접 계산한다 — 그냥 upsert 하면
+       ① 첫 관측치(views_first)가 매번 덮어써져 증가폭을 영영 못 재고,
+       ② 이번에 파싱 실패한 지표(null)가 지난 값을 지우고,
+       ③ 어제 인기글이던 글의 is_popular 가 오늘 false 로 내려간다.
+     제목 목록을 URL 쿼리(.in)로 넘기면 길어져 깨질 수 있어, 이 카페의 최근 행을 한 번에 읽어 JS 에서 맞춘다. */
+  const since = new Date(Date.now() - 60 * 86400_000).toISOString()
+  const { data: existingRows, error: readErr } = await supabaseAdmin
+    .from('nc_cafe_posts')
+    .select('title, article_id, views, comments, views_first, comments_first, first_metric_at, is_popular, verdict')
+    .eq('cafe_id', cafeId)
+    .gte('last_seen', since)
+    .order('last_seen', { ascending: false })
+    .limit(1000)
+
+  // 컬럼 미생성(마이그레이션 전)이면 확장 필드 없이 제목만 저장하는 폴백으로 간다.
+  const legacyMode = !!readErr
+  const prev = new Map<string, ExistingRow>()
+  if (!legacyMode) for (const r of (existingRows ?? []) as ExistingRow[]) prev.set(r.title, r)
+
+  // 병합 규칙은 lib/naver/observe-rules.mergeObservedRow (순수 함수 — 단위 테스트 대상)
+  const rows = incoming.map((r) => {
+    const p = prev.get(r.title)
+    const base: Record<string, unknown> = { cafe_id: cafeId, title: r.title, last_seen: nowISO }
+    if (legacyMode) return { ...base, article_id: r.article_id ?? p?.article_id ?? null }
+    return { ...base, ...mergeObservedRow(p, r, nowISO) }
+  })
+
   let { error } = await supabaseAdmin.from('nc_cafe_posts').upsert(rows, { onConflict: 'cafe_id,title' })
-  if (error && /views|comments|is_popular/.test(error.message)) {
-    // 인기글 컬럼 마이그레이션 전 폴백 — 제목만이라도 저장(기능 무중단)
-    const stripped = rows.map(({ cafe_id, title, article_id, last_seen }) => ({ cafe_id, title, article_id, last_seen }))
+  if (error && /(views|comments|is_popular|views_first|comments_first|first_metric_at|verdict)/.test(error.message)) {
+    // 확장 컬럼 미생성 폴백 — 제목만이라도 저장(기능 무중단)
+    const stripped = rows.map((r) => ({
+      cafe_id: r.cafe_id, title: r.title, article_id: r.article_id, last_seen: r.last_seen,
+    }))
     ;({ error } = await supabaseAdmin.from('nc_cafe_posts').upsert(stripped, { onConflict: 'cafe_id,title' }))
   }
   if (error) {
@@ -97,5 +145,6 @@ export async function POST(req: Request) {
       { status: missing ? 503 : 500 },
     )
   }
-  return NextResponse.json({ ok: true, stored: rows.length })
+  const fresh = rows.filter((r) => !prev.has(String(r.title))).length
+  return NextResponse.json({ ok: true, stored: rows.length, fresh })
 }

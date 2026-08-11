@@ -404,7 +404,11 @@ export default function NaverCafePage() {
 
   const [estMap, setEstMap] = useState<Record<string, { at: string; note: string }>>({}); // 발행 대기 글별 예상 발행 시각
   const [tasteInfo, setTasteInfo] = useState<{ active: boolean; approvedCount: number; rejectedCount: number; guidance: string[] } | null>(null); // 취향 학습 상태
-  const [obs, setObs] = useState<{ items: { title: string; last_seen: string; views?: number | null; comments?: number | null; is_popular?: boolean }[]; observed_at?: string | null; tableMissing?: boolean } | null>(null); // 카페 관찰 데이터(인기글 포함)
+  // 카페 관찰 데이터(수집 → 24h 평가 결과 포함). 광고로 판정된 글도 지우지 않고 그대로 보여준다.
+  type ObsItem = { title: string; last_seen: string; views?: number | null; comments?: number | null; views_delta?: number | null; comments_delta?: number | null; is_popular?: boolean; verdict?: string; verdict_reason?: string | null; score?: number | null };
+  type ObsSummary = { keep: number; drop: number; ad: number; noise: number; unrated: number; pending: number; total: number };
+  const [obs, setObs] = useState<{ items: ObsItem[]; summary?: ObsSummary | null; observed_at?: string | null; tableMissing?: boolean } | null>(null);
+  const [obsFilter, setObsFilter] = useState<"all" | "keep" | "pending" | "drop" | "ad" | "noise" | "unrated">("all");
   const loadAll = useCallback(() => {
     fetch("/api/naver-cafe/brands").then((r) => (r.ok ? r.json() : [])).then((j) => setBrands(j as Brand[])).catch(() => {});
     fetch("/api/naver-cafe/cafes")
@@ -1333,32 +1337,82 @@ export default function NaverCafePage() {
                     </div>
                   )}
                 </div>
-                {/* 카페 관찰 — 워커가 하루 1회 이 카페에 들러 수집한 '실제 올라오는 글'. 원고가 이 결을 참고한다. */}
+                {/* 카페 관찰 — 워커가 하루 2회 들러 수집 → 24시간 뒤 반응 측정 → 잘 나온 글만 원고 소재로.
+                    광고/잡글은 자동으로 걸러내되 데이터는 지우지 않고 여기서 확인할 수 있다. */}
                 <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
-                  <h2 className="mb-2 text-sm font-bold dark:text-gray-100">카페 관찰 <span className="ml-1 text-[11px] font-normal text-gray-400">— 이 카페에 실제 올라오는 글 (하루 1회 자동 수집 · 원고가 이 결에 맞춰 써져요)</span></h2>
+                  <h2 className="mb-2 text-sm font-bold dark:text-gray-100">카페 관찰 <span className="ml-1 text-[11px] font-normal text-gray-400">— 하루 2회 자동 수집 · 24시간 뒤 반응 측정 → 잘 나온 글만 원고 소재로 (광고는 자동 제외)</span></h2>
                   {obs?.tableMissing ? (
                     <p className="py-3 text-center text-xs text-amber-600 dark:text-amber-300">Supabase 에서 db/naver-cafe-observe.sql 을 실행하면 수집이 시작돼요.</p>
                   ) : !obs || obs.items.length === 0 ? (
-                    <p className="py-3 text-center text-xs text-gray-400">아직 수집된 글이 없어요. 노트북 에이전트가 켜져 있으면 하루 안에 자동으로 쌓입니다.</p>
-                  ) : (
-                    <>
-                      <div className="max-h-56 space-y-1 overflow-y-auto">
-                        {/* 인기글(🔥)을 위로 — 반응 검증된 소재 시드로 원고 1개에 자동 반영됨(주제만 차용, 복제 차단) */}
-                        {[...obs.items].sort((a, b) => Number(!!b.is_popular) - Number(!!a.is_popular)).map((it, i) => (
-                          <div key={i} className="flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800/60">
-                            <span className="min-w-0 flex-1 truncate text-gray-700 dark:text-gray-300">
-                              {it.is_popular ? <span title="이 카페 인기글 — 원고 소재 시드로 활용돼요">🔥 </span> : null}{it.title}
-                            </span>
-                            <span className="shrink-0 text-[10px] text-gray-400">
-                              {(it.views ?? 0) > 0 ? `조회 ${Number(it.views).toLocaleString()} · ` : ""}{(it.comments ?? 0) > 0 ? `댓글 ${it.comments} · ` : ""}
-                              {new Date(it.last_seen).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" })}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                      {obs.observed_at && <p className="mt-2 text-right text-[10px] text-gray-400">마지막 관찰 {new Date(obs.observed_at).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</p>}
-                    </>
-                  )}
+                    <p className="py-3 text-center text-xs text-gray-400">아직 수집된 글이 없어요. 노트북 에이전트가 켜져 있으면 반나절 안에 자동으로 쌓입니다.</p>
+                  ) : (() => {
+                    const VERDICT_META: Record<string, { label: string; icon: string; cls: string }> = {
+                      keep: { label: "좋은 글", icon: "✅", cls: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300" },
+                      pending: { label: "측정 중", icon: "⏳", cls: "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400" },
+                      drop: { label: "반응 낮음", icon: "💤", cls: "bg-gray-100 text-gray-400 dark:bg-gray-800 dark:text-gray-500" },
+                      ad: { label: "광고", icon: "🚫", cls: "bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-300" },
+                      noise: { label: "잡글", icon: "🧹", cls: "bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300" },
+                      unrated: { label: "측정 불가", icon: "❔", cls: "bg-gray-100 text-gray-400 dark:bg-gray-800 dark:text-gray-500" },
+                    };
+                    const s = obs.summary;
+                    const chips: { k: typeof obsFilter; label: string; n: number }[] = [
+                      { k: "all", label: "전체", n: s?.total ?? obs.items.length },
+                      { k: "keep", label: "✅ 좋은 글", n: s?.keep ?? 0 },
+                      { k: "pending", label: "⏳ 측정 중", n: s?.pending ?? 0 },
+                      { k: "drop", label: "💤 반응 낮음", n: s?.drop ?? 0 },
+                      { k: "ad", label: "🚫 광고", n: s?.ad ?? 0 },
+                      { k: "noise", label: "🧹 잡글", n: s?.noise ?? 0 },
+                      { k: "unrated", label: "❔ 측정 불가", n: s?.unrated ?? 0 },
+                    ];
+                    const shown = obs.items
+                      .filter((it) => obsFilter === "all" || (it.verdict ?? "pending") === obsFilter)
+                      // 좋은 글 → 측정 중 → 나머지 순, 같은 등급이면 최신순
+                      .sort((a, b) => {
+                        const rank = (v?: string) => (v === "keep" ? 0 : v === "pending" ? 1 : v === "drop" ? 2 : v === "unrated" ? 3 : 4);
+                        return rank(a.verdict) - rank(b.verdict) || (a.last_seen < b.last_seen ? 1 : -1);
+                      });
+                    return (
+                      <>
+                        <div className="mb-2 flex flex-wrap gap-1">
+                          {chips.filter((c) => c.k === "all" || c.n > 0).map((c) => (
+                            <button
+                              key={c.k}
+                              onClick={() => setObsFilter(c.k)}
+                              className={`rounded-full border px-2 py-0.5 text-[10px] font-medium transition ${obsFilter === c.k ? "border-primary bg-primary/10 text-primary" : "border-gray-200 text-gray-500 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-800"}`}
+                            >
+                              {c.label} {c.n}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="max-h-56 space-y-1 overflow-y-auto">
+                          {shown.length === 0 ? (
+                            <p className="py-3 text-center text-xs text-gray-400">이 분류에 해당하는 글이 없어요.</p>
+                          ) : shown.map((it, i) => {
+                            const v = VERDICT_META[it.verdict ?? "pending"] ?? VERDICT_META.pending;
+                            const dv = it.views_delta ?? null;
+                            const dc = it.comments_delta ?? null;
+                            return (
+                              <div key={i} title={it.verdict_reason || undefined} className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-800/60">
+                                <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${v.cls}`}>{v.icon} {v.label}</span>
+                                <span className={`min-w-0 flex-1 truncate ${it.verdict === "ad" || it.verdict === "noise" ? "text-gray-400 line-through" : "text-gray-700 dark:text-gray-300"}`}>
+                                  {it.is_popular ? <span title="카페 인기글">🔥 </span> : null}{it.title}
+                                </span>
+                                <span className="shrink-0 text-[10px] text-gray-400">
+                                  {dv !== null || dc !== null
+                                    ? `24h 조회 +${dv ?? 0}${dc ? ` · 댓글 +${dc}` : ""} · `
+                                    : (it.views ?? 0) > 0 ? `조회 ${Number(it.views).toLocaleString()} · ` : ""}
+                                  {new Date(it.last_seen).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" })}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <p className="mt-2 text-right text-[10px] text-gray-400">
+                          판정 이유는 각 줄에 마우스를 올리면 보여요{obs.observed_at ? ` · 마지막 관찰 ${new Date(obs.observed_at).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}` : ""}
+                        </p>
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
             </div>

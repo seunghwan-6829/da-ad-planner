@@ -102,52 +102,78 @@ export async function buildTasteProfile(): Promise<TasteProfile> {
   }
 }
 
-/* 특정 카페의 '관찰된 실제 글 제목'(워커가 수집). 테이블 미생성(마이그레이션 전)이면 빈 배열. */
+/* 특정 카페의 '관찰된 실제 글 제목'(워커가 수집) — 원고가 이 카페의 말투·소재 결을 맞추는 재료.
+   ⚠️ 광고(ad)·잡글(noise)은 제외한다 — 그 결을 따라가면 우리 글까지 광고처럼 보인다.
+   판정 전(pending)·측정 불가(unrated)는 포함(진짜 회원 글이라 결 참고엔 문제없음).
+   ⚠️ 필터는 SQL 이 아니라 JS 에서 한다 — verdict 가 NULL 인 옛 행이 SQL NOT IN 에서 통째로 사라지기 때문. */
+const VIBE_EXCLUDE = new Set(['ad', 'noise'])
 export async function cafeObservedTitles(cafeId: string, limit = 15): Promise<string[]> {
   try {
     const { data, error } = await supabaseAdmin
       .from('nc_cafe_posts')
-      .select('title')
+      .select('*')
       .eq('cafe_id', cafeId)
       .order('last_seen', { ascending: false })
-      .limit(limit)
+      .limit(Math.max(limit * 3, 45)) // 광고·잡글이 걸러질 것을 감안해 넉넉히 읽는다
     if (error) return []
-    return (data ?? []).map((r) => String((r as { title: string }).title || '').trim()).filter(Boolean)
+    return (data as Record<string, unknown>[] ?? [])
+      .filter((r) => r.is_ad !== true && !VIBE_EXCLUDE.has(String(r.verdict ?? '')))
+      .map((r) => String(r.title || '').trim())
+      .filter(Boolean)
+      .slice(0, limit)
   } catch {
     return []
   }
 }
 
-/* 이 카페에서 최근 7일 '반응이 검증된 글'(인기글 페이지 수집 or 조회·댓글 상위) — 원고 소재 시드용.
+/* 이 카페에서 '반응이 검증된 글' — 원고 소재 시드용(최근 14일).
+   우선순위: ① 24시간 평가에서 keep 판정 → ② (평가 이력이 아직 없을 때만) 인기글 폴백.
+   ⛔ 광고(ad)·잡글(noise)·저반응(drop)은 절대 시드가 되지 않는다.
    ⚠️ 시드는 '주제'만 차용한다 — 본문은 애초에 수집하지 않아 물리적으로 베낄 수 없고,
-      제목 유사도 필터(auto-drafts ≥0.75)가 비슷한 제목도 차단한다. */
+      제목 유사도 필터(생성 후 ≥0.75)가 비슷한 제목도 차단한다. */
 export interface PopularPost { title: string; views: number | null; comments: number | null }
 export async function cafePopularPosts(cafeId: string, limit = 5): Promise<PopularPost[]> {
   try {
-    const since = new Date(Date.now() - 7 * 86400_000).toISOString()
+    const since = new Date(Date.now() - 14 * 86400_000).toISOString()
     const { data, error } = await supabaseAdmin
       .from('nc_cafe_posts')
       .select('*')
       .eq('cafe_id', cafeId)
       .gte('last_seen', since)
       .order('last_seen', { ascending: false })
-      .limit(80)
+      .limit(150)
     if (error || !data) return []
-    const scored = (data as Record<string, unknown>[])
+
+    const rows = (data as Record<string, unknown>[])
       .map((r) => ({
         title: String(r.title || '').trim(),
         views: typeof r.views === 'number' ? (r.views as number) : null,
         comments: typeof r.comments === 'number' ? (r.comments as number) : null,
         popular: r.is_popular === true,
+        verdict: String(r.verdict ?? ''),
+        isAd: r.is_ad === true,
+        score: typeof r.score === 'number' ? (r.score as number) : null,
       }))
-      .filter((r) => r.title && (r.popular || (r.views ?? 0) > 0 || (r.comments ?? 0) > 0))
-    scored.sort(
-      (a, b) =>
-        Number(b.popular) - Number(a.popular) ||
-        (b.views ?? -1) - (a.views ?? -1) ||
-        (b.comments ?? -1) - (a.comments ?? -1),
-    )
-    return scored.slice(0, limit).map(({ title, views, comments }) => ({ title, views, comments }))
+      .filter((r) => r.title && !r.isAd && r.verdict !== 'ad' && r.verdict !== 'noise')
+
+    // ① 평가 통과(keep) — 점수 높은 순
+    const keeps = rows.filter((r) => r.verdict === 'keep')
+    if (keeps.length) {
+      keeps.sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || Number(b.popular) - Number(a.popular))
+      return keeps.slice(0, limit).map(({ title, views, comments }) => ({ title, views, comments }))
+    }
+
+    // ② 폴백 — 아직 평가된 글이 없을 때(수집 첫날 등). 인기글/지표 상위로 대신한다.
+    //    drop 판정된 글은 이미 '반응 낮음'이 확인됐으므로 폴백에서도 뺀다.
+    const fallback = rows
+      .filter((r) => r.verdict !== 'drop' && (r.popular || (r.views ?? 0) > 0 || (r.comments ?? 0) > 0))
+      .sort(
+        (a, b) =>
+          Number(b.popular) - Number(a.popular) ||
+          (b.views ?? -1) - (a.views ?? -1) ||
+          (b.comments ?? -1) - (a.comments ?? -1),
+      )
+    return fallback.slice(0, limit).map(({ title, views, comments }) => ({ title, views, comments }))
   } catch {
     return []
   }

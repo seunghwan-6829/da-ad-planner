@@ -5,6 +5,7 @@ import { getMeta, setMeta } from '@/lib/naver/pacing'
 import { draftPost, splitTopics, archetypesForStyle, type DraftCafe } from '@/lib/naver/generate'
 import { titleSimilarity } from '@/lib/naver/dedupe'
 import { buildTasteProfile, cafeObservedTitles, cafePopularPosts } from '@/lib/naver/taste'
+import { evaluateObservedPosts, type EvalSummary } from '@/lib/naver/observe-eval'
 import { cronAuthOk } from '@/lib/cron-auth'
 
 export const dynamic = 'force-dynamic'
@@ -173,11 +174,24 @@ async function runAutoSchedules(apiKey: string) {
 
 async function handle(req: Request) {
   if (!cronAuthOk(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+
+  /* ① 카페 관찰 글 평가 — 수집 24시간 뒤 반응(조회·댓글 증가)을 재고 광고/잡글을 걸러낸다.
+     원고 생성보다 먼저 돌려야 이번 생성이 '방금 평가된 좋은 글'을 소재로 쓸 수 있다.
+     AI 키가 없어도 규칙 판정만으로 동작하므로 키 검사보다 앞에 둔다. */
+  let evaluated: EvalSummary | { ok: boolean; error: string }
+  try {
+    evaluated = await evaluateObservedPosts()
+  } catch (e) {
+    evaluated = { ok: false, error: String(e instanceof Error ? e.message : e).slice(0, 160) }
+  }
+
   const apiKey = process.env.ANTHROPIC_API_KEY || ''
-  if (!apiKey) return NextResponse.json({ ok: false, error: 'ANTHROPIC_API_KEY(서버) 미설정 — 자동 생성 불가', made: 0, detail: [] }, { status: 200 })
+  if (!apiKey) {
+    return NextResponse.json({ ok: false, error: 'ANTHROPIC_API_KEY(서버) 미설정 — 자동 생성 불가', made: 0, detail: [], evaluated }, { status: 200 })
+  }
   const detail = await runAutoSchedules(apiKey)
   const made = detail.filter((d) => d.item_id).length
-  return NextResponse.json({ ok: true, made, detail })
+  return NextResponse.json({ ok: true, made, detail, evaluated })
 }
 
 export async function GET(req: Request) {

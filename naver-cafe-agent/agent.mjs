@@ -957,7 +957,9 @@ async function trackReactions() {
 }
 
 /* ── 카페 관찰: 발행처 게시판 + '인기글' 페이지에 들러 글 제목·조회수·댓글수 수집 ──
-   서버가 카페당 22시간에 1번만 배정(사람이 하루 한 번 눈팅하는 페이스).
+   서버가 카페당 11시간에 1번(하루 2회) 배정하고, 카페 사이엔 최소 25분을 띄운다.
+   같은 글을 두 번 이상 보면서 조회·댓글이 얼마나 늘었는지가 쌓이고,
+   서버가 첫 수집 24시간 뒤 그 증가폭으로 '잘 나온 글'을 가려낸다(광고는 자동 제외).
    · 최근 글 목록 → 카페의 말투·소재 결 맞추기
    · 인기글(조회·댓글 포함) → 반응이 검증된 '소재 시드'(주제만 차용해 우리 글로 재창작 — 복제는 서버가 차단) */
 async function extractCafePosts(page) {
@@ -1034,7 +1036,7 @@ async function observeCafes() {
 
     if (items.length) {
       const res = await http('/api/naver-cafe/agent/observe', 'POST', { cafe_id: cafe.id, items: items.slice(0, 40) })
-      log(`  → 제목 ${res?.stored ?? 0}개 저장(인기글 ${popular.length ? Math.min(popular.length, 15) : 0}개 포함, 다음 관찰은 내일)`)
+      log(`  → ${res?.stored ?? 0}개 저장(새 글 ${res?.fresh ?? 0} · 인기글 ${popular.length ? Math.min(popular.length, 15) : 0} 포함) — 이 카페는 약 11시간 뒤 다시 관찰(하루 2회)`)
     } else {
       log('  → 목록에서 글을 찾지 못했습니다(다음 관찰 때 재시도)')
     }
