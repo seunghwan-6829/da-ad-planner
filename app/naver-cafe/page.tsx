@@ -7,10 +7,12 @@
    [발행/측정] 내 PC 에이전트가 로그인 브라우저로 사람처럼 실제 타이핑해 등록 + 24h 후 반응 측정(놓친 건 몰아서) */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { ObserveDashboard } from "@/components/naver/observe-dashboard";
 import {
   Archive,
   BarChart3,
   Bot,
+  Radar,
   Check,
   Coffee,
   ExternalLink,
@@ -782,6 +784,10 @@ export default function NaverCafePage() {
           <button onClick={() => setSel("dash")} className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium ${sel === "dash" ? "bg-primary text-white" : "text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"}`}>
             <LayoutDashboard className="h-4 w-4" /> 대시보드
           </button>
+          {/* 글 자동 수집 — 대시보드 바로 아래 전용 페이지(수집 상태·데이터 흐름·판정 결과) */}
+          <button onClick={() => setSel("observe")} className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium ${sel === "observe" ? "bg-primary text-white" : "text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"}`}>
+            <Radar className="h-4 w-4" /> 글 수집 현황
+          </button>
 
           {brands.map((br) => {
             const list = grouped.byBrand.get(br.id) || [];
@@ -830,7 +836,9 @@ export default function NaverCafePage() {
       <div className="flex-1 overflow-y-auto p-6">
         {loadErr && <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{loadErr}</div>}
 
-        {sel === "dash" ? (
+        {sel === "observe" ? (
+          <ObserveDashboard />
+        ) : sel === "dash" ? (
           <>
             <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
               <div>

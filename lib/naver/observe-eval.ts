@@ -1,6 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getNaverSettings } from '@/lib/naver/settings'
-import { classifyByRules, computeDelta, cafeThreshold, decideVerdict, type Verdict } from '@/lib/naver/observe-rules'
+import { classifyByRules, computeDelta, cafeThreshold, decideVerdict, EVAL_AFTER_MS, type Verdict } from '@/lib/naver/observe-rules'
 
 /* 카페 관찰 글 자동 평가 — "수집 → 24시간 뒤 재측정 → 잘 나온 것만 남기기 + 광고 걸러내기".
 
@@ -16,8 +16,7 @@ import { classifyByRules, computeDelta, cafeThreshold, decideVerdict, type Verdi
       소재로 쓰이지 않을 뿐이다(taste.ts 의 시드/결 조회가 verdict·is_ad 로 거른다).
    ⚠️ 판정 규칙 자체는 lib/naver/observe-rules.ts(순수 함수)에 있다 — 단위 테스트 대상. */
 
-// 첫 관측 후 이 시간이 지나야 평가한다(요청: "1일 뒤에 한번씩 재고").
-const EVAL_AFTER_MS = 24 * 60 * 60 * 1000
+// (EVAL_AFTER_MS = 첫 관측 후 24시간 — observe-rules 에서 공유)
 // 한 번의 크론 실행에서 평가할 최대 건수(타임아웃 방지)
 const MAX_PER_RUN = 300
 // AI 광고 판별 1회 배치 크기

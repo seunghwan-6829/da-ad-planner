@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { setMeta } from '@/lib/naver/pacing'
-import { mergeObservedRow, type ObservedPrev } from '@/lib/naver/observe-rules'
+import { mergeObservedRow, OBSERVE_GAP_MS, OBSERVE_GLOBAL_GAP_MS, type ObservedPrev } from '@/lib/naver/observe-rules'
 
 /* 카페 관찰 — 워커(노트북)가 발행처 게시판에 들러 '실제로 올라오는 글'을 수집한다.
    GET  → 지금 관찰할 카페 1곳 배정
@@ -13,8 +13,8 @@ import { mergeObservedRow, type ObservedPrev } from '@/lib/naver/observe-rules'
 
 export const dynamic = 'force-dynamic'
 
-const OBSERVE_GAP_MS = 11 * 60 * 60 * 1000  // 카페당 11시간 = 하루 2번
-const GLOBAL_GAP_MS = 25 * 60 * 1000        // 카페 간 최소 25분(연속 방문 방지)
+// 간격 상수는 lib/naver/observe-rules 에서 가져온다(현황 페이지가 같은 값으로 '다음 수집 예정'을 계산)
+const GLOBAL_GAP_MS = OBSERVE_GLOBAL_GAP_MS
 const META_PREFIX = 'observe:'
 const GLOBAL_KEY = 'observe_last_any'
 

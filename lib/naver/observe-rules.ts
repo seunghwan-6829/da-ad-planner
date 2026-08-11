@@ -4,6 +4,13 @@
 export type Verdict = 'pending' | 'keep' | 'drop' | 'ad' | 'noise' | 'unrated'
 export type RuleClass = 'ad' | 'noise' | 'unknown'
 
+/* ── 수집·평가 타이밍 상수(한 곳에서만 정의) ──
+   수집 라우트·평가 엔진·현황 페이지가 모두 이 값을 import 한다.
+   각자 상수를 들고 있으면 한쪽만 바뀌었을 때 화면의 '다음 수집 예정'이 실제와 어긋난다. */
+export const OBSERVE_GAP_MS = 11 * 60 * 60 * 1000     // 카페당 수집 간격(하루 2회)
+export const OBSERVE_GLOBAL_GAP_MS = 25 * 60 * 1000   // 카페 간 최소 간격(연속 방문 방지)
+export const EVAL_AFTER_MS = 24 * 60 * 60 * 1000      // 첫 관측 후 이만큼 지나야 평가
+
 // 댓글 1개는 조회 30 정도의 가치(카페 글은 댓글이 진짜 반응) — 점수 = 조회증가 + 댓글증가*30
 export const COMMENT_WEIGHT = 30
 // 표본이 적을 때 쓰는 절대 하한 — 이만큼도 안 움직였으면 반응 없음으로 본다.
