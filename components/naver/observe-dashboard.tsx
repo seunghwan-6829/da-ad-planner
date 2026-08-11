@@ -10,6 +10,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Bot, Database, Loader2, RefreshCw, Radar, ServerCog } from "lucide-react";
+import { ObservePosts, type PostsMode } from "@/components/naver/observe-posts";
 
 type Counts = { total: number; today: number; keep: number; drop: number; ad: number; noise: number; unrated: number; pending: number; dueEval: number };
 type CafeRow = {
@@ -67,6 +68,7 @@ export function ObserveDashboard({ onOpenCafe }: { onOpenCafe?: (cafeId: string)
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState<"all" | keyof typeof VERDICT>("all");
+  const [tab, setTab] = useState<"overview" | PostsMode>("overview"); // 하위 페이지 이동
   const [nowMs, setNowMs] = useState(() => Date.now());
   const alive = useRef(true);
 
@@ -158,7 +160,43 @@ export function ObserveDashboard({ onOpenCafe }: { onOpenCafe?: (cafeId: string)
         </div>
       )}
       {err && <div className="mb-4 rounded-xl border border-gray-200 bg-gray-50 p-3 text-xs text-gray-500 dark:border-gray-700 dark:bg-gray-800/60">갱신 실패(이전 데이터 표시 중) — {err}</div>}
+      {/* '측정 불가'가 대부분이면 반드시 이유를 알려준다 — 안 그러면 기능이 고장 난 것처럼 보인다. */}
+      {!data.tableMissing && t.unrated > 0 && t.unrated >= Math.max(10, t.total * 0.4) && (
+        <div className="mb-4 rounded-xl border border-gray-200 bg-gray-50 p-3 text-xs leading-relaxed text-gray-600 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-300">
+          ❔ <b>측정 불가가 많은 이유</b> — 측정 기능을 켜기 전(SQL 적용 전)에 모아둔 글은 <b>증가폭을 잴 기준선이 없습니다</b>.
+          그래서 판정을 보류하고 그대로 보관해요. 이 글이 카페 목록에서 다시 발견되면 자동으로 기준선이 생겨 <b>&apos;측정 중&apos;</b>으로 돌아가고, 24시간 뒤 정상 판정됩니다.
+          <b> 지금부터 새로 올라오는 글은 처음부터 정상 측정</b>되니 며칠이면 ✅·💤·🚫 로 채워집니다.
+        </div>
+      )}
 
+      {/* 하위 페이지 탭 — 헤더 바로 아래에서 데이터를 더 깊게 볼 수 있게 */}
+      <div className="mb-4 flex flex-wrap gap-1 border-b border-gray-200 dark:border-gray-800">
+        {([
+          { k: "overview" as const, label: "현황", n: null },
+          { k: "good" as const, label: "✅ 좋은 원고", n: t.keep },
+          { k: "all" as const, label: "전체 수집 로그", n: t.total },
+          { k: "filtered" as const, label: "🚫 걸러진 글", n: t.ad + t.noise },
+        ]).map((x) => (
+          <button
+            key={x.k}
+            onClick={() => setTab(x.k)}
+            className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium transition ${
+              tab === x.k
+                ? "border-primary text-primary"
+                : "border-transparent text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
+            }`}
+          >
+            {x.label}
+            {x.n !== null && <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${tab === x.k ? "bg-primary/10 text-primary" : "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"}`}>{x.n.toLocaleString()}</span>}
+          </button>
+        ))}
+      </div>
+
+      {tab !== "overview" ? (
+        // key={tab} — 탭을 바꾸면 새로 마운트해 필터·페이지가 그 탭 기본값에서 깨끗하게 시작한다
+        <ObservePosts key={tab} mode={tab} cafes={data.cafes.map((c) => ({ id: c.id, name: c.name }))} />
+      ) : (
+      <>
       {/* ① 파이프라인 요약 */}
       <section className={`${card} mb-4`}>
         <div className="mb-3 flex items-center gap-2 text-sm font-bold dark:text-gray-100">
@@ -183,7 +221,8 @@ export function ObserveDashboard({ onOpenCafe }: { onOpenCafe?: (cafeId: string)
           <div className="rounded-xl border border-gray-200 p-3 text-center dark:border-gray-700">
             <p className="text-[11px] text-gray-500 dark:text-gray-400">③ 판정 완료</p>
             <p className="mt-1 text-2xl font-bold dark:text-gray-100">{collected.toLocaleString()}</p>
-            <p className="mt-0.5 text-[11px] text-gray-400">✅ {t.keep} · 🚫 {t.ad} · 💤 {t.drop}</p>
+            {/* 6종 전부 표기 — 일부만 보이면 "수집 n건인데 판정 0"처럼 숫자가 안 맞아 보인다 */}
+            <p className="mt-0.5 text-[11px] text-gray-400">✅ {t.keep} · 🚫 {t.ad} · 🧹 {t.noise} · 💤 {t.drop} · ❔ {t.unrated}</p>
           </div>
         </div>
         <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-6">
@@ -332,7 +371,7 @@ export function ObserveDashboard({ onOpenCafe }: { onOpenCafe?: (cafeId: string)
                               ))}
                             </div>
                             <p className="mt-1 text-[10px] text-gray-400">
-                              ✅{cc.keep} ⏳{cc.pending} 💤{cc.drop} 🚫{cc.ad} 🧹{cc.noise}
+                              ✅{cc.keep} ⏳{cc.pending} 💤{cc.drop} 🚫{cc.ad} 🧹{cc.noise} ❔{cc.unrated}
                             </p>
                           </div>
                         )}
@@ -391,6 +430,8 @@ export function ObserveDashboard({ onOpenCafe }: { onOpenCafe?: (cafeId: string)
         )}
         <p className="mt-2 text-right text-[10px] text-gray-400">각 줄에 마우스를 올리면 판정 이유가 보여요 · 광고로 걸러진 글도 지우지 않고 그대로 보관합니다</p>
       </section>
+      </>
+      )}
     </>
   );
 }
