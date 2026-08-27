@@ -1,19 +1,12 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
+import { isValidUrl } from '@/lib/validate/url'
 
 type SecretPagePayload = {
   name?: string;
   url?: string;
 };
 
-function isValidUrl(value: string) {
-  try {
-    new URL(value);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 function normalizeProjectUrl(value: string) {
   const url = new URL(value.trim());

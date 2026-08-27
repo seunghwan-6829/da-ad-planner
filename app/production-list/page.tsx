@@ -20,6 +20,7 @@ import {
 import { useAuth } from "@/lib/auth-context";
 import { getClients, type Client } from "@/lib/api/clients";
 import { useGenJobs, type GenKind } from "@/components/gen-jobs";
+import { youtubeEmbed, instagramEmbed } from "@/lib/crawler/media";
 
 type Source = "meta" | "google" | "owned";
 
@@ -67,24 +68,9 @@ const STATUS_CHIP: Record<PLItem["status"], string> = {
   done: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
 };
 
-// 유튜브 watch/shorts/youtu.be URL → 임베드 URL (아니면 null)
-function youtubeEmbed(url: string | null): string | null {
-  if (!url) return null;
-  const id =
-    url.match(/[?&]v=([\w-]{6,})/)?.[1] ||
-    url.match(/youtu\.be\/([\w-]{6,})/)?.[1] ||
-    url.match(/shorts\/([\w-]{6,})/)?.[1] ||
-    url.match(/embed\/([\w-]{6,})/)?.[1] ||
-    null;
-  return id ? `https://www.youtube.com/embed/${id}?playsinline=1` : null;
-}
-
-// 인스타 릴스/게시물 URL → 임베드 URL (아니면 null)
-function instagramEmbed(url: string | null): string | null {
-  if (!url) return null;
-  const code = url.match(/\/(?:reel|reels|p|tv)\/([\w-]+)/)?.[1];
-  return code ? `https://www.instagram.com/reel/${code}/embed/` : null;
-}
+/* 유튜브·인스타 임베드 판정은 lib/crawler/media 로 통일했다.
+   이 파일에 있던 예전 구현은 '유튜브 도메인인지'를 확인하지 않아,
+   경로에 /shorts/ 나 /embed/ 가 들어간 남의 URL 도 유튜브 영상으로 잘못 임베드했다. */
 
 const isStorageUrl = (u: string | null) => !!u && /\/storage\/v1\/object\//.test(u);
 

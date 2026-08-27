@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { ANTHROPIC_BASE, MODELS } from '@/lib/ai/anthropic'
 
-const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages'
-const MODEL = 'claude-3-opus-latest'
+const MODEL = MODELS.heavy
 const MAX_TOKENS = 1024
 
 export async function POST(request: NextRequest) {

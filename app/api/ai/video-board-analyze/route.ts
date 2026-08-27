@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { buildAnthropicImages, buildFrameFacts, buildVideoFacts, VIDEO_MODEL } from '@/lib/video-ai'
+import { ANTHROPIC_BASE } from '@/lib/ai/anthropic'
 
-const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages'
 
 export async function POST(request: NextRequest) {
   const apiKey = request.headers.get('x-user-api-key') || process.env.ANTHROPIC_API_KEY

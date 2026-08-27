@@ -1,3 +1,4 @@
+import { ANTHROPIC_BASE } from '@/lib/ai/anthropic'
 // 네이버 카페 초안/댓글 생성 — "진짜 카페 회원이 쓴 글"이 목표.
 // draftPost: 발행처(페르소나/주제/강조어) + 토픽 → (제목, 본문) 단일 후보.
 // draftComment: 원글 제목/발췌 → 사람 냄새 나는 댓글 1건.
@@ -7,7 +8,6 @@
 //   그래서 통계·"~하는 이유/방법"·볼드·완벽한 구조 같은 'AI·마케팅 티'를 전부 금지한다.
 //   후킹은 "낚시"가 아니라 "어 나도 궁금했는데 / 나도 답해주고 싶다"는 공감에서 나온다.
 
-const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages'
 
 const SYSTEM = `너는 네이버 카페에 글 쓰는 회원이야. 지금 폰으로 글 하나 올리는 상황이야.
 

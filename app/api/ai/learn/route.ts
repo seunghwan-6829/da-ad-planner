@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { ANTHROPIC_BASE, MODELS } from '@/lib/ai/anthropic'
 
-const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages'
-const MODEL = 'claude-opus-4-5-20251101'
+const MODEL = MODELS.heavy
 
 export async function POST(request: NextRequest) {
   const apiKey = request.headers.get('x-user-api-key') || process.env.ANTHROPIC_API_KEY

@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { ANTHROPIC_BASE, MODELS } from '@/lib/ai/anthropic'
 
-const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages'
-const MODEL =
-  process.env.ANTHROPIC_IMAGE_MODEL ||
-  process.env.ANTHROPIC_MODEL ||
-  process.env.ANTHROPIC_VIDEO_MODEL ||
-  'claude-opus-4-6'
+const MODEL = MODELS.image
 
 const DEFAULT_CATEGORIES = ['의류', '식품', '부동산', '뷰티', '건강', '금융', '교육', '여행', '자동차', '가전', '기타']
 

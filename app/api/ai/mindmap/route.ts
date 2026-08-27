@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server'
 import { loadCreative } from '@/lib/creative-source'
+import { ANTHROPIC_BASE, MODELS } from '@/lib/ai/anthropic'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages'
-const MODEL = 'claude-sonnet-4-6'
+const MODEL = MODELS.standard
 
 // POST { library_id } → 경쟁 소재 1개를 7갈래 기획 마인드맵으로 분해.
 // ⚠️ 서버 키가 아니라 "사용자 본인 Anthropic 키"(x-user-api-key)로만 동작 → 키 없는 사람은 사용 불가(체리피커 방지).

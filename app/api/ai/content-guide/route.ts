@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server'
 import { loadCreative } from '@/lib/creative-source'
+import { ANTHROPIC_BASE, MODELS } from '@/lib/ai/anthropic'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages'
-const MODEL = 'claude-sonnet-4-6'
+const MODEL = MODELS.standard
 
 // POST { library_id } → 소재의 장면(프레임)별로 "그 화면을 만들기 위한 이미지 생성 프롬프트(한국어)
 // + 간략 설명 + 주의할 점"을 스토리보드 형태로 생성. 사용자 본인 Anthropic 키(x-user-api-key).

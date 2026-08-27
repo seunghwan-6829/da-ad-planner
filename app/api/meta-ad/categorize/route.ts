@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { ANTHROPIC_BASE, MODELS } from '@/lib/ai/anthropic'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
-const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages'
-const MODEL = 'claude-sonnet-4-6'
+const MODEL = MODELS.standard
 
 const CATEGORIES = [
   '뷰티 & 에어케어',

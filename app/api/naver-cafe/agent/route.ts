@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { authOk } from '@/lib/naver/agent-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -7,11 +8,6 @@ export const dynamic = 'force-dynamic'
 //   GET  → { online, last_seen }  (에이전트가 90초 내 하트비트 보냈으면 online)
 //   POST → 하트비트 갱신(nc_agent.last_seen). X-Agent-Token(설정 시) 필요.
 
-function authOk(req: Request): boolean {
-  const need = process.env.NC_AGENT_TOKEN || ''
-  if (!need) return true
-  return req.headers.get('x-agent-token') === need
-}
 
 export async function GET() {
   const { data } = await supabaseAdmin.from('nc_agent').select('last_seen').eq('id', 1).maybeSingle()

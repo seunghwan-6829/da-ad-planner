@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getNaverSettings } from '@/lib/naver/settings'
 import { classifyByRules, computeDelta, cafeThreshold, decideVerdict, EVAL_AFTER_MS, type Verdict } from '@/lib/naver/observe-rules'
+import { ANTHROPIC_BASE } from '@/lib/ai/anthropic'
 
 /* 카페 관찰 글 자동 평가 — "수집 → 24시간 뒤 재측정 → 잘 나온 것만 남기기 + 광고 걸러내기".
 
@@ -21,7 +22,6 @@ import { classifyByRules, computeDelta, cafeThreshold, decideVerdict, EVAL_AFTER
 const MAX_PER_RUN = 300
 // AI 광고 판별 1회 배치 크기
 const AI_BATCH = 40
-const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages'
 
 /* ── AI 광고 판별(2차) ──
    규칙으로 확정 못 한 제목만 배치로 묶어 한 번에 물어본다(카페당 하루 1~2회, 토큰 미미).

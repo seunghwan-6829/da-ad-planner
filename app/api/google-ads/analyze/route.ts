@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server'
 import { loadCreative } from '@/lib/creative-source'
+import { ANTHROPIC_BASE, MODELS } from '@/lib/ai/anthropic'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages'
-const MODEL = 'claude-sonnet-4-6'
+const MODEL = MODELS.standard
 
 // POST { library_id } → 구글 광고 소재 1개를 AI로 상세 분석(메타 analyze 미러).
 // 시각화용 JSON(phases/engagement/markers/segments/...) — 프론트 AnalysisViz 호환.

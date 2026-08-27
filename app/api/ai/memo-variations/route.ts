@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server'
+import { ANTHROPIC_BASE, MODELS } from '@/lib/ai/anthropic'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
-const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages'
-const MODEL = 'claude-sonnet-4-6'
+const MODEL = MODELS.standard
 
 // 각도별 지시 — "새로 쓰기"가 아니라 원문을 거의 그대로 두는 미세 변형(단어/표현 몇 개만).
 const ANGLES: Record<string, { kind: string; how: string }> = {

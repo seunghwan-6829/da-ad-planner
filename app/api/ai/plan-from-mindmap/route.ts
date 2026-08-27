@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server'
+import { ANTHROPIC_BASE, MODELS } from '@/lib/ai/anthropic'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300 // 긴 기획안 스트리밍 여유(Pro 플랜 기준, Hobby 는 60으로 자동 제한)
 
-const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages'
-const MODEL = 'claude-sonnet-4-6'
+const MODEL = MODELS.standard
 
 // POST { mindmap, brief, brand_name } → 마인드맵 분석 + 우리 브랜드 브리프로 "우리 브랜드용 기획안" 작성.
 // ⚠️ 사용자 본인 Anthropic 키(x-user-api-key)로만 동작.

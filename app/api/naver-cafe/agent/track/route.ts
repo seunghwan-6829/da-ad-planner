@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { authOk } from '@/lib/naver/agent-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -7,11 +8,6 @@ export const dynamic = 'force-dynamic'
 //   GET  → 측정 대기 목록[{id, published_url, title}] (track_due_at 지난 순, 최대 N)
 //   POST {id, views, likes, comments} → 측정 결과 기록(tracked_at). X-Agent-Token(설정 시) 필요.
 
-function authOk(req: Request): boolean {
-  const need = process.env.NC_AGENT_TOKEN || ''
-  if (!need) return true
-  return req.headers.get('x-agent-token') === need
-}
 
 export async function GET(req: Request) {
   if (!authOk(req)) return NextResponse.json({ error: 'agent unauthorized' }, { status: 401 })

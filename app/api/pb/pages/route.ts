@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
+import { isValidUrl } from '@/lib/validate/url'
 
 type CreatePagePayload = {
   siteId: string;
@@ -19,14 +20,6 @@ type CreatePagePayload = {
   note?: string;
 };
 
-function isValidUrl(value: string) {
-  try {
-    new URL(value);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 export async function POST(request: Request) {
   const json = (await request.json().catch(() => null)) as CreatePagePayload | null;

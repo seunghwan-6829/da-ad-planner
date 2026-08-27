@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server'
 import { loadCreative } from '@/lib/creative-source'
+import { ANTHROPIC_BASE, MODELS } from '@/lib/ai/anthropic'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages'
-const MODEL = 'claude-sonnet-4-6'
+const MODEL = MODELS.standard
 
 // POST { post_id } → 온드미디어(UGC) 콘텐츠 1개를 AI로 상세 분석. 메타광고 analyze 와 동일한
 // 시각화용 JSON(phases/engagement/markers/segments/...) 을 반환(프론트의 AnalysisViz 와 호환).

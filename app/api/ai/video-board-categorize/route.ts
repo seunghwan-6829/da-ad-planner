@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { buildAnthropicImages, buildFrameFacts, buildVideoFacts, VIDEO_MODEL } from '@/lib/video-ai'
+import { ANTHROPIC_BASE } from '@/lib/ai/anthropic'
 
-const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages'
 const DEFAULT_CATEGORIES = ['의류', '식품', '부동산', '뷰티', '건강', '금융', '교육', '여행', '자동차', '가전', '기타']
 
 export async function POST(request: NextRequest) {

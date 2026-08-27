@@ -1,13 +1,13 @@
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { buildOverviewData, type OverviewRange } from "@/lib/pb/overview-data";
+import { ANTHROPIC_BASE, MODELS } from '@/lib/ai/anthropic'
 
 /* AI 주간 진단 리포트 생성 엔진 — 크론(/api/pb/weekly-report/cron)과 API(POST)가 공유.
    내부 데이터(브랜드별 요약) + 거시 흐름(계절·소비심리·경기) + 최신 뉴스(Anthropic 웹 검색)로
    "왜 이런 흐름인지"를 진단. 웹 검색이 안 되는 키/모델이면 자동으로 검색 없이 재시도.
    토큰 안전: 입력은 집계 요약 JSON 만, 출력 max_tokens 3000 + 분량 지시. */
 
-const ANTHROPIC_BASE = "https://api.anthropic.com/v1/messages";
-const MODEL = "claude-sonnet-4-6";
+const MODEL = MODELS.standard;
 
 export type GeneratedReport = { week_key: string; content: string; created_at: string; saved: boolean };
 

@@ -3,8 +3,8 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getNaverSettings } from '@/lib/naver/settings'
 import { getMeta, setMeta } from '@/lib/naver/pacing'
 import { draftPost, splitTopics, archetypesForStyle, type DraftCafe } from '@/lib/naver/generate'
-import { titleSimilarity } from '@/lib/naver/dedupe'
-import { buildTasteProfile, cafeObservedTitles, cafePopularPosts } from '@/lib/naver/taste'
+import { buildTasteProfile } from '@/lib/naver/taste'
+import { loadDraftContext, screenTitle, tasteForPrompt } from '@/lib/naver/draft-pipeline'
 import { evaluateObservedPosts, type EvalSummary } from '@/lib/naver/observe-eval'
 import { cronAuthOk } from '@/lib/cron-auth'
 
@@ -99,13 +99,8 @@ async function runAutoSchedules(apiKey: string) {
         }
 
         // 회피 제목(중복 방지)·카페 결·인기글 시드 — 수동 생성(auto-drafts)과 같은 품질 재료를 쓴다.
-        const dupSince = new Date(nowMs - Math.max(1, options.dup_window_days) * 86400_000).toISOString()
-        const { data: recentT } = await supabaseAdmin
-          .from('nc_posts').select('title').eq('cafe_id', d.id).gte('created_at', dupSince)
-          .order('created_at', { ascending: false }).limit(60)
-        const avoidTitles = (recentT || []).map((r) => r.title).filter(Boolean) as string[]
-        const vibe = await cafeObservedTitles(String(d.id), 12)
-        const populars = await cafePopularPosts(String(d.id), 5)
+        const ctx = await loadDraftContext(String(d.id), options)
+        const { avoidTitles, vibe, populars } = ctx
 
         // 발행처가 고른 '글 방향'(정보/질문/일상) 안에서 유형을 하나 뽑는다(미설정이면 전체 섞기).
         const stylePool = archetypesForStyle((d as { post_style?: string }).post_style)
@@ -113,7 +108,7 @@ async function runAutoSchedules(apiKey: string) {
         const { title, body } = await draftPost(apiKey, cafe, topic, claude.model, claude.max_tokens, {
           archetypeKey: arch.key,
           avoidTitles,
-          taste: taste.active ? { active: true, approvedSamples: taste.approvedSamples, rejectedSamples: taste.rejectedSamples, guidance: taste.guidance } : undefined,
+          taste: tasteForPrompt(taste),
           cafeVibe: vibe,
           // 인기글 시드는 가끔만(40%) — 완전 자동에서 시드 티가 나지 않게 자유 소재를 기본으로 둔다.
           remakeSeed: populars.length && Math.random() < 0.4 ? populars[Math.floor(Math.random() * populars.length)] : undefined,
@@ -125,22 +120,11 @@ async function runAutoSchedules(apiKey: string) {
           return
         }
 
-        /* 품질 필터(완전 자동일수록 엄격하게) — 하나라도 걸리면 이번 주기는 건너뛴다(다음 주기 재시도).
-           ① 최근 창 안 비슷한 제목(같은 글 반복 방지) ② 사장님이 반려했던 결 ③ 승인작 복제 ④ 카페 남의 글 유사 */
-        if (avoidTitles.some((t) => titleSimilarity(title, t) >= options.dup_similarity)) {
-          detail.push({ dest: name, reason: '중복(최근 비슷한 글) — 건너뜀' })
-          return
-        }
-        if (taste.active && taste.rejectedTitles.some((rt) => titleSimilarity(title, rt) >= 0.5)) {
-          detail.push({ dest: name, reason: '반려됐던 결과 유사 — 건너뜀' })
-          return
-        }
-        if (taste.approvedTitles.some((at) => titleSimilarity(title, at) >= options.dup_similarity)) {
-          detail.push({ dest: name, reason: '승인작과 유사(복제 방지) — 건너뜀' })
-          return
-        }
-        if (vibe.some((vt) => titleSimilarity(title, vt) >= 0.75)) {
-          detail.push({ dest: name, reason: '카페 기존 글과 유사 — 건너뜀' })
+        /* 품질 심사 — 기준은 lib/naver/draft-pipeline 한 곳에만 둔다(수동 생성 경로와 동일 기준).
+           걸리면 이번 주기는 건너뛰고 다음 주기에 다시 만든다. */
+        const screen = screenTitle(title, { seen: avoidTitles, vibe, taste, options })
+        if (!screen.ok) {
+          detail.push({ dest: name, reason: screen.reason + ' — 건너뜀' })
           return
         }
 

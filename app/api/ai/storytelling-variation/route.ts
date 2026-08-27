@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { ANTHROPIC_BASE, MODELS } from '@/lib/ai/anthropic'
 
-const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages'
-const MODEL = 'claude-sonnet-4-6'
+const MODEL = MODELS.standard
 const MAX_TOKENS = 4096
 
 const FRAMEWORK_PROMPTS: Record<string, string> = {

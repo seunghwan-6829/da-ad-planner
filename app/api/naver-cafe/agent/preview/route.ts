@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { notify, recordEvent } from '@/lib/naver/notify'
+import { authOk } from '@/lib/naver/agent-auth'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -13,11 +14,6 @@ export const maxDuration = 30
    POST : 캡처 업로드 → 글 상태를 'preview' 로 바꾼다(에이전트는 브라우저를 열어둔 채 대기)
    GET ?id= : 사람이 무엇을 눌렀는지 알려준다 → 'approve' | 'cancel' | null(아직) */
 
-function authOk(req: Request): boolean {
-  const need = process.env.NC_AGENT_TOKEN || ''
-  if (!need) return true
-  return req.headers.get('x-agent-token') === need
-}
 
 const BUCKET = 'naver-cafe'
 

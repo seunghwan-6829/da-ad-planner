@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
+import { isValidUrl } from '@/lib/validate/url'
 
 type PagePayload = {
   id: number;
@@ -20,14 +21,6 @@ type PagePayload = {
   note: string;
 };
 
-function isValidUrl(value: string) {
-  try {
-    new URL(value);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;

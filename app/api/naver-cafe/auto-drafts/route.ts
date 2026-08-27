@@ -2,8 +2,8 @@ import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getNaverSettings } from '@/lib/naver/settings'
 import { draftPost, splitTopics, archetypesForStyle, type DraftCafe } from '@/lib/naver/generate'
-import { titleSimilarity } from '@/lib/naver/dedupe'
-import { buildTasteProfile, cafeObservedTitles, cafePopularPosts } from '@/lib/naver/taste'
+import { buildTasteProfile } from '@/lib/naver/taste'
+ import { loadDraftContext, screenTitle, tasteForPrompt } from '@/lib/naver/draft-pipeline'
 import { getMeta } from '@/lib/naver/pacing'
 
 export const dynamic = 'force-dynamic'
@@ -44,17 +44,14 @@ export async function POST(req: Request) {
       const { data: todays } = await supabaseAdmin
         .from('nc_posts').select('id').eq('cafe_id', cafe.id).eq('origin', 'auto')
         .gte('created_at', today.toISOString())
-      const dupSince = new Date(Date.now() - Math.max(1, options.dup_window_days) * 86400_000).toISOString()
-      const { data: recent } = await supabaseAdmin
-        .from('nc_posts').select('title').eq('cafe_id', cafe.id)
-        .gte('created_at', dupSince)
-        .order('created_at', { ascending: false }).limit(60)
       const target = Math.max(0, Math.min(10, Number((cafe as { daily_drafts?: number }).daily_drafts ?? 3) || 0))
       // force: 하루 할당량을 무시하고 요청한 개수(기본 daily_drafts)만큼 지금 바로 생성 — 디벨롭 중 재생성용.
       const forced = b.force === true
       const wanted = Math.max(1, Math.min(10, Number(b.count) || target || 1))
       const need = forced ? wanted : Math.max(0, target - (todays?.length || 0))
-      const avoidTitles = (recent || []).map((r) => r.title).filter(Boolean)
+      // 재료(회피 제목·카페 결·소재 시드)는 두 생성 경로가 공유하는 모듈에서 한 번에 받는다
+      const ctx = await loadDraftContext(String(cafe.id), options)
+      const avoidTitles = ctx.avoidTitles
       const startIdx = todays?.length || 0
 
       const c = cafe as Record<string, unknown>
@@ -69,10 +66,8 @@ export async function POST(req: Request) {
         rules: (c.rules as DraftCafe['rules']) || null,
       }
 
-      // 이 카페에 '실제로 올라오는 글'(워커가 매일 관찰 수집) — 카페 결에 맞게 쓰는 재료.
-      const vibe = await cafeObservedTitles(String(cafe.id), 15)
-      // 반응 검증된 인기글(최근 7일) — 배치당 1개 원고에만 '주제 시드'로 주입(복제는 프롬프트 금지 + 유사도 필터가 차단).
-      const populars = await cafePopularPosts(String(cafe.id), 5)
+      const vibe = ctx.vibe
+      const populars = ctx.populars
 
       // "주로 업로드하는 컨텐츠"를 소주제로 쪼개(예: 마케팅과 상세페이지 → [마케팅, 상세페이지])
       // 원고마다 소주제를 돌려가며 배정 → 한 주제에만 쏠리지 않게.
@@ -93,7 +88,7 @@ export async function POST(req: Request) {
             return draftPost(apiKey, dc, subjects.length ? subjects[idx % subjects.length] : '', claude.model, claude.max_tokens, {
               avoidTitles: seen.slice(-40),
               archetypeKey: stylePool[idx % stylePool.length].key,
-              taste: taste.active ? { active: true, approvedSamples: taste.approvedSamples, rejectedSamples: taste.rejectedSamples, guidance: taste.guidance } : undefined,
+              taste: tasteForPrompt(taste),
               cafeVibe: vibe,
               // 배치의 첫 원고에만 인기글 시드(날마다 다른 인기글로 회전) — 나머지는 자유 소재로 다양성 유지.
               remakeSeed: populars.length && i === 0 ? populars[(startIdx + round) % populars.length] : undefined,
@@ -104,14 +99,9 @@ export async function POST(req: Request) {
           if (r.status !== 'fulfilled' || !r.value.title) continue
           const t = r.value.title
           // 최근 창 안에 비슷한 제목이 있으면 아예 만들지 않는다 — 같은 글 반복 방지.
-          if (seen.some((old) => titleSimilarity(t, old) >= options.dup_similarity)) { skipped++; continue }
-          /* 취향 점수 필터:
-             ① 사장님이 반려했던 제목과 비슷하면 버림(싫어하는 결 재생산 방지)
-             ② 승인·발행된 제목과 비슷해도 버림 — 승인 = 이미 포스팅됨. 좋았다고 또 쓰면 반려 대상(사장님 룰)
-             ③ 이 카페에 실제 있는 남의 글 제목과 비슷하면 버림(따라 쓴 티) */
-          if (taste.active && taste.rejectedTitles.some((rt) => titleSimilarity(t, rt) >= 0.5)) { tasteSkipped++; continue }
-          if (taste.approvedTitles.some((at) => titleSimilarity(t, at) >= options.dup_similarity)) { tasteSkipped++; continue }
-          if (vibe.some((vt) => titleSimilarity(t, vt) >= 0.75)) { tasteSkipped++; continue }
+          // 심사 기준은 lib/naver/draft-pipeline 한 곳에만 있다(두 경로가 같은 기준을 쓰도록)
+          const screen = screenTitle(t, { seen, vibe, taste, options })
+          if (!screen.ok) { if (screen.kind === 'dup') skipped++; else tasteSkipped++; continue }
           seen.push(t)
           const { error: insErr } = await supabaseAdmin
             .from('nc_posts')

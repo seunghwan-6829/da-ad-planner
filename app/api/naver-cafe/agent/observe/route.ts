@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { setMeta } from '@/lib/naver/pacing'
 import { mergeObservedRow, OBSERVE_GAP_MS, OBSERVE_GLOBAL_GAP_MS, type ObservedPrev } from '@/lib/naver/observe-rules'
+import { authOk } from '@/lib/naver/agent-auth'
 
 /* 카페 관찰 — 워커(노트북)가 발행처 게시판에 들러 '실제로 올라오는 글'을 수집한다.
    GET  → 지금 관찰할 카페 1곳 배정
@@ -18,11 +19,6 @@ const GLOBAL_GAP_MS = OBSERVE_GLOBAL_GAP_MS
 const META_PREFIX = 'observe:'
 const GLOBAL_KEY = 'observe_last_any'
 
-function authOk(req: Request): boolean {
-  const need = process.env.NC_AGENT_TOKEN || ''
-  if (!need) return true // 토큰 미설정(로컬) → 개방
-  return req.headers.get('x-agent-token') === need
-}
 
 // 카페 UI 라벨(전체글보기 등)이 제목으로 잘못 잡히는 걸 걸러낸다.
 const UI_LABELS = /^(전체\s?글\s?보기|인기글|공지|카페\s?태그|멤버|출석|등업|가입인사|카페\s?정보|즐겨찾는\s?게시판|베스트\s?게시판)$/

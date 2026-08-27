@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getNaverSettings } from '@/lib/naver/settings'
 import { logActivity, scheduleNext } from '@/lib/naver/pacing'
 import { onPublishSuccess, onPublishFailure } from '@/lib/naver/notify'
+import { authOk } from '@/lib/naver/agent-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -12,11 +13,6 @@ export const dynamic = 'force-dynamic'
 //   ok=false → fail_count++; >=3 → failed 격리, 아니면 approved 복귀
 const MAX_FAIL = 3
 
-function authOk(req: Request): boolean {
-  const need = process.env.NC_AGENT_TOKEN || ''
-  if (!need) return true
-  return req.headers.get('x-agent-token') === need
-}
 
 export async function POST(req: Request) {
   if (!authOk(req)) return NextResponse.json({ error: 'agent unauthorized' }, { status: 401 })

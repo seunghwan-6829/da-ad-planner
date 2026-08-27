@@ -4,6 +4,7 @@ import { getNaverSettings } from '@/lib/naver/settings'
 import { canAct, scheduleNext, publishTargetAt, getMeta } from '@/lib/naver/pacing'
 import { findRecentDuplicate } from '@/lib/naver/dedupe'
 import { getAgentState } from '@/lib/naver/notify'
+import { authOk } from '@/lib/naver/agent-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,11 +17,6 @@ export const dynamic = 'force-dynamic'
 //    발행됐지만 결과 보고만 실패한 항목을 재배정하면 '이중 발행'이 되어 계정 밴 위험.
 //    크래시로 멈춘 publishing 은 웹에서 사람이 확인 후 수동 복귀(대기 취소)한다.
 
-function authOk(req: Request): boolean {
-  const need = process.env.NC_AGENT_TOKEN || ''
-  if (!need) return true // 토큰 미설정(로컬) → 개방
-  return req.headers.get('x-agent-token') === need
-}
 
 // 발행처의 마지막 '실제 발행' 시각(ms). 없으면 null. 발행처별 '업로드 주기'(interval_days) 판정에 쓴다.
 async function lastPublishAtMs(cafeId: string): Promise<number | null> {

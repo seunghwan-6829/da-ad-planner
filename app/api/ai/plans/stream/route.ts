@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server'
+import { ANTHROPIC_BASE, MODELS } from '@/lib/ai/anthropic'
 
-const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages'
-const MODEL = 'claude-opus-4-5-20251101'
+const MODEL = MODELS.heavy
 const MAX_TOKENS = 4096  // 영상 대본용 증가
 
 interface AdvertiserInfo {

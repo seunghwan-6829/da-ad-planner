@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { ANTHROPIC_BASE, MODELS } from '@/lib/ai/anthropic'
 
 export const dynamic = 'force-dynamic'
 // Claude 호출이 길어질 수 있으니 함수 타임아웃을 늘린다(플랜 한도 내).
 export const maxDuration = 60
 
-const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages'
-const MODEL = 'claude-sonnet-4-6'
+const MODEL = MODELS.standard
 
 // POST { target_id?: string }  → 해당 업체(또는 전체) 최근 광고를 AI 요약
 export async function POST(req: Request) {

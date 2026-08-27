@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { ANTHROPIC_BASE, MODELS } from '@/lib/ai/anthropic'
 
-const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages'
-const MODEL = 'claude-opus-4-5-20251101'
+const MODEL = MODELS.heavy
 
 interface AdvertiserInfo {
   guidelines_image?: string | null

@@ -139,6 +139,15 @@ type Pacing = {
   comment_delay_min: number;
   comment_delay_max: number;
 };
+/* 운영 정책(nc_settings.options) — 페이스와 달리 '사고를 막는 규칙'들.
+   서버(lib/naver/settings.ts)가 최종 범위를 보정한다(예: 중복 창은 최소 30일). */
+type CafeOptions = {
+  halt_after_failures: number;      // 연속 N회 실패 시 자동 중단(카페별 일시정지 임계값과 동일 값)
+  dup_window_days: number;          // 최근 N일 안 비슷한 글 재생성 금지(서버가 30일 미만은 30으로 올림)
+  dup_similarity: number;           // 제목 유사도 임계값(0~1)
+  autopilot_min_published: number;  // 완전 자동 허용까지 필요한 '사람 검수 발행' 수
+  preview_before_publish: boolean;  // 등록 직전 캡처를 사람이 확인
+};
 type PacingStatus = {
   active: boolean;
   active_hours: [number, number];
@@ -386,6 +395,9 @@ export default function NaverCafePage() {
   const [picked, setPicked] = useState<Set<string>>(new Set()); // 일괄 승인/반려용 선택
   const [bulkBusy, setBulkBusy] = useState(false);
   const [pacing, setPacing] = useState<Pacing | null>(null);
+  /* 운영 정책 — 예전엔 코드/DB 에만 있고 화면에서 볼 수도 바꿀 수도 없었다(2026-08-12 점검에서 확인).
+     연속 실패 몇 회에 멈출지, 완전 자동을 언제 허용할지 같은 건 운영자가 직접 조정할 수 있어야 한다. */
+  const [opts, setOpts] = useState<CafeOptions | null>(null);
   const [pacingStat, setPacingStat] = useState<PacingStatus | null>(null);
   const [loadErr, setLoadErr] = useState("");
   const [sel, setSel] = useState<string | "dash">("dash");
@@ -422,7 +434,7 @@ export default function NaverCafePage() {
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => { if (j) { setAgentOnline(!!j.online); setAgentState(j as AgentState); } })
       .catch(() => {});
-    fetch("/api/naver-cafe/settings").then((r) => (r.ok ? r.json() : null)).then((j) => { if (j) { setPacing(j.pacing); setPacingStat(j.status); } }).catch(() => {});
+    fetch("/api/naver-cafe/settings").then((r) => (r.ok ? r.json() : null)).then((j) => { if (j) { setPacing(j.pacing); setPacingStat(j.status); if (j.options) setOpts(j.options); } }).catch(() => {});
     // 발행 대기 글들이 대략 언제 올라갈지(발행처 업로드 주기 기준) — 게이트와 같은 계산.
     fetch("/api/naver-cafe/schedule").then((r) => (r.ok ? r.json() : null)).then((j) => { if (j) setEstMap(j.estimates || {}); }).catch(() => {});
   }, []);
@@ -640,8 +652,9 @@ export default function NaverCafePage() {
     await fetch(`/api/naver-cafe/brands?id=${id}`, { method: "DELETE" });
     setBrandModal(null); loadAll();
   }
-  async function savePacing(patch: Partial<Pacing>) {
-    try { const j = await api("/api/naver-cafe/settings", "PATCH", patch); setPacing(j.pacing); loadAll(); }
+  // 페이스와 운영 정책을 한 번에 저장(같은 라우트가 둘 다 받는다)
+  async function savePacing(patch: Partial<Pacing> & Partial<CafeOptions>) {
+    try { const j = await api("/api/naver-cafe/settings", "PATCH", patch); setPacing(j.pacing); if (j.options) setOpts(j.options); loadAll(); }
     catch (e) { alert(e instanceof Error ? e.message : "저장 실패"); }
   }
 
@@ -1715,9 +1728,48 @@ export default function NaverCafePage() {
                   </div>
                 ))}
               </div>
+
+              {/* 운영 정책 — 사고를 막는 규칙들. 예전엔 화면에 없어서 바꾸려면 개발자가 필요했다. */}
+              {opts && (
+                <div className="mt-4 rounded-xl border border-gray-200 p-3 dark:border-gray-700">
+                  <p className="mb-2 text-xs font-bold dark:text-gray-200">자동화 안전 정책</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300">연속 실패 시 중단</label>
+                      <p className="mb-1 text-[10px] text-gray-400">회 · 같은 카페면 그 카페만 일시정지</p>
+                      <input type="number" min={1} max={10} value={opts.halt_after_failures}
+                        onChange={(e) => setOpts({ ...opts, halt_after_failures: Number(e.target.value) })} className={inputCls} />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300">완전 자동 자격</label>
+                      <p className="mb-1 text-[10px] text-gray-400">사람이 승인해 발행한 글 N개부터</p>
+                      <input type="number" min={1} max={20} value={opts.autopilot_min_published}
+                        onChange={(e) => setOpts({ ...opts, autopilot_min_published: Number(e.target.value) })} className={inputCls} />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300">중복 방지 기간</label>
+                      <p className="mb-1 text-[10px] text-gray-400">일 · 최소 30일로 고정됩니다</p>
+                      <input type="number" min={30} max={365} value={opts.dup_window_days}
+                        onChange={(e) => setOpts({ ...opts, dup_window_days: Number(e.target.value) })} className={inputCls} />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300">제목 유사도 기준</label>
+                      <p className="mb-1 text-[10px] text-gray-400">0~1 · 낮출수록 더 엄격하게 걸러냄</p>
+                      <input type="number" min={0} max={1} step={0.05} value={opts.dup_similarity}
+                        onChange={(e) => setOpts({ ...opts, dup_similarity: Number(e.target.value) })} className={inputCls} />
+                    </div>
+                    <label className="col-span-2 flex cursor-pointer items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
+                      <input type="checkbox" className="h-3.5 w-3.5" checked={opts.preview_before_publish}
+                        onChange={(e) => setOpts({ ...opts, preview_before_publish: e.target.checked })} />
+                      등록 직전 화면을 내가 확인한 뒤 올리기
+                      <span className="text-gray-400">— 켜면 매번 확인해야 발행돼요</span>
+                    </label>
+                  </div>
+                </div>
+              )}
             </div>
             <div className="flex justify-end border-t p-4 dark:border-gray-800">
-              <button onClick={() => { savePacing(pacing); setPacingOpen(false); }} className="rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-white">저장</button>
+              <button onClick={() => { savePacing({ ...pacing, ...(opts ?? {}) }); setPacingOpen(false); }} className="rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-white">저장</button>
             </div>
           </div>
         </div>

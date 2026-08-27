@@ -1,9 +1,6 @@
-const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages'
+import { ANTHROPIC_BASE, MODELS } from '@/lib/ai/anthropic'
 
-export const VIDEO_MODEL =
-  process.env.ANTHROPIC_VIDEO_MODEL ||
-  process.env.ANTHROPIC_MODEL ||
-  'claude-opus-4-6'
+export const VIDEO_MODEL = MODELS.video
 
 export interface VideoFramePayload {
   dataUrl: string
