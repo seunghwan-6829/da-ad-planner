@@ -72,3 +72,6 @@ naver-cafe-agent/.env
 
 # 네이버 카페 에이전트 자동화 전용 브라우저 프로필(로그인 세션 — 절대 커밋 금지)
 naver-cafe-agent/.browser-profile/
+
+# 로컬 일회성 진단 스크립트(절대경로·개인 .env 참조) — 저장소에 넣지 않는다
+owned-media-monitor/_d*.mjs
