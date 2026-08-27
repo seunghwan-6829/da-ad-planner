@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getMeta } from '@/lib/naver/pacing'
+import { agentTokenConfigured } from '@/lib/naver/agent-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -34,6 +35,10 @@ export async function GET() {
     last_event: data?.last_event ?? null,
     last_event_at: data?.last_event_at ?? null,
     next_action_at: nextActionAt,
+    /* 에이전트 엔드포인트 보호 여부 — NC_AGENT_TOKEN 이 비어 있으면 /api/naver-cafe/agent/* 가
+       인터넷에 그대로 열린다(누구나 수집 데이터를 밀어넣거나 발행 작업을 가져갈 수 있다).
+       코드에만 있던 위험이라 아무도 몰랐다 → 화면에서 보이게 내려준다. */
+    token_configured: agentTokenConfigured(),
   })
 }
 

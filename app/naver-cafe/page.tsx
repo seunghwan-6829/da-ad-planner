@@ -87,6 +87,7 @@ type AgentState = {
   last_event: string | null;
   last_event_at: string | null;
   next_action_at: string | null;
+  token_configured?: boolean; // 에이전트 엔드포인트 보호 여부(서버 NC_AGENT_TOKEN)
 };
 
 /* 대시보드 상단 카드로 고르는 화면 필터. '모두'가 기본이고 나머지는 해당 섹션만 보여준다. */
@@ -768,6 +769,15 @@ export default function NaverCafePage() {
       </span>
       {agentState.fail_streak > 0 && <span className="font-semibold text-amber-600 dark:text-amber-300">연속 실패 {agentState.fail_streak}회</span>}
       <button onClick={testNotify} className="rounded-full border border-gray-200 px-2 py-0.5 text-gray-500 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-800" title="알림이 실제로 오는지 지금 확인">알림 테스트</button>
+      {/* 보안 — 토큰이 없으면 워커용 엔드포인트가 인터넷에 열려 있다(누구나 수집 데이터 주입·작업 조회 가능) */}
+      {agentState.token_configured === false && (
+        <span
+          title="Vercel 환경변수에 NC_AGENT_TOKEN 을 설정하고, 노트북 에이전트 .env 에 같은 값을 넣어주세요. 설정 전까지는 /api/naver-cafe/agent/* 가 인증 없이 열려 있습니다."
+          className="rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-bold text-rose-600 dark:bg-rose-950/40 dark:text-rose-300"
+        >
+          ⚠ 에이전트 토큰 미설정 — 엔드포인트 공개 상태
+        </span>
+      )}
       {agentState.last_event && (
         <span className="min-w-0 flex-1 truncate text-gray-400" title={agentState.last_event}>
           최근: {agentState.last_event}

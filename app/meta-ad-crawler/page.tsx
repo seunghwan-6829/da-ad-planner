@@ -130,6 +130,9 @@ import {
   Link2,
   Network,
 } from "lucide-react";
+// 캡션 정리·썸네일·날짜 포맷은 메타/구글 크롤러가 완전히 같은 구현을 각자 갖고 있었다 → 공용 모듈로 통합
+import { cleanCaption } from "@/lib/crawler/caption";
+import { posterThumb, fmtDate } from "@/lib/crawler/media";
 
 type Target = {
   id: string;
@@ -220,12 +223,6 @@ function isNew(iso: string): boolean {
   return Date.now() - new Date(iso).getTime() < 7 * 24 * 3600 * 1000;
 }
 
-function fmtDate(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return iso;
-  return d.toISOString().slice(0, 10);
-}
 
 function colorFromString(s: string): string {
   let h = 0;
@@ -240,9 +237,6 @@ function mediaListOf(ad: Ad): string[] {
 }
 
 // 클릭 가능한 작은 썸네일용 정적 이미지 URL(영상은 poster). 비디오/캐러셀 컨트롤이 클릭을 가로채지 않게.
-function posterThumb(ad: Ad): string | null {
-  return ad.poster_url || (Array.isArray(ad.media_urls) && ad.media_urls[0]) || ad.media_url || null;
-}
 
 function sourceLink(ad: Ad): string {
   return `https://www.facebook.com/ads/library/?id=${ad.library_id}`;
@@ -250,35 +244,7 @@ function sourceLink(ad: Ad): string {
 
 // 스크랩된 ad_text 에서 보일러플레이트(활성/라이브러리ID/게재시작/플랫폼/광고 라벨/CTA 등)를 제거하고
 // 실제 제목·캡션만 남긴다. (우측 메타데이터와 중복되는 정보 제거)
-const CAPTION_DROP = [
-  /^활성$/, /^비활성$/, /게재\s*중단/,
-  /^라이브러리\s*ID/i, /^library\s*id/i,
-  /게재\s*시작(함|일)/, /^started running/i,
-  /^플랫폼$/, /^platforms?$/i,
-  /^드롭다운/, /드롭다운\s*열기/, /^see ad details$/i, /광고\s*상세\s*정보\s*보기/,
-  /여러\s*버전이\s*있는\s*광고/i, /multiple versions/i,
-  /^광고$/, /^sponsored$/i,
-  /^(learn more|shop now|sign up|book now|order now|get offer|download|더\s*알아보기|자세히\s*알아보기|지금\s*구매하기|구매하기|신청하기|문의하기|예약하기|주문하기|앱\s*설치하기|지금\s*받기|쇼핑하기)$/i,
-];
 
-function cleanCaption(text: string | null | undefined, brandName: string): string {
-  if (!text) return "—";
-  const lines = text
-    .replace(/[​-‍⁠﻿ ]/g, " ") // 제로폭/비가시 공백 → 일반 공백
-    .split(/\n+/)
-    .map((l) => l.trim())
-    .filter(Boolean);
-  const kept: string[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    const l = lines[i];
-    if (l === brandName) continue;
-    if (CAPTION_DROP.some((re) => re.test(l))) continue;
-    // 광고주명 라인(바로 다음 줄이 '광고'/'Sponsored') 제거
-    if (i + 1 < lines.length && /^(광고|sponsored)$/i.test(lines[i + 1])) continue;
-    kept.push(l);
-  }
-  return kept.join("\n").trim() || "—";
-}
 
 // 현재 페이지 주변으로 최대 10개의 연속 페이지 번호를 보여준다(끝쪽이면 끝에 맞춰 정렬).
 function pageItems(current: number, total: number): number[] {
