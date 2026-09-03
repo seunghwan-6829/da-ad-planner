@@ -12,7 +12,7 @@ on:
         required: false
         default: "sync"
 
-# 필요한 GitHub Secrets: APP_URL(예: https://da-ad-planner.vercel.app), CRON_SECRET(앱 env 와 동일)
+# 필요한 GitHub Secrets: APP_URL(예: https://zerotomax.kr), CRON_SECRET(앱 env 와 동일)
 jobs:
   sync:
     runs-on: ubuntu-latest

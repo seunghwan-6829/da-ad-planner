@@ -18,6 +18,6 @@ jobs:
       - name: Call naver-cafe tick (deployed)
         # ANTHROPIC_API_KEY 는 Vercel 환경변수. CRON_SECRET 설정 시에만 검증(미설정이면 개방).
         run: |
-          curl -sS -X POST "https://da-ad-planner.vercel.app/api/naver-cafe/tick" \
+          curl -sS -X POST "https://zerotomax.kr/api/naver-cafe/tick" \
             -H "Content-Type: application/json" \
             -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" -d '{}' | head -c 800

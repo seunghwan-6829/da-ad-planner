@@ -19,4 +19,4 @@ jobs:
         # Vercel 배포 라우트 호출 — ANTHROPIC_API_KEY 는 Vercel 환경변수 사용.
         # 이미 그 주 리포트가 있으면 서버가 already 로 스킵(멱등)한다.
         run: |
-          curl -sS "https://da-ad-planner.vercel.app/api/pb/weekly-report/cron" | head -c 800
+          curl -sS "https://zerotomax.kr/api/pb/weekly-report/cron" | head -c 800
