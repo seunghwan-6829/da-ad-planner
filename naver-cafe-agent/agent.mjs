@@ -53,7 +53,7 @@ for (const p of [join(HERE, '.env'), join(HERE, '..', 'meta-ad-monitor', '.env')
   if (SERVER && TOKEN) break
   if (existsSync(p)) { const e = loadEnvFile(p); SERVER ||= e.CC_SERVER_URL; TOKEN ||= e.NC_AGENT_TOKEN; POLL_SEC ||= e.CC_POLL_SEC }
 }
-SERVER = (SERVER || 'https://da-ad-planner.vercel.app').replace(/\/+$/, '')
+SERVER = (SERVER || 'https://zerotomax.kr').replace(/\/+$/, '')
 TOKEN = TOKEN || ''
 const POLL = Math.max(5, Number(POLL_SEC) || 20) * 1000
 
